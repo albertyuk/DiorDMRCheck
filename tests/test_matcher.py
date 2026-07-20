@@ -108,9 +108,10 @@ def test_reverse_audit_finds_untracked_post(verdicts):
     rows = reverse_audit(plog, dmr, vs)
     pids = {r["post_id"] for r in rows}
     assert fixtures.N_EXTRA in pids
-    # matched posts and the 无帖子 near-miss post must not be listed as
-    # "extra" only if matched; the May DMR post was never matched → listed too
+    # matched posts must never be listed as "extra"
     assert fixtures.N_MOCHI_JUN not in pids
+    # the 无帖子 near-miss May post was never matched → it IS an extra post
+    assert fixtures.N_MOCHI_MAY_DMR in pids
 
 
 def test_no_row_crashes_and_all_rows_have_verdicts(verdicts):

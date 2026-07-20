@@ -89,6 +89,7 @@
         </td>
         <td>
           <form hx-post="/runs/{{ run_id }}/override" hx-target="#run-body" hx-swap="innerHTML">
+            <input type="hidden" name="excel_row" value="{{ v.excel_row }}">
             <input type="hidden" name="campaign" value="{{ v.campaign }}">
             <input type="hidden" name="no" value="{{ v.no }}">
             <select name="status" onchange="this.form.requestSubmit()">

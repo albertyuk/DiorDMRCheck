@@ -19,6 +19,7 @@ explicit request. Partial failure never raises out of resolve_link().
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -78,8 +79,24 @@ def _res_from_cache(row: dict) -> Resolution:
 
 # ---------------------------------------------------------------- fast path
 
+# Only a note URL counts as resolved — profile pages etc. also carry 24-hex
+# ids, and mistaking one for a note id would poison the permanent cache.
+NOTE_URL_RE = re.compile(
+    r"xiaohongshu\.com/(?:discovery/item|explore|items)/([0-9a-fA-F]{24})"
+)
+
+
+def _note_id_from_url(url: str) -> Optional[str]:
+    m = NOTE_URL_RE.search(url or "")
+    return m.group(1).lower() if m else None
+
+
 def direct_resolve(url: str) -> Optional[str]:
-    """Walk the redirect chain manually; return the note id or None."""
+    """Walk the redirect chain manually; return the note id or None.
+
+    Never raises — a malformed Location header, TLS error, or invalid URL is
+    just a failed fast path (the TikHub path is authoritative anyway).
+    """
     for attempt in range(config.DIRECT_HTTP_RETRIES + 1):
         try:
             current = url
@@ -89,23 +106,24 @@ def direct_resolve(url: str) -> Optional[str]:
                 headers={"User-Agent": MOBILE_UA},
             ) as client:
                 for _hop in range(6):
-                    m = HEX24.search(current)
-                    if m and "xiaohongshu.com" in current:
-                        return m.group(1).lower()
+                    note = _note_id_from_url(current)
+                    if note:
+                        return note
                     resp = client.get(current)
                     loc = resp.headers.get("location")
                     if resp.status_code in (301, 302, 303, 307, 308) and loc:
-                        current = httpx.URL(current).join(loc).__str__()
+                        current = str(httpx.URL(current).join(loc))
                         continue
                     # Landed. One last look at the final URL.
-                    m = HEX24.search(str(resp.url))
-                    if m and "xiaohongshu.com" in str(resp.url):
-                        return m.group(1).lower()
-                    return None
+                    return _note_id_from_url(str(resp.url))
             return None
         except httpx.HTTPError:
             if attempt < config.DIRECT_HTTP_RETRIES:
                 time.sleep(0.5 * (attempt + 1))
+        except Exception:
+            # e.g. httpx.InvalidURL from a garbage Location header — not
+            # retryable, and must never escape into the run.
+            return None
     return None
 
 
@@ -141,12 +159,15 @@ def _to_int_or_none(v: Any) -> Optional[int]:
 
 
 def _extract_note_fields(payload: dict) -> dict:
-    note_id = _walk(payload, ("note_id", "noteId", "id"))
+    note_id = _walk(payload, ("note_id", "noteId"))
     if not (isinstance(note_id, str) and is_hex24(note_id)):
-        note_id = None
-        m = HEX24.search(json.dumps(payload)[:20000])
-        if m:
-            note_id = m.group(1)
+        # Fall back to a bare "id" key only when it validates as a note id.
+        # Deliberately NO regex-over-the-serialized-payload fallback: author
+        # ids and trace ids are also 24-hex, and a wrong id would be cached
+        # permanently as a success.
+        note_id = _walk(payload, ("id",))
+        if not (isinstance(note_id, str) and is_hex24(note_id)):
+            note_id = None
     user = _walk(payload, ("user", "author", "user_info"))
     author_id = author_name = None
     if isinstance(user, dict):
@@ -189,15 +210,33 @@ def _extract_note_fields(payload: dict) -> dict:
 
 
 class TikHubError(Exception):
-    pass
+    """Terminal TikHub failure for one endpoint (4xx, bad payload, retries
+    exhausted). The caller may still try the other note-detail endpoint."""
+
+
+def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
+    """Parse Retry-After (delta-seconds or HTTP-date), defaulting to backoff."""
+    raw = resp.headers.get("retry-after", "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(raw)
+                return max(0.0, dt.timestamp() - time.time())
+            except (TypeError, ValueError):
+                pass
+    return float(2 ** (attempt + 1))
 
 
 def _tikhub_get(path: str, params: dict, counter: Optional[Callable[[], None]]) -> dict:
     if not config.TIKHUB_API_KEY:
         raise TikHubError("TIKHUB_API_KEY not configured")
     url = config.TIKHUB_BASE_URL.rstrip("/") + path
-    last_err: Exception = TikHubError("no attempt made")
+    last_err = "no attempt made"
     for attempt in range(config.TIKHUB_MAX_RETRIES + 1):
+        retryable = False
         try:
             with _tikhub_semaphore:
                 if counter:
@@ -207,28 +246,40 @@ def _tikhub_get(path: str, params: dict, counter: Optional[Callable[[], None]]) 
                         url, params=params,
                         headers={"Authorization": f"Bearer {config.TIKHUB_API_KEY}"},
                     )
-            if resp.status_code == 429:
-                retry_after = float(resp.headers.get("retry-after", 2 ** (attempt + 1)))
-                time.sleep(min(retry_after, 30))
-                last_err = TikHubError("rate limited (429)")
-                continue
-            if 400 <= resp.status_code < 500:
+            body = None
+            if resp.headers.get("content-type", "").startswith("application/json"):
+                try:
+                    body = resp.json()
+                except ValueError:
+                    body = None
+            body_code = body.get("code") if isinstance(body, dict) else None
+
+            more = attempt < config.TIKHUB_MAX_RETRIES
+            if resp.status_code == 429 or body_code == 429:
+                retryable = True
+                last_err = "rate limited (429)"
+                if more:
+                    time.sleep(min(_retry_after_seconds(resp, attempt), 30))
+            elif 400 <= resp.status_code < 500:
                 raise TikHubError(f"TikHub {resp.status_code}: {resp.text[:300]}")
-            resp.raise_for_status()
-            body = resp.json()
-            code = body.get("code")
-            if code is not None and code not in (200, 0):
-                raise TikHubError(f"TikHub code {code}: {str(body)[:300]}")
-            return body
-        except TikHubError as e:
-            if "429" in str(e):
-                last_err = e
-                continue
-            raise
-        except (httpx.HTTPError, ValueError) as e:
-            last_err = e
+            elif resp.status_code >= 500:
+                retryable = True
+                last_err = f"TikHub {resp.status_code}"
+                if more:
+                    time.sleep(2 ** attempt)
+            elif not isinstance(body, dict):
+                raise TikHubError(f"TikHub returned a non-JSON-object body: {resp.text[:200]}")
+            elif body_code is not None and body_code not in (200, 0):
+                raise TikHubError(f"TikHub code {body_code}: {str(body)[:300]}")
+            else:
+                return body
+        except (httpx.HTTPError, OSError) as e:
+            retryable = True
+            last_err = f"{type(e).__name__}: {e}"
             if attempt < config.TIKHUB_MAX_RETRIES:
                 time.sleep(2 ** attempt)
+        if not retryable:
+            break
     raise TikHubError(f"TikHub request failed after retries: {last_err}")
 
 
@@ -255,10 +306,34 @@ def tikhub_fetch_note(share_url: str = "", note_id: str = "",
 
 # ----------------------------------------------------------- main entrypoint
 
+def _normalize_url(url: str) -> str:
+    """Accept scheme-less cells like 'xhslink.com/o/abc' — resolvable in any
+    browser and by TikHub's share_text."""
+    url = (url or "").strip()
+    if url and not url.lower().startswith(("http://", "https://")):
+        if re.match(r"^[\w.-]+\.[a-zA-Z]{2,}(/|$)", url):
+            return "http://" + url
+    return url
+
+
 def resolve_link(url: str, run_counter: Optional[Callable[[], None]] = None,
                  retry_failed: bool = False) -> Resolution:
-    """Resolve a PLOG POST LINK to note detail. Never raises."""
-    url = (url or "").strip()
+    """Resolve a PLOG POST LINK to a note id (plus detail when TikHub ran).
+
+    Never raises — every failure becomes a Resolution(status='failed').
+    Successful resolutions are cached permanently (a resolved note id never
+    changes); failures are cached and retried only after a TTL or on request.
+    """
+    try:
+        return _resolve_link_inner(url, run_counter, retry_failed)
+    except Exception as e:  # absolute backstop: a resolver bug must not kill a run
+        return Resolution(status="failed",
+                          error=f"internal resolver error: {type(e).__name__}: {e}")
+
+
+def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
+                        retry_failed: bool) -> Resolution:
+    url = _normalize_url(url)
     if not url:
         return Resolution(status="failed", error="empty link")
     if not url.lower().startswith(("http://", "https://")):
@@ -272,56 +347,65 @@ def resolve_link(url: str, run_counter: Optional[Callable[[], None]] = None,
         if not retry_failed and age_h < config.FAILED_CACHE_TTL_HOURS:
             return _res_from_cache(cached)
 
-    # 1. Free first try: walk redirects ourselves.
+    # 1. Free first try: walk the redirect chain ourselves. When it works, the
+    # note id alone is enough for the Tier-1 join — TikHub (which costs money)
+    # is deferred to ensure_author, which the pipeline invokes only when the
+    # join misses and the 无博主/无帖子 decision actually needs the author id.
     note_id = direct_resolve(url)
-    source = "direct" if note_id else ""
+    if note_id:
+        db.cache_put(url, status="ok", note_id=note_id, source="direct")
+        return Resolution(status="ok", note_id=note_id, source="direct")
 
-    # 2. Authoritative: TikHub (also fills author/engagement detail).
-    fields: dict = {}
-    raw_body: dict = {}
-    tik_error = ""
+    # 2. Authoritative: TikHub accepts the raw share URL via share_text and
+    # returns full note detail (note_id, author, engagement snapshot, title).
     try:
-        raw_body = tikhub_fetch_note(share_url=url, note_id=note_id or "",
-                                     counter=run_counter)
+        raw_body = tikhub_fetch_note(share_url=url, counter=run_counter)
         fields = _extract_note_fields(raw_body)
-        if fields.get("note_id"):
-            source = (source + "+tikhub") if source else "tikhub"
     except TikHubError as e:
-        tik_error = str(e)
+        err = str(e)
+        db.cache_put(url, status="failed", error=err[:500])
+        return Resolution(status="failed", error=err)
 
-    final_note = fields.get("note_id") or note_id or ""
-    if final_note:
-        res = Resolution(
-            status="ok", note_id=final_note,
-            author_id=fields.get("author_id", ""),
-            author_name=fields.get("author_name", ""),
-            likes=fields.get("likes"), collects=fields.get("collects"),
-            comments=fields.get("comments"), title=fields.get("title", ""),
-            publish_time=fields.get("publish_time", ""),
-            source=source or "direct",
-            error=tik_error, raw=raw_body,
-        )
-        db.cache_put(
-            url, status="ok", note_id=res.note_id, author_id=res.author_id or None,
-            author_name=res.author_name or None, likes=res.likes,
-            collects=res.collects, comments=res.comments, title=res.title or None,
-            publish_time=res.publish_time or None, source=res.source,
-            error=tik_error or None,
-            raw_json=json.dumps(raw_body, ensure_ascii=False)[:200_000] if raw_body else None,
-        )
-        return res
+    if not fields.get("note_id"):
+        err = "TikHub responded but no note id could be extracted from the payload"
+        db.cache_put(url, status="failed", error=err,
+                     raw_json=json.dumps(raw_body, ensure_ascii=False)[:200_000])
+        return Resolution(status="failed", error=err)
 
-    err = tik_error or "redirect chain did not reach a xiaohongshu note URL"
-    db.cache_put(url, status="failed", error=err[:500], source=source or None)
-    return Resolution(status="failed", error=err, source=source)
+    res = Resolution(
+        status="ok", note_id=fields["note_id"],
+        author_id=fields.get("author_id", ""),
+        author_name=fields.get("author_name", ""),
+        likes=fields.get("likes"), collects=fields.get("collects"),
+        comments=fields.get("comments"), title=fields.get("title", ""),
+        publish_time=fields.get("publish_time", ""),
+        source="tikhub", raw=raw_body,
+    )
+    db.cache_put(
+        url, status="ok", note_id=res.note_id, author_id=res.author_id or None,
+        author_name=res.author_name or None, likes=res.likes,
+        collects=res.collects, comments=res.comments, title=res.title or None,
+        publish_time=res.publish_time or None, source="tikhub",
+        raw_json=json.dumps(raw_body, ensure_ascii=False)[:200_000],
+    )
+    return res
 
 
 def ensure_author(url: str, res: Resolution,
-                  run_counter: Optional[Callable[[], None]] = None) -> Resolution:
+                  run_counter: Optional[Callable[[], None]] = None,
+                  retry_failed: bool = False) -> Resolution:
     """Make sure *res* carries an author_id, fetching from TikHub by note_id
-    if the fast path resolved the note without author detail."""
+    when the fast path resolved the note without author detail. Author-fetch
+    failures are cached with the same TTL as link failures so a permanently
+    broken enrichment is not re-billed on every run. Never raises."""
     if res.author_id or not res.ok:
         return res
+    url = _normalize_url(url)
+    cached = db.cache_get(url) or {}
+    failed_at = cached.get("author_failed_at")
+    if failed_at and not retry_failed:
+        if (time.time() - failed_at) / 3600 < config.FAILED_CACHE_TTL_HOURS:
+            return res
     try:
         body = tikhub_fetch_note(note_id=res.note_id, counter=run_counter)
         fields = _extract_note_fields(body)
@@ -334,14 +418,23 @@ def ensure_author(url: str, res: Resolution,
             res.title = fields.get("title") or res.title
             res.publish_time = fields.get("publish_time") or res.publish_time
             res.raw = body
-            res.source = (res.source + "+tikhub") if "tikhub" not in res.source else res.source
+            res.source = res.source if "tikhub" in res.source else res.source + "+tikhub"
+            res.error = ""
             db.cache_merge(
                 url, author_id=res.author_id, author_name=res.author_name or None,
                 likes=res.likes, collects=res.collects, comments=res.comments,
                 title=res.title or None, publish_time=res.publish_time or None,
-                source=res.source,
+                source=res.source, error=None, author_failed_at=None,
+                resolved_at=time.time(),
                 raw_json=json.dumps(body, ensure_ascii=False)[:200_000],
             )
+        else:
+            res.error = res.error or "TikHub payload carried no author id"
+            db.cache_merge(url, author_failed_at=time.time(),
+                           error=res.error[:500])
     except TikHubError as e:
         res.error = res.error or str(e)
+        db.cache_merge(url, author_failed_at=time.time(), error=str(e)[:500])
+    except Exception as e:  # same backstop as resolve_link
+        res.error = res.error or f"internal enrichment error: {type(e).__name__}: {e}"
     return res

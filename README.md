@@ -93,9 +93,24 @@ exist in the DMR file with exact-date posts. The harness lists them as
 *expected* disagreements and the acceptance gate is **≥ 99/101 agreement after
 excusing those two**.
 
+## Operational notes
+
+- `fly.toml` uses `auto_stop_machines = true` / `min_machines_running = 0` to
+  keep the app free when idle. If Fly stops the machine while a run is in
+  flight, the run is marked *interrupted* on the next boot and gets a one-click
+  **Retry** (warm cache makes the retry cheap — resolved links are never
+  re-fetched).
+- The container starts as root only to `chown` the mounted `/data` volume,
+  then drops to the unprivileged `appuser` before uvicorn starts.
+- Human overrides are stored per sheet row and win over the pipeline verdict
+  in both the UI and the exports; the special choice `已匹配（清空S）` forces a
+  blank column S (asserting a match), while clearing the dropdown reverts to
+  the pipeline verdict.
+
 ## Tests
 
 ```sh
+pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 

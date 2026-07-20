@@ -56,6 +56,12 @@ def _client():
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
+def _row_key(v: Verdict) -> str:
+    # excel_row makes the key unique even when (CAMPAIGN, NO) identities
+    # collide in degenerate inputs.
+    return f"{v.campaign}|{v.no}|r{v.excel_row}"
+
+
 def _question_for(v: Verdict) -> Optional[dict]:
     """Build the per-row question payload, or None if there is nothing useful
     for the model to look at."""
@@ -63,7 +69,7 @@ def _question_for(v: Verdict) -> Optional[dict]:
         return None
     kind = "same_person" if v.tier.endswith("name-conflict") else "same_post"
     return {
-        "row": f"{v.campaign}|{v.no}",
+        "row": _row_key(v),
         "question": kind,
         "plog": {
             "name": v.name,
@@ -91,19 +97,37 @@ def _question_for(v: Verdict) -> Optional[dict]:
 
 
 def _parse_batch(text: str) -> Optional[AdjudicationBatch]:
-    m = _JSON_RE.search(text or "")
-    if not m:
-        return None
-    try:
-        return AdjudicationBatch.model_validate_json(m.group(0))
-    except (ValidationError, ValueError):
+    text = (text or "").strip()
+    # strip a markdown code fence if the model wrapped its JSON in one
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    candidates = [text]
+    m = _JSON_RE.search(text)
+    if m:
+        candidates.append(m.group(0))
+    arr = re.search(r"\[.*\]", text, re.DOTALL)
+    if arr:
+        candidates.append(arr.group(0))
+    for c in candidates:
         try:
-            data = json.loads(m.group(0))
-            if isinstance(data, list):
-                return AdjudicationBatch.model_validate({"items": data})
+            data = json.loads(c)
+        except ValueError:
+            continue
+        if isinstance(data, list):
+            data = {"items": data}
+        try:
+            return AdjudicationBatch.model_validate(data)
         except (ValidationError, ValueError):
-            pass
+            continue
     return None
+
+
+# Questions per API call. Keeps max_tokens comfortably under the anthropic
+# SDK's non-streaming ceiling (~21k tokens ≈ 10-minute guard) while leaving
+# headroom for adaptive thinking, which counts against max_tokens on Sonnet 5.
+BATCH_SIZE = 15
+BATCH_MAX_TOKENS = 8000
 
 
 def adjudicate(verdicts: list[Verdict],
@@ -113,14 +137,22 @@ def adjudicate(verdicts: list[Verdict],
         return
     residue = [v for v in verdicts if v.status == REVIEW or
                (v.status == LINK_ERROR and v.candidates)]
-    questions = [q for q in (_question_for(v) for v in residue) if q]
-    if not questions:
+    asked = [(v, q) for v, q in ((v, _question_for(v)) for v in residue) if q]
+    if not asked:
         return
-    by_key = {f"{v.campaign}|{v.no}": v for v in residue}
+    client = _client()
+    for start in range(0, len(asked), BATCH_SIZE):
+        chunk = asked[start:start + BATCH_SIZE]
+        _adjudicate_chunk(client, chunk, llm_counter)
 
+
+def _adjudicate_chunk(client, chunk: list[tuple[Verdict, dict]],
+                      llm_counter: Optional[Callable[[], None]]) -> None:
+    questions = [q for _, q in chunk]
+    by_key = {_row_key(v): v for v, _ in chunk}
     schema_hint = (
-        '{"items": [{"row": "<campaign|no>", "verdict": "SAME_PERSON|SAME_POST|'
-        'DIFFERENT|UNSURE", "confidence": 0.0, "rationale_en": "...", '
+        '{"items": [{"row": "<echo the given row id>", "verdict": "SAME_PERSON|'
+        'SAME_POST|DIFFERENT|UNSURE", "confidence": 0.0, "rationale_en": "...", '
         '"rationale_zh": "..."}]}'
     )
     user_msg = (
@@ -129,18 +161,17 @@ def adjudicate(verdicts: list[Verdict],
         + json.dumps(questions, ensure_ascii=False, indent=1)
     )
 
-    client = _client()
     batch: Optional[AdjudicationBatch] = None
     for attempt in range(2):  # validate and retry once on parse failure
         try:
-            if llm_counter:
-                llm_counter()
             resp = client.messages.create(
                 model=config.ANTHROPIC_MODEL,
-                max_tokens=max(config.ANTHROPIC_MAX_TOKENS, 300 * len(questions)),
+                max_tokens=max(config.ANTHROPIC_MAX_TOKENS, BATCH_MAX_TOKENS),
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_msg}],
             )
+            if llm_counter:
+                llm_counter()
             text = "".join(b.text for b in resp.content if b.type == "text")
             batch = _parse_batch(text)
             if batch:
@@ -151,12 +182,12 @@ def adjudicate(verdicts: list[Verdict],
                 + json.dumps(questions, ensure_ascii=False, indent=1)
             )
         except Exception as e:  # API/network failure must not kill the run
-            for v in residue:
+            for v, _ in chunk:
                 v.notes.append(f"LLM adjudication unavailable: {e}")
             return
 
     if not batch:
-        for v in residue:
+        for v, _ in chunk:
             v.notes.append("LLM adjudication returned malformed JSON twice — kept for human review.")
         return
 
@@ -190,12 +221,10 @@ def summarize_run(verdicts: list[Verdict], counts: dict, warnings: list[str],
         for v in verdicts if v.status not in ("MATCH",)
     ][:40]
     try:
-        if llm_counter:
-            llm_counter()
         client = _client()
         resp = client.messages.create(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=800,
+            max_tokens=2000,  # headroom for adaptive thinking + both languages
             system=(
                 "Write a short reconciliation-run summary for a KOL campaign "
                 "team, in Chinese then English. 3-5 sentences each. Mention "
@@ -210,6 +239,8 @@ def summarize_run(verdicts: list[Verdict], counts: dict, warnings: list[str],
                     ensure_ascii=False),
             }],
         )
+        if llm_counter:
+            llm_counter()
         text = "".join(b.text for b in resp.content if b.type == "text")
         m = _JSON_RE.search(text)
         if m:

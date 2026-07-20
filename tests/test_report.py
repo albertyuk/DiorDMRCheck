@@ -52,9 +52,27 @@ def test_override_wins_in_export(plog_path, dmr_path, fake_resolver, tmp_path):
     dmr = parse_dmr(dmr_path)
     verdicts = run_pipeline(plog, dmr)
     out = tmp_path / "annotated.xlsx"
-    overrides = {("PLOG #002", "1"): {"status": "无博主", "note": "human says so"}}
-    write_annotated_xlsx(plog_path, str(out), verdicts,
-                         header_row=plog.header_row, overrides=overrides)
-    ann = load_workbook(str(out))["MASTER KOL LIST"]
     v = next(x for x in verdicts if (x.campaign, x.no) == ("PLOG #002", "1"))
+    overrides = {v.excel_row: {"status": "无博主", "note": "human says so"}}
+    write_annotated_xlsx(plog_path, str(out), verdicts,
+                         header_row=plog.header_row, sheet_name=plog.sheet,
+                         overrides=overrides)
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
     assert ann.cell(row=v.excel_row, column=19).value == "无博主"
+
+
+def test_match_blank_override_forces_empty_s(plog_path, dmr_path, fake_resolver,
+                                             tmp_path):
+    from app.report import OVERRIDE_MATCH_BLANK
+    plog = parse_plog(plog_path)
+    dmr = parse_dmr(dmr_path)
+    verdicts = run_pipeline(plog, dmr)
+    out = tmp_path / "annotated.xlsx"
+    # the mislabel row would normally carry 有 但是DMR博主名字标注错误
+    v = next(x for x in verdicts if (x.campaign, x.no) == ("PLOG #001", "3"))
+    overrides = {v.excel_row: {"status": OVERRIDE_MATCH_BLANK, "note": ""}}
+    write_annotated_xlsx(plog_path, str(out), verdicts,
+                         header_row=plog.header_row, sheet_name=plog.sheet,
+                         overrides=overrides)
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
+    assert ann.cell(row=v.excel_row, column=19).value in (None, "")

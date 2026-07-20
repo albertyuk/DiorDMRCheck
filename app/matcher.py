@@ -146,7 +146,11 @@ def name_contains(plog_name: str, dmr_blogger: str) -> bool:
     if c and c in cjk(dmr_blogger):
         return True
     n = norm(plog_name)
-    return bool(n) and n in norm(dmr_blogger)
+    if not n:
+        # An all-emoji/blank PLOG name normalizes to nothing — there is no
+        # basis to accuse DMR of mislabeling, so treat as containing.
+        return True
+    return n in norm(dmr_blogger)
 
 
 def name_ladder(plog_name: str, dmr_blogger: str) -> str:
@@ -157,10 +161,12 @@ def name_ladder(plog_name: str, dmr_blogger: str) -> str:
     pn, dn = norm(plog_name), norm(dmr_blogger)
     if pn and pn in dn:
         return "norm-substring"
+    # Both sides need ≥ 4 ASCII chars: partial_ratio aligns the shorter string
+    # inside the longer, so a 1-3 char remainder scores 100 against anything.
     pa, da = ascii_part(plog_name), ascii_part(dmr_blogger)
-    if len(pa) >= 4 and da and fuzz.partial_ratio(pa, da) >= 85:
+    if len(pa) >= 4 and len(da) >= 4 and fuzz.partial_ratio(pa, da) >= 85:
         return "ascii-fuzzy"
-    if pc and da:
+    if pc and len(da) >= 4:
         pinyin = "".join(lazy_pinyin(pc)).casefold()
         if len(pinyin) >= 4 and fuzz.partial_ratio(pinyin, da) >= 85:
             return "pinyin-bridge"
@@ -182,15 +188,18 @@ def _delta_days(plog_date: Optional[date], dmr_row: DmrRow) -> Optional[int]:
     return (dmr_row.post_date.date() - plog_date).days
 
 
-def rank_candidates(prow: PlogRow, hits: list[tuple[DmrRow, str]]) -> list[Candidate]:
+def rank_candidates(prow: PlogRow, hits: list[tuple[DmrRow, str]],
+                    keep_out_of_window: bool = False) -> list[Candidate]:
     """Rank name-matched DMR rows by date proximity within the ±window.
     Date is a soft ranking signal only — never a hard filter for the verdict,
     but candidates outside the window are dropped from the suggestion list
-    (they are almost certainly different posts)."""
+    (they are almost certainly different posts) unless the caller needs them
+    as evidence for a conflict review."""
     cands = []
     for r, method in hits:
         delta = _delta_days(prow.post_date, r)
-        if delta is not None and abs(delta) > config.CANDIDATE_DATE_WINDOW_DAYS:
+        if (not keep_out_of_window and delta is not None
+                and abs(delta) > config.CANDIDATE_DATE_WINDOW_DAYS):
             continue
         cands.append(Candidate(
             dmr_row=r.excel_row, post_id=r.post_id, blogger=r.blogger,
@@ -260,6 +269,17 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             return v
 
         # ---- Tier 2: blogger presence via author id
+        if res.author_id and not idx.by_author_id:
+            # The DMR file has no usable Username column at all — a blanket
+            # 无博主 for every row would be a schema artifact, not a finding.
+            v.status = REVIEW
+            v.tier = "2:no-username-column"
+            v.review_reason = (
+                "DMR缺少Username列，无法判定无博主/无帖子 / DMR has no usable "
+                "Username column; blogger presence cannot be decided"
+            )
+            v.candidates = rank_candidates(prow, name_hits)
+            return v
         if res.author_id:
             author_rows = idx.by_author_id.get(res.author_id)
             if author_rows:
@@ -274,7 +294,8 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 foreign = [
                     (r, m) for r, m in name_hits
                     if r.username and r.username != res.author_id
-                    and m in ("cjk-substring", "norm-substring")
+                    and ((m == "cjk-substring" and len(cjk(prow.name)) >= 2)
+                         or (m == "norm-substring" and len(norm(prow.name)) >= 4))
                 ]
                 if foreign and not any(r.username == res.author_id for r, _ in name_hits):
                     v.status = REVIEW
@@ -293,8 +314,11 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             v.status = NO_BLOGGER
             v.tier = "2:author-id"
             # Cross-check: high-precision name hit contradicts "no blogger".
+            # Length floors keep 1-char CJK / short norm names from flipping
+            # correct verdicts to REVIEW via coincidental substrings.
             strong = [(r, m) for r, m in name_hits
-                      if m in ("cjk-substring", "norm-substring")]
+                      if (m == "cjk-substring" and len(cjk(prow.name)) >= 2)
+                      or (m == "norm-substring" and len(norm(prow.name)) >= 4)]
             if strong:
                 v.status = REVIEW
                 v.tier = "2:author-id+name-conflict"
@@ -303,6 +327,11 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                     "DMR, yet a same-name Blogger row exists — verify manually"
                 )
                 v.candidates = rank_candidates(prow, strong)
+                if not v.candidates:
+                    # all hits fell outside the ±window — still show them, the
+                    # reviewer needs to see what the conflict is about
+                    v.candidates = rank_candidates(prow, strong,
+                                                   keep_out_of_window=True)
             return v
 
         # Resolved the note but could not obtain the author id (TikHub
@@ -358,7 +387,8 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
         # Fetch author detail only when the note-id join is going to miss —
         # this is the money case (无帖子 vs 无博主) and needs TikHub once.
         if res.ok and res.note_id not in idx.by_post_id:
-            res = ensure_author(prow.post_link, res, run_counter=tikhub_counter)
+            res = ensure_author(prow.post_link, res, run_counter=tikhub_counter,
+                                retry_failed=retry_failed_links)
         return i, res
 
     with ThreadPoolExecutor(max_workers=config.TIKHUB_CONCURRENCY) as pool:
@@ -367,10 +397,22 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
             done += 1
             report("resolve", done, f"Resolving links {done}/{total}…")
 
-    # Phase 2: tiered matching (fast, in order).
+    # Phase 2: tiered matching (fast, in order). A bug on one row must not
+    # take down the run — degrade that row to REVIEW with the error attached.
     verdicts: list[Verdict] = []
     for i, prow in enumerate(plog.rows):
-        verdicts.append(match_row(prow, idx, resolutions[i], window))
+        try:
+            verdicts.append(match_row(prow, idx, resolutions[i], window))
+        except Exception as e:
+            v = Verdict(
+                campaign=prow.campaign, no=prow.no, name=prow.name,
+                post_date=prow.post_date.isoformat() if prow.post_date else None,
+                post_link=prow.post_link, excel_row=prow.excel_row,
+                status=REVIEW, tier="error",
+                review_reason=f"内部错误 / internal error: {type(e).__name__}",
+            )
+            v.notes.append(f"match_row failed: {e}")
+            verdicts.append(v)
         report("match", i + 1, f"Matching rows {i + 1}/{total}…")
     return verdicts
 

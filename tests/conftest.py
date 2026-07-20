@@ -50,7 +50,7 @@ def fake_resolver(monkeypatch):
             source="fixture",
         )
 
-    def fake_ensure_author(url, res, run_counter=None):
+    def fake_ensure_author(url, res, run_counter=None, retry_failed=False):
         return res
 
     import app.matcher as matcher_mod

@@ -39,9 +39,13 @@
   {% for w in preview.dmr.warnings %}<div class="warn">DMR: {{ w }}</div>{% endfor %}
 
   <form method="post" action="/runs/{{ run_id }}/start" style="margin-top:1rem">
+    {# hidden fallbacks: an unchecked checkbox sends nothing, so the server
+       could never see "off" without these #}
+    <input type="hidden" name="retry_failed_links" value="0">
     <p><label><input type="checkbox" name="retry_failed_links" value="1">
       Retry links whose previous resolution failed (successful resolutions are
       always served from cache and never re-fetched)</label></p>
+    <input type="hidden" name="use_llm" value="0">
     <p><label><input type="checkbox" name="use_llm" value="1"
         {% if anthropic_configured %}checked{% endif %}
         {% if not anthropic_configured %}disabled{% endif %}>

@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS link_cache (
     source       TEXT,                    -- direct | tikhub | direct+tikhub
     error        TEXT,
     raw_json     TEXT,
-    resolved_at  REAL NOT NULL
+    resolved_at  REAL NOT NULL,
+    author_failed_at REAL                 -- TTL marker for failed author enrichment
 );
 CREATE INDEX IF NOT EXISTS idx_link_cache_note ON link_cache(note_id);
 
@@ -58,12 +59,13 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE TABLE IF NOT EXISTS overrides (
     run_id     TEXT NOT NULL,
+    excel_row  INTEGER NOT NULL,          -- unique per run even when (CAMPAIGN, NO) collides
     campaign   TEXT NOT NULL,
     no         TEXT NOT NULL,
     status     TEXT NOT NULL,
     note       TEXT,
     updated_at REAL NOT NULL,
-    PRIMARY KEY (run_id, campaign, no)
+    PRIMARY KEY (run_id, excel_row)
 );
 """
 
@@ -79,6 +81,20 @@ def connect() -> sqlite3.Connection:
         with _init_lock:
             if not _initialized:
                 conn.executescript(SCHEMA)
+                # additive migrations for databases created by older versions
+                for stmt in (
+                    "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
+                ):
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
+                # pre-release overrides table was keyed (run_id, campaign, no);
+                # rebuild it keyed by excel_row (no deployments existed yet)
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(overrides)")}
+                if cols and "excel_row" not in cols:
+                    conn.execute("DROP TABLE overrides")
+                    conn.executescript(SCHEMA)
                 conn.commit()
                 _initialized = True
     return conn
@@ -97,7 +113,7 @@ def cache_put(url: str, **fields: Any) -> None:
     cols = [
         "status", "note_id", "author_id", "author_name", "likes", "collects",
         "comments", "title", "publish_time", "source", "error", "raw_json",
-        "resolved_at",
+        "resolved_at", "author_failed_at",
     ]
     values = [fields.get(c) for c in cols]
     with connect() as conn:
@@ -112,10 +128,11 @@ def cache_put(url: str, **fields: Any) -> None:
 
 
 def cache_merge(url: str, **fields: Any) -> None:
-    """Update only the provided fields on an existing cache row."""
+    """Update the provided fields (verbatim — an explicit None clears the
+    field) on an existing cache row, leaving all other fields untouched."""
     existing = cache_get(url) or {}
     existing.pop("url", None)
-    existing.update({k: v for k, v in fields.items() if v is not None})
+    existing.update(fields)
     cache_put(url, **existing)
 
 
@@ -181,30 +198,33 @@ def run_bump_counter(run_id: str, column: str, amount: int = 1) -> None:
 
 # ----------------------------------------------------------------- overrides
 
-def override_set(run_id: str, campaign: str, no: str, status: str, note: str = "") -> None:
+def override_set(run_id: str, excel_row: int, campaign: str, no: str,
+                 status: str, note: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "INSERT INTO overrides (run_id, campaign, no, status, note, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(run_id, campaign, no) DO UPDATE SET "
+            "INSERT INTO overrides (run_id, excel_row, campaign, no, status, note, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(run_id, excel_row) DO UPDATE SET "
+            "campaign=excluded.campaign, no=excluded.no, "
             "status=excluded.status, note=excluded.note, updated_at=excluded.updated_at",
-            (run_id, campaign, no, status, note, time.time()),
+            (run_id, excel_row, campaign, no, status, note, time.time()),
         )
         conn.commit()
 
 
-def override_clear(run_id: str, campaign: str, no: str) -> None:
+def override_clear(run_id: str, excel_row: int) -> None:
     with connect() as conn:
         conn.execute(
-            "DELETE FROM overrides WHERE run_id = ? AND campaign = ? AND no = ?",
-            (run_id, campaign, no),
+            "DELETE FROM overrides WHERE run_id = ? AND excel_row = ?",
+            (run_id, excel_row),
         )
         conn.commit()
 
 
-def overrides_for_run(run_id: str) -> dict[tuple[str, str], dict]:
+def overrides_for_run(run_id: str) -> dict[int, dict]:
+    """Keyed by the PLOG sheet row — unique per run, unlike (CAMPAIGN, NO)."""
     with connect() as conn:
         rows = conn.execute(
             "SELECT * FROM overrides WHERE run_id = ?", (run_id,)
         ).fetchall()
-    return {(r["campaign"], r["no"]): dict(r) for r in rows}
+    return {r["excel_row"]: dict(r) for r in rows}

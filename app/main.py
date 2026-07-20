@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -18,14 +18,18 @@ from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from . import config, db, runner
 from .matcher import LINK_ERROR, MATCH, NO_BLOGGER, NO_POST, REVIEW, NAME_MISLABEL
 from .parsers import parse_dmr, parse_plog
-from .report import build_audit_json, write_annotated_xlsx
+from .report import OVERRIDE_MATCH_BLANK, build_audit_json, write_annotated_xlsx
 
 app = FastAPI(title="DMR Reconciler")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+templates.env.filters["fromjson"] = json.loads
+
+_start_lock = threading.Lock()
 
 STATUS_BADGES = {
     MATCH: ("match", "MATCH"),
@@ -34,7 +38,21 @@ STATUS_BADGES = {
     LINK_ERROR: ("linkerror", "Check链接错误 LINK_ERROR"),
     REVIEW: ("review", "人工复核 REVIEW"),
 }
-OVERRIDE_CHOICES = ["", "无博主", "无帖子", "Check链接错误", NAME_MISLABEL, "人工复核"]
+OVERRIDE_CHOICES = ["", OVERRIDE_MATCH_BLANK, "无博主", "无帖子", "Check链接错误",
+                    NAME_MISLABEL, "人工复核"]
+
+
+@app.on_event("startup")
+async def recover_orphaned_runs() -> None:
+    """A deploy/restart (or Fly auto-stop) kills in-flight daemon threads;
+    their runs would otherwise stay 'running' forever with no restart path."""
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET status='error', phase='error', "
+            "message='Run interrupted by a restart — use Retry.' "
+            "WHERE status='running' OR status='queued'"
+        )
+        conn.commit()
 
 
 # ------------------------------------------------------------------- auth
@@ -68,7 +86,9 @@ async def login_form(request: Request):
 
 @app.post("/login")
 async def login(request: Request, password: str = Form(...)):
-    if config.APP_PASSWORD and hmac.compare_digest(password, config.APP_PASSWORD):
+    # compare_digest on bytes — non-ASCII passwords raise TypeError on str
+    if config.APP_PASSWORD and hmac.compare_digest(
+            password.encode(), config.APP_PASSWORD.encode()):
         resp = RedirectResponse("/", status_code=303)
         resp.set_cookie("dmr_session", _sign("authenticated"), httponly=True,
                         max_age=7 * 24 * 3600, samesite="lax")
@@ -106,8 +126,10 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
     dmr_path.write_bytes(await dmr.read())
 
     try:
-        p = parse_plog(str(plog_path))
-        d = parse_dmr(str(dmr_path))
+        # openpyxl parsing is CPU-bound; keep it off the event loop so
+        # /healthz and progress polls stay responsive during big uploads.
+        p = await run_in_threadpool(parse_plog, str(plog_path))
+        d = await run_in_threadpool(parse_dmr, str(dmr_path))
     except ValueError as e:
         return templates.TemplateResponse(
             request, "error.html", {"message": str(e)}, status_code=422)
@@ -152,17 +174,20 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
 
 
 @app.post("/runs/{run_id}/start")
-async def start(run_id: str, retry_failed_links: bool = Form(False),
-                use_llm: bool = Form(True)):
-    run = db.run_get(run_id)
-    if not run:
-        return Response(status_code=404)
-    if run["status"] in ("pending", "error"):
-        db.run_update(run_id, options_json=json.dumps({
-            "retry_failed_links": bool(retry_failed_links),
-            "use_llm": bool(use_llm),
-        }), status="pending", error=None)
-        runner.start_run(run_id)
+async def start(run_id: str, retry_failed_links: str = Form("0"),
+                use_llm: str = Form("0")):
+    """Checkbox values arrive as "1" (hidden-input fallback supplies "0" when
+    unchecked — a bool Form default can never receive False from a form)."""
+    with _start_lock:  # two concurrent POSTs must not spawn two run threads
+        run = db.run_get(run_id)
+        if not run:
+            return Response(status_code=404)
+        if run["status"] in ("pending", "error"):
+            db.run_update(run_id, options_json=json.dumps({
+                "retry_failed_links": retry_failed_links == "1",
+                "use_llm": use_llm == "1",
+            }), status="queued", error=None)
+            runner.start_run(run_id)
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -180,7 +205,9 @@ async def run_page(request: Request, run_id: str):
 
 @app.get("/runs/{run_id}/progress", response_class=HTMLResponse)
 async def progress(request: Request, run_id: str):
-    """htmx polling target — swaps in either a progress bar or the results."""
+    """htmx polling target — swaps in a progress bar, the results, or the
+    error panel. The done/error branches retarget #run-body, which removes the
+    polling element and therefore stops the poll loop."""
     run = db.run_get(run_id)
     if not run:
         return Response(status_code=404)
@@ -188,17 +215,25 @@ async def progress(request: Request, run_id: str):
         resp = await results_fragment(request, run_id)
         resp.headers["HX-Retarget"] = "#run-body"
         return resp
+    if run["status"] == "error":
+        resp = templates.TemplateResponse(
+            request, "_error_panel.html",
+            {"run": run, "run_id": run_id,
+             "options": json.loads(run.get("options_json") or "{}")})
+        resp.headers["HX-Retarget"] = "#run-body"
+        return resp
     return templates.TemplateResponse(request, "_progress.html", {"run": run})
 
 
 async def results_fragment(request: Request, run_id: str):
     run = db.run_get(run_id)
+    if not run:
+        return Response("run not found", status_code=404)
     result = json.loads(run.get("result_json") or "{}")
     verdicts = result.get("verdicts", [])
     overrides = db.overrides_for_run(run_id)
     for v in verdicts:
-        ov = overrides.get((v["campaign"], v["no"]))
-        v["override"] = ov
+        v["override"] = overrides.get(v["excel_row"])
     summary = json.loads(run.get("summary_json") or "{}")
     return templates.TemplateResponse(request, "_results.html", {
         "run": run, "run_id": run_id, "verdicts": verdicts,
@@ -218,12 +253,15 @@ async def results(request: Request, run_id: str):
 
 @app.post("/runs/{run_id}/override", response_class=HTMLResponse)
 async def set_override(request: Request, run_id: str,
+                       excel_row: int = Form(...),
                        campaign: str = Form(""), no: str = Form(""),
                        status: str = Form(""), note: str = Form("")):
+    if not db.run_get(run_id):
+        return Response("run not found", status_code=404)
     if status:
-        db.override_set(run_id, campaign, no, status, note)
+        db.override_set(run_id, excel_row, campaign, no, status, note)
     else:
-        db.override_clear(run_id, campaign, no)
+        db.override_clear(run_id, excel_row)
     return await results_fragment(request, run_id)
 
 
@@ -244,11 +282,14 @@ async def export_xlsx(run_id: str):
     result = json.loads(run["result_json"])
     verdicts = runner.load_verdicts(run)
     overrides = db.overrides_for_run(run_id)
-    out = Path(tempfile.mkdtemp()) / f"PLOG_DMR_CHECK_{run_id}.xlsx"
-    write_annotated_xlsx(
+    # a stable per-run path — overwritten on re-export, no /tmp leak
+    out = Path(run["plog_path"]).parent / f"PLOG_DMR_CHECK_{run_id}.xlsx"
+    await run_in_threadpool(
+        write_annotated_xlsx,
         run["plog_path"], str(out), verdicts,
-        header_row=result.get("plog_meta", {}).get("header_row", 1),
-        overrides=overrides,
+        result.get("plog_meta", {}).get("header_row", 1),
+        result.get("plog_meta", {}).get("sheet"),
+        overrides,
     )
     return FileResponse(str(out), filename=out.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
