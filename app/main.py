@@ -8,8 +8,10 @@ with live progress → results table with per-row evidence and human overrides
 from __future__ import annotations
 
 import hmac
+import io
 import json
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -22,6 +24,9 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from . import auth, config, db, perimeter as perimeter_mod, runner
+from .deck import DONUT_COLORS, assert_chart_cache, build_deck
+from .effreport import (COOPS, TIERS, ReportConfig, VerificationError,
+                        analyze as analyze_efficiency)
 from .matcher import (LINK_ERROR, MATCH, NO_BLOGGER,
                       NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
                       NO_POST_IN_PERIMETER, REVIEW, NAME_MISLABEL, S_TEXT)
@@ -481,6 +486,134 @@ async def export_json(run_id: str):
                            overrides=overrides)
     return Response(doc, media_type="application/json", headers={
         "Content-Disposition": f'attachment; filename="audit_{run_id}.json"'})
+
+
+# ------------------------------------------------- KOL efficiency report
+#
+# Client campaign data: the uploaded workbook is analyzed straight from
+# memory and never written to disk or the database. Finished reports live in
+# a small in-process store (TTL + cap) just long enough to be downloaded.
+
+_EFF_LOCK = threading.Lock()
+_EFF_REPORTS: dict[str, dict] = {}
+_EFF_TTL_SECONDS = 2 * 3600
+_EFF_MAX = 20
+
+EFF_BASES = {"pooled", "per_post"}
+EFF_TIER_MODES = {"label", "fanbase"}
+EFF_LANGUAGES = {"en", "zh"}
+
+
+def _eff_store(entry: dict) -> str:
+    token = uuid.uuid4().hex[:16]
+    now = time.time()
+    with _EFF_LOCK:
+        for k in [k for k, v in _EFF_REPORTS.items()
+                  if now - v["created"] > _EFF_TTL_SECONDS]:
+            del _EFF_REPORTS[k]
+        while len(_EFF_REPORTS) >= _EFF_MAX:
+            oldest = min(_EFF_REPORTS, key=lambda k: _EFF_REPORTS[k]["created"])
+            del _EFF_REPORTS[oldest]
+        _EFF_REPORTS[token] = {**entry, "created": now}
+    return token
+
+
+def _eff_get(token: str) -> Optional[dict]:
+    with _EFF_LOCK:
+        entry = _EFF_REPORTS.get(token)
+        if entry and time.time() - entry["created"] > _EFF_TTL_SECONDS:
+            del _EFF_REPORTS[token]
+            return None
+        return entry
+
+
+def _eff_report_context(token: str, entry: dict) -> dict:
+    analysis = entry["analysis"]
+    groups = analysis["metrics"]["groups"]
+    ordered = [(f"{t} {c}", groups[f"{t} {c}"])
+               for t in TIERS for c in COOPS if f"{t} {c}" in groups]
+    return {
+        "token": token,
+        "filename": entry["filename"],
+        "analysis": analysis,
+        "ordered_groups": ordered,
+        "donut_colors": DONUT_COLORS,
+        "has_deck": entry.get("pptx") is not None,
+    }
+
+
+@app.get("/efficiency", response_class=HTMLResponse)
+async def efficiency_form(request: Request):
+    return templates.TemplateResponse(request, "efficiency.html", {})
+
+
+@app.post("/efficiency", response_class=HTMLResponse)
+async def efficiency_run(request: Request, report: UploadFile,
+                         basis: str = Form("pooled"),
+                         tier_mode: str = Form("label"),
+                         language: str = Form("en")):
+    cfg = ReportConfig(
+        basis=basis if basis in EFF_BASES else "pooled",
+        tier_mode=tier_mode if tier_mode in EFF_TIER_MODES else "label",
+        language=language if language in EFF_LANGUAGES else "en",
+    )
+    data = await report.read()
+
+    def _analyze_and_build():
+        analysis = analyze_efficiency(io.BytesIO(data), cfg)
+        pptx = None
+        if not analysis["blocked"]:
+            pptx = build_deck(analysis)
+            assert_chart_cache(pptx, analysis)  # never ship unverified XML
+        return analysis, pptx
+
+    try:
+        analysis, pptx = await run_in_threadpool(_analyze_and_build)
+    except ValueError as e:  # V1 — wrong sheet shape
+        return templates.TemplateResponse(
+            request, "error.html", {"message": str(e)}, status_code=422)
+    except VerificationError as e:
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": f"Internal cross-check failed — report not generated: {e}"},
+            status_code=500)
+    except Exception as e:  # corrupt zip, wrong format, … — never a 500
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": f"Could not read the uploaded file as .xlsx: {e}"},
+            status_code=422)
+
+    filename = Path(report.filename or "report.xlsx").stem
+    token = _eff_store({"analysis": analysis, "pptx": pptx,
+                        "filename": filename})
+    return RedirectResponse(f"/efficiency/{token}", status_code=303)
+
+
+@app.get("/efficiency/{token}", response_class=HTMLResponse)
+async def efficiency_report(request: Request, token: str):
+    entry = _eff_get(token)
+    if not entry:
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": "This report has expired (reports are kept in memory "
+                        "for 2 hours, never stored). Re-upload the workbook."},
+            status_code=404)
+    return templates.TemplateResponse(request, "efficiency_report.html",
+                                      _eff_report_context(token, entry))
+
+
+@app.get("/efficiency/{token}/deck.pptx")
+async def efficiency_deck(token: str):
+    entry = _eff_get(token)
+    if not entry or entry.get("pptx") is None:
+        return Response("report expired or deck blocked by validation",
+                        status_code=404)
+    fname = f"{entry['filename']}_efficiency.pptx"
+    return Response(
+        entry["pptx"],
+        media_type="application/vnd.openxmlformats-officedocument"
+                   ".presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @app.get("/runs/{run_id}/api")

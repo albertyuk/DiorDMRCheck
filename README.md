@@ -67,6 +67,35 @@ Dead-link rows keep their verdict — perimeter hits are annotation only.
 `eval.py --perimeter <file>` maps both split statuses back to `无博主` so the
 reference agreement math is unchanged, and prints the in/out split.
 
+## KOL efficiency report (`/efficiency`)
+
+Upload a PLOG-style tracker on its own and get a chart-based efficiency
+presentation: a one-slide 16:9 `.pptx` with **native, editable charts**
+(donut of group shares, avg collab price, CPM & CPE bars split SOFT vs PAID
+per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
+
+- **Classification** — COOP from `TYPE` (`报备…`→PAID, `软植…`→SOFT), TIER
+  from `LEVEL` labels (`尾部`+`底部` merge into BOT — documented judgment
+  call, V8) or, via the form toggle, from `FAN BASE` thresholds. Unknown
+  values land in an UNCLASSIFIED bucket, never guessed.
+- **Metrics** — pooled basis (group Σspend÷Σimpressions ×1000, Σspend÷Σeng)
+  by default, per-post average as the alternative; the basis is printed on
+  the slide. The source file's CPM column is price per *single* impression —
+  ×1000 off standard CPM — and is never reused, only cross-checked (V5).
+- **Validation V1–V10** — findings (duplicate links, engagement identity
+  breaks, missing values, zero denominators, label conflicts, n<3 groups,
+  viral-post concentration >50%) are shown *with* the output and, where they
+  bias a number, become on-slide caveats. The source file is never mutated.
+- **Verification before download** — metrics are computed twice (raw loop +
+  pandas groupby, diffed to 1e-6), totals reconciled, and after the deck is
+  built the embedded chart XML's cached values are parsed back out of the
+  package and diffed against the metrics. Any mismatch blocks the download.
+- **Insights are single-wave only** — winners, premiums, and caveats derived
+  from the uploaded file; wave-over-wave comparisons are never generated.
+- **Privacy** — the workbook is analyzed in memory, never written to disk or
+  the database; the finished report is held in an in-process store and
+  expires after two hours.
+
 ## Running locally
 
 ```sh
