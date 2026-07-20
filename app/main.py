@@ -14,15 +14,17 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, runner
-from .matcher import LINK_ERROR, MATCH, NO_BLOGGER, NO_POST, REVIEW, NAME_MISLABEL
+from . import auth, config, db, perimeter as perimeter_mod, runner
+from .matcher import (LINK_ERROR, MATCH, NO_BLOGGER,
+                      NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
+                      NO_POST_IN_PERIMETER, REVIEW, NAME_MISLABEL, S_TEXT)
 from .parsers import parse_dmr, parse_plog
 from .report import OVERRIDE_MATCH_BLANK, build_audit_json, write_annotated_xlsx
 
@@ -40,9 +42,13 @@ STATUS_BADGES = {
     NO_BLOGGER: ("noblogger", "无博主 NO_BLOGGER"),
     LINK_ERROR: ("linkerror", "Check链接错误 LINK_ERROR"),
     REVIEW: ("review", "人工复核 REVIEW"),
+    NO_POST_IN_PERIMETER: ("periin", "Perimeter内 无帖子"),
+    NO_BLOGGER_NOT_IN_PERIMETER: ("periout", "不在Perimeter"),
 }
 OVERRIDE_CHOICES = ["", OVERRIDE_MATCH_BLANK, "无博主", "无帖子", "Check链接错误",
-                    NAME_MISLABEL, "人工复核"]
+                    NAME_MISLABEL, "人工复核",
+                    S_TEXT[NO_POST_IN_PERIMETER],
+                    S_TEXT[NO_BLOGGER_NOT_IN_PERIMETER]]
 
 
 @app.on_event("startup")
@@ -240,11 +246,19 @@ async def index(request: Request):
         "tikhub_configured": bool(config.TIKHUB_API_KEY),
         "anthropic_configured": bool(config.ANTHROPIC_API_KEY),
         "model": config.ANTHROPIC_MODEL,
+        "perimeter": perimeter_mod.current_meta(),
     })
 
 
+@app.post("/perimeter/remove")
+async def perimeter_remove():
+    db.setting_delete("current_perimeter")
+    return RedirectResponse("/", status_code=303)
+
+
 @app.post("/upload", response_class=HTMLResponse)
-async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
+async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
+                 perimeter: Optional[UploadFile] = File(None)):
     config.ensure_dirs()
     run_id = uuid.uuid4().hex[:12]
     run_dir = config.UPLOAD_DIR / run_id
@@ -267,6 +281,26 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
             request, "error.html",
             {"message": f"Could not read the uploaded file(s) as .xlsx: {e}"},
             status_code=422)
+
+    # Optional perimeter: a new upload replaces the persisted one; otherwise
+    # the last uploaded perimeter (if any) is reused for this run.
+    perim_meta = None
+    perim_warnings: list[str] = []
+    if perimeter is not None and perimeter.filename:
+        data = await perimeter.read()
+        try:
+            parsed = await run_in_threadpool(
+                perimeter_mod.ingest, data, Path(perimeter.filename).name)
+            perim_warnings = parsed.warnings
+        except ValueError as e:
+            return templates.TemplateResponse(
+                request, "error.html", {"message": str(e)}, status_code=422)
+        except Exception as e:
+            return templates.TemplateResponse(
+                request, "error.html",
+                {"message": f"Could not read the perimeter file: {e}"},
+                status_code=422)
+    perim_meta = perimeter_mod.current_meta()
 
     d_from, d_to = p.date_range
     out_of_window = 0
@@ -291,10 +325,13 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
             "warnings": d.warnings,
         },
         "out_of_window_rows": out_of_window,
+        "perimeter": ({**perim_meta, "warnings": perim_warnings}
+                      if perim_meta else None),
     }
     db.run_create(run_id, plog_path=str(plog_path), dmr_path=str(dmr_path),
                   plog_name=plog.filename, dmr_name=dmr.filename,
-                  preview=preview)
+                  preview=preview,
+                  perimeter_hash=perim_meta["hash"] if perim_meta else None)
     return templates.TemplateResponse(request, "preview.html", {
         "run_id": run_id, "preview": preview,
         "tikhub_configured": bool(config.TIKHUB_API_KEY),
@@ -367,6 +404,9 @@ async def results_fragment(request: Request, run_id: str):
     return templates.TemplateResponse(request, "_results.html", {
         "run": run, "run_id": run_id, "verdicts": verdicts,
         "counts": result.get("counts", {}),
+        "buckets": result.get("buckets"),
+        "perimeter_meta": result.get("perimeter_meta"),
+        "perimeter_warning": result.get("perimeter_warning"),
         "reverse_rows": result.get("reverse_audit", []),
         "plog_meta": result.get("plog_meta", {}),
         "dmr_meta": result.get("dmr_meta", {}),

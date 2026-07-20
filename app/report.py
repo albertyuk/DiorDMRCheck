@@ -35,9 +35,32 @@ EVIDENCE_HEADERS = [
     ("AD", "CANDIDATES"),
     ("AE", "CLAUDE VERDICT"),
     ("AF", "CLAUDE RATIONALE"),
-    ("AG", "NOTES"),
+    ("AG", "PERIMETER"),
+    ("AH", "NOTES"),
 ]
 EVIDENCE_START_COL = 20  # column T
+
+
+def _perimeter_text(v: Verdict) -> str:
+    parts = []
+    if v.perimeter_method:
+        entry = f"{v.perimeter_method}: {v.perimeter_name or v.perimeter_namebis}"
+        if v.perimeter_namebis and v.perimeter_name:
+            entry += f" / {v.perimeter_namebis}"
+        if v.perimeter_dmrid:
+            entry += f" · DMRID {v.perimeter_dmrid}"
+        if v.perimeter_redbook_id:
+            entry += f" · REDBOOK {v.perimeter_redbook_id}"
+        if v.perimeter_followers is not None:
+            entry += f" · {v.perimeter_followers:,} followers"
+        parts.append(entry)
+    if v.perimeter_note:
+        parts.append(v.perimeter_note)
+    if v.perimeter_candidates:
+        parts.append("candidates: " + " ; ".join(v.perimeter_candidates))
+    if parts and v.perimeter_extraction_date:
+        parts.append(f"extracted {v.perimeter_extraction_date}")
+    return " | ".join(parts)
 
 
 def _candidates_text(v: Verdict) -> str:
@@ -102,6 +125,7 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
             _candidates_text(v) or None,
             llm or None,
             rationale or None,
+            _perimeter_text(v) or None,
             " | ".join(v.notes + ([ov["note"]] if ov and ov.get("note") else [])) or None,
         ]
         for col_idx, value in enumerate(values, start=EVIDENCE_START_COL):

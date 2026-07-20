@@ -84,6 +84,11 @@ def main() -> int:
     ap.add_argument("reference")
     ap.add_argument("--no-llm", action="store_true",
                     help="skip Tier-4 adjudication (deterministic tiers only)")
+    ap.add_argument("--perimeter", default="",
+                    help="optional Micro perimeter workbook — splits 无博主 by "
+                         "membership (both split statuses map back to 无博主 "
+                         "for the agreement math, since the reference predates "
+                         "this feature)")
     args = ap.parse_args()
 
     t0 = time.time()
@@ -91,6 +96,26 @@ def main() -> int:
     dmr = parse_dmr(args.dmr)
     for w in plog.warnings + dmr.warnings:
         print(f"  [parse warning] {w}")
+
+    perim = None
+    if args.perimeter:
+        from app import perimeter as perimeter_mod
+        data = open(args.perimeter, "rb").read()
+        h = perimeter_mod.file_hash(data)
+        perim = perimeter_mod.load_cached(h)
+        if perim is None:
+            import io
+            print("  [perimeter] parsing (first time for this file hash)…",
+                  file=sys.stderr)
+            parsed = perimeter_mod.parse_perimeter(
+                io.BytesIO(data), filename=args.perimeter, content_hash=h)
+            perimeter_mod.store_parsed(parsed)
+            perim = perimeter_mod.load_cached(h)
+            for w in parsed.warnings:
+                print(f"  [perimeter warning] {w}")
+        print(f"  [perimeter] {len(perim.rows):,} rows, "
+              f"{len(perim.by_redbook):,} with REDBOOK_ID, "
+              f"extracted {perim.extraction_date or '?'}")
 
     tikhub_calls = [0]
 
@@ -101,10 +126,26 @@ def main() -> int:
         if done in (1, total) or done % 10 == 0:
             print(f"  [{phase}] {msg}", file=sys.stderr)
 
-    verdicts = run_pipeline(plog, dmr, progress=progress, tikhub_counter=counter)
+    verdicts = run_pipeline(plog, dmr, progress=progress, tikhub_counter=counter,
+                            perimeter=perim)
     if not args.no_llm:
         adjudicate(verdicts)
     elapsed = time.time() - t0
+
+    if perim is not None:
+        from app.matcher import (NO_BLOGGER_NOT_IN_PERIMETER,
+                                 NO_POST_IN_PERIMETER)
+        inside = [v for v in verdicts if v.status == NO_POST_IN_PERIMETER]
+        outside = [v for v in verdicts if v.status == NO_BLOGGER_NOT_IN_PERIMETER]
+        print(f"\n=== Perimeter split of 无博主 rows ===")
+        print(f"  in perimeter (→ DMR gap): {len(inside)}")
+        for v in inside:
+            print(f"    {v.name} — REDBOOK {v.perimeter_redbook_id} "
+                  f"({v.perimeter_name or v.perimeter_namebis})")
+        print(f"  not in perimeter: {len(outside)}")
+        for v in outside:
+            extra = f" [{v.perimeter_note}]" if v.perimeter_note else ""
+            print(f"    {v.name}{extra}")
 
     reference = load_reference(args.reference)
     ours = {(v.campaign, v.no): v for v in verdicts}

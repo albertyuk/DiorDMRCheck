@@ -4,6 +4,17 @@
     <span class="stat muted">TikHub calls: {{ run.tikhub_calls or 0 }}</span>
     <span class="stat muted">LLM calls: {{ run.llm_calls or 0 }}</span>
   </div>
+  {% if perimeter_meta %}
+  <div class="counts">
+    <span class="stat" style="border-color:#b04a00"><b>{{ buckets.dmr_gaps }}</b>
+      DMR gaps（无帖子 + Perimeter内无博主）— actionable</span>
+    <span class="stat" style="border-color:#8a8a8a"><b>{{ buckets.outside_perimeter }}</b>
+      不在Perimeter内 — out of scope</span>
+    <span class="stat muted">Perimeter: {{ perimeter_meta.filename }} ·
+      extracted {{ perimeter_meta.extraction_date or "?" }}</span>
+  </div>
+  {% endif %}
+  {% if perimeter_warning %}<div class="warn">{{ perimeter_warning }}</div>{% endif %}
   <p>
     <a class="btn" href="/runs/{{ run_id }}/export.xlsx">Download annotated .xlsx</a>
     <a class="btn secondary" href="/runs/{{ run_id }}/export.json">JSON audit log</a>
@@ -77,6 +88,18 @@
                     ({{ c.name_method }})<br>
                   {% endfor %}
                   <span class="caveat">Candidate list is ranked by date proximity only — never auto-matched.</span>
+                </dd>
+              {% endif %}
+              {% if v.perimeter_method or v.perimeter_note or v.perimeter_candidates %}
+                <dt>Perimeter</dt><dd>
+                  {% if v.perimeter_method %}matched via {{ v.perimeter_method }}:
+                    {{ v.perimeter_name }}{% if v.perimeter_namebis %} / {{ v.perimeter_namebis }}{% endif %}
+                    · DMRID {{ v.perimeter_dmrid or "?" }}
+                    {% if v.perimeter_redbook_id %}· REDBOOK {{ v.perimeter_redbook_id }}{% endif %}
+                    {% if v.perimeter_followers is not none %}· {{ "{:,}".format(v.perimeter_followers) }} followers{% endif %}<br>{% endif %}
+                  {% if v.perimeter_note %}{{ v.perimeter_note }}<br>{% endif %}
+                  {% for c in v.perimeter_candidates %}{{ c }}<br>{% endfor %}
+                  <span class="muted">extraction: {{ v.perimeter_extraction_date or "?" }}</span>
                 </dd>
               {% endif %}
               {% if v.llm_verdict %}

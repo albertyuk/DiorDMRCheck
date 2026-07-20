@@ -23,8 +23,29 @@
       <input type="file" name="plog" accept=".xlsx" required></label></p>
     <p><label>DMR file (e.g. <code>YTD_DMR_MICRO_0720.xlsx</code>)<br>
       <input type="file" name="dmr" accept=".xlsx" required></label></p>
+    <p><label>Perimeter (Micro) — optional
+      {% if perimeter %}<span class="muted">(replaces the current one below)</span>{% endif %}<br>
+      <input type="file" name="perimeter" accept=".xlsx"></label></p>
     <button type="submit">Upload &amp; preview</button>
   </form>
+
+  {% if perimeter %}
+    <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
+      <b>Perimeter in use:</b> {{ perimeter.filename }} ·
+      extracted {{ perimeter.extraction_date or "unknown date" }} ·
+      {{ "{:,}".format(perimeter.rows) }} rows,
+      {{ "{:,}".format(perimeter.redbook_count) }} with REDBOOK_ID.
+      无博主 rows will be split by perimeter membership. The perimeter updates
+      regularly — replace it when the extraction date gets stale.
+      <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
+            onsubmit="return confirm('Remove the perimeter? Runs revert to plain 无博主.')">
+        <button type="submit" class="secondary" style="padding:.3rem .8rem">Remove</button>
+      </form>
+    </div>
+  {% else %}
+    <p class="muted" style="font-size:.78rem">No perimeter uploaded — 无博主
+      rows are not split by perimeter membership.</p>
+  {% endif %}
 </div>
 
 <div class="card">

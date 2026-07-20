@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS runs (
     summary_json  TEXT,
     tikhub_calls  INTEGER DEFAULT 0,
     llm_calls     INTEGER DEFAULT 0,
-    error         TEXT
+    error         TEXT,
+    perimeter_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS overrides (
@@ -76,6 +77,22 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin      INTEGER DEFAULT 0,
     created_at    REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS perimeter_cache (
+    file_hash       TEXT PRIMARY KEY,     -- sha256 of the uploaded workbook
+    filename        TEXT,
+    sheet           TEXT,
+    extraction_date TEXT,
+    row_count       INTEGER,
+    redbook_count   INTEGER,
+    parsed_json     TEXT NOT NULL,        -- rows with precomputed norm forms
+    created_at      REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -94,6 +111,7 @@ def connect() -> sqlite3.Connection:
                 for stmt in (
                     "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
                     "ALTER TABLE overrides ADD COLUMN updated_by TEXT",
+                    "ALTER TABLE runs ADD COLUMN perimeter_hash TEXT",
                 ):
                     try:
                         conn.execute(stmt)
@@ -152,8 +170,8 @@ def run_create(run_id: str, **fields: Any) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO runs (id, created_at, status, plog_path, dmr_path, "
-            "plog_name, dmr_name, options_json, preview_json) "
-            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+            "plog_name, dmr_name, options_json, preview_json, perimeter_hash) "
+            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id, time.time(),
                 fields.get("plog_path"), fields.get("dmr_path"),
@@ -162,6 +180,7 @@ def run_create(run_id: str, **fields: Any) -> None:
                 # uses this to distinguish "not started" from "starting".
                 json.dumps(fields["options"]) if fields.get("options") is not None else None,
                 json.dumps(fields.get("preview") or {}, ensure_ascii=False, default=str),
+                fields.get("perimeter_hash"),
             ),
         )
         conn.commit()
@@ -275,6 +294,51 @@ def admin_count() -> int:
     with connect() as conn:
         return conn.execute(
             "SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
+
+
+# ---------------------------------------------------- perimeter cache + kv
+
+def perimeter_cache_get(file_hash: str) -> Optional[dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM perimeter_cache WHERE file_hash = ?",
+                           (file_hash,)).fetchone()
+    return dict(row) if row else None
+
+
+def perimeter_cache_put(file_hash: str, **fields: Any) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO perimeter_cache (file_hash, filename, sheet, "
+            "extraction_date, row_count, redbook_count, parsed_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(file_hash) DO UPDATE SET filename=excluded.filename",
+            (file_hash, fields.get("filename"), fields.get("sheet"),
+             fields.get("extraction_date"), fields.get("row_count"),
+             fields.get("redbook_count"), fields["parsed_json"], time.time()),
+        )
+        conn.commit()
+
+
+def setting_get(key: str) -> Optional[str]:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?",
+                           (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def setting_set(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value))
+        conn.commit()
+
+
+def setting_delete(key: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        conn.commit()
 
 
 def override_clear(run_id: str, excel_row: int) -> None:

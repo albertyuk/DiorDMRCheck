@@ -35,6 +35,19 @@
     </div>
   </div>
 
+  {% if preview.perimeter %}
+    <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
+      <b>Perimeter (Micro):</b> {{ preview.perimeter.filename }} ·
+      extracted {{ preview.perimeter.extraction_date or "unknown date" }} ·
+      {{ "{:,}".format(preview.perimeter.rows) }} rows,
+      {{ "{:,}".format(preview.perimeter.redbook_count) }} with REDBOOK_ID —
+      无博主 rows will be split by membership.</div>
+    {% for w in preview.perimeter.warnings %}<div class="warn">Perimeter: {{ w }}</div>{% endfor %}
+  {% else %}
+    <p class="muted" style="font-size:.78rem">No perimeter — 无博主 rows stay
+      unsplit.</p>
+  {% endif %}
+
   {% for w in preview.plog.warnings %}<div class="warn">PLOG: {{ w }}</div>{% endfor %}
   {% for w in preview.dmr.warnings %}<div class="warn">DMR: {{ w }}</div>{% endfor %}
 

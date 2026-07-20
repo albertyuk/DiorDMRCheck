@@ -11,9 +11,9 @@ import json
 import threading
 import traceback
 
-from . import db
+from . import db, perimeter as perimeter_mod
 from .adjudicator import adjudicate, summarize_run
-from .matcher import Verdict, run_pipeline, status_counts
+from .matcher import Verdict, run_pipeline, status_counts, summary_buckets
 from .parsers import parse_dmr, parse_plog
 from .reverse_audit import reverse_audit
 
@@ -34,6 +34,15 @@ def _run(run_id: str) -> None:
         plog = parse_plog(run["plog_path"])
         dmr = parse_dmr(run["dmr_path"])
 
+        perim = None
+        perim_warning = None
+        if run.get("perimeter_hash"):
+            perim = perimeter_mod.load_cached(run["perimeter_hash"])
+            if perim is None:
+                perim_warning = (
+                    "The perimeter file recorded for this run is no longer in "
+                    "the cache — running without the perimeter split.")
+
         def progress(phase: str, done: int, total: int, msg: str) -> None:
             db.run_progress(run_id, phase, done, total, msg)
 
@@ -46,6 +55,7 @@ def _run(run_id: str) -> None:
         verdicts = run_pipeline(
             plog, dmr, progress=progress, tikhub_counter=tikhub_counter,
             retry_failed_links=bool(options.get("retry_failed_links")),
+            perimeter=perim,
         )
 
         if options.get("use_llm", True):
@@ -67,6 +77,14 @@ def _run(run_id: str) -> None:
         result = {
             "verdicts": [v.to_dict() for v in verdicts],
             "counts": counts,
+            "buckets": summary_buckets(counts),
+            "perimeter_meta": ({
+                "filename": perim.filename,
+                "extraction_date": perim.extraction_date,
+                "rows": len(perim.rows),
+                "redbook_count": len(perim.by_redbook),
+            } if perim else None),
+            "perimeter_warning": perim_warning,
             "reverse_audit": reverse_rows,
             "plog_meta": {
                 "sheet": plog.sheet, "header_row": plog.header_row,

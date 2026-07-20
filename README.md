@@ -42,6 +42,31 @@ Column S vocabulary reproduces the human reference exactly:
 blank = matched · `无博主` · `无帖子` · `Check链接错误` (+ candidate note) ·
 `有 但是DMR博主名字标注错误` · `人工复核`.
 
+## Perimeter cross-check (optional)
+
+Upload the LVMH Micro social perimeter workbook (third slot on the upload
+screen) and `无博主` rows are split by perimeter membership — an offline join,
+no new external calls:
+
+- resolved `author_id ∈ REDBOOK_ID` set → `无博主但在Perimeter内→无帖子`
+  (blogger is monitored yet absent from the export → a genuine DMR gap,
+  bucketed with `无帖子`);
+- otherwise → `无博主（不在Perimeter内）`, with name-ladder hits recorded as
+  evidence only: a single same-name row with a *different* REDBOOK_ID is a
+  near-miss note, a single row *without* a REDBOOK_ID gets
+  `在Perimeter名单但未登记REDBOOK_ID` (actionable — DMR cannot crawl an
+  unregistered account), and multi-hit names (e.g. `esther`, or
+  `Ananas吃一半` with 91 same-name rows) are never auto-classified.
+
+Only the `List Micro` sheet is read (header located by the NAME+REDBOOK_ID
+fingerprint; the extraction date is parsed from the metadata and shown —
+staleness matters). The parsed 58.8k rows are cached in SQLite by content
+hash, so re-runs add under ~2 s. The last uploaded perimeter persists across
+runs until replaced or removed; without one, behavior is exactly as before.
+Dead-link rows keep their verdict — perimeter hits are annotation only.
+`eval.py --perimeter <file>` maps both split statuses back to `无博主` so the
+reference agreement math is unchanged, and prints the in/out split.
+
 ## Running locally
 
 ```sh
