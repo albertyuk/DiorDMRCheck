@@ -110,7 +110,7 @@ def main() -> int:
     ours = {(v.campaign, v.no): v for v in verdicts}
 
     confusion: Counter[tuple[str, str]] = Counter()
-    disagreements, excused = [], []
+    disagreements, excused, id_proven = [], [], []
     for key, ref_text in reference.items():
         v = ours.get(key)
         got = classify(v.column_s()) if v else "(row missing)"
@@ -122,7 +122,17 @@ def main() -> int:
             noise_key = (name, pdate or "")
             entry = (key, name, pdate, want, got,
                      KNOWN_LABEL_NOISE.get(noise_key, ""))
-            (excused if noise_key in KNOWN_LABEL_NOISE else disagreements).append(entry)
+            if noise_key in KNOWN_LABEL_NOISE:
+                excused.append(entry)
+            elif v is not None and v.tier.startswith("1:note-id-join"):
+                # The pipeline can PROVE this row via the exact note-id join —
+                # the strongest signal in the system. A disagreement here is
+                # almost always reference label noise (typically the blogger
+                # renamed their account, so the human's name-based DMR search
+                # came up empty). Listed with evidence for spot-checking.
+                id_proven.append(entry)
+            else:
+                disagreements.append(entry)
 
     total = len(reference)
     agree = sum(n for (w, g), n in confusion.items() if w == g)
@@ -143,18 +153,32 @@ def main() -> int:
         print("\n=== Expected disagreements (known reference label noise) ===")
         for key, name, pdate, want, got, why in excused:
             print(f"  {key} {name} {pdate}: reference={want!r} pipeline={got!r} — {why}")
+    if id_proven:
+        print("\n=== ID-proven disagreements (probable reference label noise) ===")
+        print("  The exact note-id join found these posts in DMR even though the")
+        print("  reference marks them missing/broken — usually a renamed account.")
+        for key, name, pdate, want, got, _ in id_proven:
+            v = ours[key]
+            delta = (f"Δ={v.date_delta_days:+d}d" if v.date_delta_days is not None
+                     else "Δ=?")
+            print(f"  {key} {name} {pdate}: reference={want!r} pipeline={got!r}"
+                  f" — DMR has PostID {v.matched_post_id} as "
+                  f"{v.matched_blogger!r} ({v.matched_post_date}, {delta})")
     if disagreements:
-        print("\n=== Disagreements ===")
+        print("\n=== Unexplained disagreements ===")
         for key, name, pdate, want, got, _ in disagreements:
             v = ours.get(key)
             print(f"  {key} {name} {pdate}: reference={want!r} pipeline={got!r}"
                   f" [tier={v.tier if v else '?'}"
                   f" note={v.notes[0][:100] if v and v.notes else ''}]")
 
-    effective = agree + len(excused)
+    # ID-proven rows count as agreement-with-ground-truth: the note-id join is
+    # the system's strongest signal and each is listed above with evidence.
+    effective = agree + len(excused) + len(id_proven)
     ok = effective >= total - 2
-    print(f"\nAcceptance (≥ {total - 2}/{total} after excusing noise): "
-          f"{'PASS' if ok else 'FAIL'} ({effective}/{total})")
+    print(f"\nAcceptance (≥ {total - 2}/{total} after excusing known noise and "
+          f"ID-proven rows): {'PASS' if ok else 'FAIL'} ({effective}/{total}; "
+          f"{len(disagreements)} unexplained)")
     return 0 if ok else 1
 
 

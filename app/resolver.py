@@ -91,6 +91,88 @@ def _note_id_from_url(url: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
+def _note_object_from_state(state: Any) -> Optional[dict]:
+    """Find the note object inside XHS's __INITIAL_STATE__. Known shapes:
+    mobile/discovery SSR: state.noteData.data.noteData;
+    desktop explore SSR:  state.note.noteDetailMap[<id>].note.
+    Fallback: any dict carrying both a user.userId and interactInfo."""
+    try:
+        node = state["noteData"]["data"]["noteData"]
+        if isinstance(node, dict) and node.get("user"):
+            return node
+    except (KeyError, TypeError):
+        pass
+    try:
+        detail_map = state["note"]["noteDetailMap"]
+        for entry in detail_map.values():
+            node = entry.get("note")
+            if isinstance(node, dict) and node.get("user"):
+                return node
+    except (KeyError, TypeError, AttributeError):
+        pass
+    stack = [state]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            user = node.get("user")
+            if (isinstance(user, dict) and user.get("userId")
+                    and ("interactInfo" in node or "time" in node)):
+                return node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None
+
+
+def direct_fetch_note_detail(url: str, expected_note_id: str = "") -> dict:
+    """Free enrichment: fetch the note page itself and read the author (and
+    engagement snapshot) out of the SSR __INITIAL_STATE__. Works only when
+    XHS serves the full page to this IP — degrade to {} on any failure; the
+    TikHub path remains authoritative."""
+    try:
+        with httpx.Client(follow_redirects=True,
+                          timeout=config.DIRECT_HTTP_TIMEOUT * 2,
+                          headers={"User-Agent": MOBILE_UA}) as client:
+            resp = client.get(url)
+        if resp.status_code != 200:
+            return {}
+        final_note = _note_id_from_url(str(resp.url))
+        if expected_note_id and final_note and final_note != expected_note_id.lower():
+            return {}  # redirected to a different note — don't trust the page
+        m = re.search(r"__INITIAL_STATE__\s*=\s*(\{.*?)</script>",
+                      resp.text, re.DOTALL)
+        if not m:
+            return {}
+        blob = re.sub(r"\bundefined\b", "null", m.group(1).strip().rstrip(";"))
+        note = _note_object_from_state(json.loads(blob))
+        if not note:
+            return {}
+        user = note.get("user") or {}
+        author_id = str(user.get("userId") or "")
+        if not is_hex24(author_id):
+            return {}
+        interact = note.get("interactInfo") or {}
+        ptime = note.get("time")
+        if isinstance(ptime, (int, float)):
+            ts = float(ptime) / (1000 if ptime > 1e12 else 1)
+            try:
+                ptime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            except (OverflowError, OSError, ValueError):
+                ptime = str(ptime)
+        return {
+            "note_id": (note.get("noteId") or final_note or expected_note_id or "").lower(),
+            "author_id": author_id,
+            "author_name": str(user.get("nickname") or user.get("nickName") or ""),
+            "likes": _to_int_or_none(interact.get("likedCount") or interact.get("liked_count")),
+            "collects": _to_int_or_none(interact.get("collectedCount") or interact.get("collected_count")),
+            "comments": _to_int_or_none(interact.get("commentCount") or interact.get("comment_count")),
+            "title": str(note.get("title") or ""),
+            "publish_time": str(ptime) if ptime else "",
+        }
+    except Exception:
+        return {}
+
+
 def direct_resolve(url: str) -> Optional[str]:
     """Walk the redirect chain manually; return the note id or None.
 
@@ -401,11 +483,36 @@ def ensure_author(url: str, res: Resolution,
     if res.author_id or not res.ok:
         return res
     url = _normalize_url(url)
+
+    # Free first try: the note page's SSR state carries the author id. This
+    # runs even when a previous enrichment failed (it costs nothing) — the
+    # failure TTL below only gates the paid TikHub call.
+    page = direct_fetch_note_detail(url, expected_note_id=res.note_id)
+    if page.get("author_id"):
+        res.author_id = page["author_id"]
+        res.author_name = page.get("author_name") or res.author_name
+        res.likes = page.get("likes") if page.get("likes") is not None else res.likes
+        res.collects = page.get("collects") if page.get("collects") is not None else res.collects
+        res.comments = page.get("comments") if page.get("comments") is not None else res.comments
+        res.title = page.get("title") or res.title
+        res.publish_time = page.get("publish_time") or res.publish_time
+        res.source = res.source + "+page"
+        res.error = ""
+        db.cache_merge(
+            url, author_id=res.author_id, author_name=res.author_name or None,
+            likes=res.likes, collects=res.collects, comments=res.comments,
+            title=res.title or None, publish_time=res.publish_time or None,
+            source=res.source, error=None, author_failed_at=None,
+            resolved_at=time.time(),
+        )
+        return res
+
     cached = db.cache_get(url) or {}
     failed_at = cached.get("author_failed_at")
     if failed_at and not retry_failed:
         if (time.time() - failed_at) / 3600 < config.FAILED_CACHE_TTL_HOURS:
             return res
+
     try:
         body = tikhub_fetch_note(note_id=res.note_id, counter=run_counter)
         fields = _extract_note_fields(body)

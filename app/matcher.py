@@ -229,8 +229,15 @@ def _fill_match_evidence(v: Verdict, prow: PlogRow, drow: DmrRow) -> None:
 
 
 def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
-              window: tuple[Optional[date], Optional[date]]) -> Verdict:
-    """Tiers 1–3 for one PLOG row, given its (attempted) link resolution."""
+              window: tuple[Optional[date], Optional[date]],
+              sibling_authors: Optional[dict[str, set[str]]] = None) -> Verdict:
+    """Tiers 1–3 for one PLOG row, given its (attempted) link resolution.
+
+    sibling_authors maps norm(NAME) → author ids established deterministically
+    by OTHER rows of the same blogger (their link resolution, or the Username
+    of their Tier-1-joined DMR row). When this row's note resolved but its
+    detail is dead/blocked, a unique sibling author id still lets Tier 2
+    decide 无博主/无帖子 — same tracker, same NAME, same KOL."""
     v = Verdict(
         campaign=prow.campaign, no=prow.no, name=prow.name,
         post_date=prow.post_date.isoformat() if prow.post_date else None,
@@ -268,6 +275,22 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 )
             return v
 
+        # Note resolved but detail unavailable (dead/WAF-blocked note): a
+        # unique author id from a sibling row of the same blogger is still a
+        # deterministic Tier-2 signal.
+        author_via_sibling = False
+        if not res.author_id and sibling_authors:
+            sib = sibling_authors.get(norm(prow.name)) or set()
+            if len(sib) == 1:
+                res.author_id = next(iter(sib))
+                v.resolved_author_id = res.author_id
+                author_via_sibling = True
+                v.notes.append(
+                    "Author id established from another PLOG row of the same "
+                    "blogger (identical NAME) — this row's note detail is "
+                    "dead/blocked, but blogger presence is still decidable."
+                )
+
         # ---- Tier 2: blogger presence via author id
         if res.author_id and not idx.by_author_id:
             # The DMR file has no usable Username column at all — a blanket
@@ -284,7 +307,7 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             author_rows = idx.by_author_id.get(res.author_id)
             if author_rows:
                 v.status = NO_POST
-                v.tier = "2:author-id"
+                v.tier = "2:author-id-sibling" if author_via_sibling else "2:author-id"
                 v.notes.append(
                     f"DMR tracks author {res.author_id} "
                     f"({author_rows[0].blogger!r}, {len(author_rows)} post(s)) but "
@@ -312,7 +335,7 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 return v
             # author absent from DMR
             v.status = NO_BLOGGER
-            v.tier = "2:author-id"
+            v.tier = "2:author-id-sibling" if author_via_sibling else "2:author-id"
             # Cross-check: high-precision name hit contradicts "no blogger".
             # Length floors keep 1-char CJK / short norm names from flipping
             # correct verdicts to REVIEW via coincidental substrings.
@@ -397,12 +420,30 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
             done += 1
             report("resolve", done, f"Resolving links {done}/{total}…")
 
+    # Deterministic author ids per blogger name, established by any row's
+    # resolution or Tier-1 join — lets Tier 2 decide rows whose own note
+    # detail is dead/blocked (sibling inference).
+    sibling_authors: dict[str, set[str]] = {}
+    for i, prow in enumerate(plog.rows):
+        res = resolutions[i]
+        if not res.ok:
+            continue
+        key = norm(prow.name)
+        if not key:
+            continue
+        if res.author_id:
+            sibling_authors.setdefault(key, set()).add(res.author_id)
+        drow = idx.by_post_id.get(res.note_id)
+        if drow is not None and drow.username:
+            sibling_authors.setdefault(key, set()).add(drow.username)
+
     # Phase 2: tiered matching (fast, in order). A bug on one row must not
     # take down the run — degrade that row to REVIEW with the error attached.
     verdicts: list[Verdict] = []
     for i, prow in enumerate(plog.rows):
         try:
-            verdicts.append(match_row(prow, idx, resolutions[i], window))
+            verdicts.append(match_row(prow, idx, resolutions[i], window,
+                                      sibling_authors=sibling_authors))
         except Exception as e:
             v = Verdict(
                 campaign=prow.campaign, no=prow.no, name=prow.name,

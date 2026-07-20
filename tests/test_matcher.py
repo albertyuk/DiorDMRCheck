@@ -103,6 +103,18 @@ def test_duplicate_blogger_across_campaigns(verdicts):
     assert v3.matched_post_id == fixtures.N_DUP_C3
 
 
+def test_sibling_author_inference(verdicts):
+    """A note that resolves but whose detail is dead/blocked still gets a
+    deterministic Tier-2 verdict when a sibling row of the same blogger
+    established the author id."""
+    by, *_ = verdicts
+    v = by[("PLOG #003", "2")]
+    assert v.status == NO_POST
+    assert v.tier == "2:author-id-sibling"
+    assert v.resolved_author_id == fixtures.U_MOCHI
+    assert v.column_s() == "无帖子"
+
+
 def test_reverse_audit_finds_untracked_post(verdicts):
     by, plog, dmr, vs = verdicts
     rows = reverse_audit(plog, dmr, vs)

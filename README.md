@@ -71,8 +71,8 @@ concurrency ≤ 4, and a per-run cost counter shown in the UI.
 ## Deploying on Fly.io
 
 ```sh
-fly launch --no-deploy         # uses the checked-in fly.toml (region hkg)
-fly volumes create data --region hkg --size 1
+fly launch --no-deploy         # uses the checked-in fly.toml (region sin)
+fly volumes create data --region sin --size 1
 fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=...
 fly deploy
 ```

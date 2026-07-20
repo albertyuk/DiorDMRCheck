@@ -1,7 +1,7 @@
-# fly launch --no-deploy && fly volumes create data --region hkg --size 1
+# fly launch --no-deploy && fly volumes create data --region sin --size 1
 # fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=...
 app = "dmr-reconciler"
-primary_region = "hkg"
+primary_region = "sin"
 
 [build]
 

@@ -35,6 +35,7 @@ N_DUP_C3 = "6a1a0000000000000000a008"      # duplicate blogger, campaign #003 po
 N_OLD = "6a1a0000000000000000a009"         # out-of-window December post
 N_EXTRA = "6a1a0000000000000000a00a"       # DMR extra post → reverse audit
 N_CONFLICT = "6a1a0000000000000000a00b"    # tier-2 name-conflict row
+N_DEAD_DETAIL = "6a1a0000000000000000a00c"  # note resolves, detail dead → sibling tier
 
 U_MOCHI = "5f00000000000000000000b1"
 U_BING = "5f00000000000000000000b2"
@@ -72,6 +73,10 @@ def plog_rows() -> list[dict]:
         # -------- PLOG #003 (duplicate blogger across campaigns)
         dict(no=1, campaign="PLOG #003", name="墨池墨吟", date=datetime(2026, 7, 10),
              link=LINK.format("mochi-jul"), like=300, collection=20, comment=6),
+        # note resolves but detail is dead/blocked (no author) — the author id
+        # must come from the sibling 墨池墨吟 rows above → deterministic 无帖子
+        dict(no=2, campaign="PLOG #003", name="墨池墨吟", date=datetime(2026, 7, 12),
+             link=LINK.format("mochi-dead-detail"), like=50, collection=4, comment=1),
     ]
 
 
@@ -157,4 +162,5 @@ def fake_resolutions() -> dict[str, dict]:
                                       author=U_CONFLICT_PLOG, nick="早春的树"),
         LINK.format("old"): dict(note_id=N_OLD, author=U_MOCHI, nick="墨池墨吟"),
         LINK.format("mochi-jul"): dict(note_id=N_DUP_C3, author=U_MOCHI, nick="墨池墨吟"),
+        LINK.format("mochi-dead-detail"): dict(note_id=N_DEAD_DETAIL, author="", nick=""),
     }
