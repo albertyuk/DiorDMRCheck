@@ -7,25 +7,28 @@ with live progress → results table with per-row evidence and human overrides
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import threading
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, runner
+from . import auth, config, db, runner
 from .matcher import LINK_ERROR, MATCH, NO_BLOGGER, NO_POST, REVIEW, NAME_MISLABEL
 from .parsers import parse_dmr, parse_plog
 from .report import OVERRIDE_MATCH_BLANK, build_audit_json, write_annotated_xlsx
 
 app = FastAPI(title="DMR Reconciler")
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")),
+          name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.filters["fromjson"] = json.loads
 
@@ -56,45 +59,171 @@ async def recover_orphaned_runs() -> None:
 
 
 # ------------------------------------------------------------------- auth
+#
+# APP_PASSWORD is the *setup code*: /setup (which requires it) creates the
+# first admin account; admins add coworkers on /team. Without APP_PASSWORD
+# the app runs open (local development).
 
-def _sign(value: str) -> str:
-    return hmac.new(config.APP_SECRET.encode(), value.encode(),
-                    hashlib.sha256).hexdigest()
+def current_user(request: Request) -> Optional[dict]:
+    username = auth.read_session(request.cookies.get("dmr_session", ""))
+    if not username:
+        return None
+    return db.user_get(username)
 
 
-def _session_ok(request: Request) -> bool:
-    if not config.APP_PASSWORD:
-        return True
-    token = request.cookies.get("dmr_session", "")
-    return hmac.compare_digest(token, _sign("authenticated"))
+templates.env.globals["user_of"] = current_user
+
+
+def _session_response(username: str, url: str = "/") -> RedirectResponse:
+    resp = RedirectResponse(url, status_code=303)
+    resp.set_cookie("dmr_session", auth.make_session(username), httponly=True,
+                    max_age=auth.SESSION_TTL, samesite="lax")
+    return resp
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/healthz", "/login") or path.startswith("/static"):
+    if path in ("/healthz", "/login", "/setup") or path.startswith("/static"):
         return await call_next(request)
-    if not _session_ok(request):
-        return RedirectResponse("/login", status_code=303)
-    return await call_next(request)
+    if not config.APP_PASSWORD:
+        return await call_next(request)
+    if current_user(request):
+        return await call_next(request)
+    if db.user_count() == 0:
+        return RedirectResponse("/setup", status_code=303)
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"error": ""})
+    return templates.TemplateResponse(request, "login.html", {
+        "error": "", "no_users": db.user_count() == 0})
 
 
 @app.post("/login")
-async def login(request: Request, password: str = Form(...)):
-    # compare_digest on bytes — non-ASCII passwords raise TypeError on str
-    if config.APP_PASSWORD and hmac.compare_digest(
-            password.encode(), config.APP_PASSWORD.encode()):
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie("dmr_session", _sign("authenticated"), httponly=True,
-                        max_age=7 * 24 * 3600, samesite="lax")
-        return resp
+async def login(request: Request, username: str = Form(""),
+                password: str = Form(...)):
+    username = auth.normalize_username(username)
+    user = db.user_get(username) if username else None
+    if user and auth.verify_password(password, user["password_hash"]):
+        return _session_response(username)
     return templates.TemplateResponse(
-        request, "login.html", {"error": "Wrong password"}, status_code=401)
+        request, "login.html",
+        {"error": "用户名或密码错误 / wrong username or password",
+         "no_users": db.user_count() == 0},
+        status_code=401)
+
+
+@app.get("/logout")
+async def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie("dmr_session")
+    return resp
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_form(request: Request):
+    return templates.TemplateResponse(request, "setup.html", {
+        "error": "", "auth_enabled": bool(config.APP_PASSWORD),
+        "has_users": db.user_count() > 0})
+
+
+@app.post("/setup")
+async def setup(request: Request, code: str = Form(...),
+                username: str = Form(...), password: str = Form(...),
+                display: str = Form("")):
+    def fail(msg: str, status: int = 400):
+        return templates.TemplateResponse(
+            request, "setup.html",
+            {"error": msg, "auth_enabled": bool(config.APP_PASSWORD),
+             "has_users": db.user_count() > 0},
+            status_code=status)
+
+    if not config.APP_PASSWORD:
+        return fail("APP_PASSWORD is not configured — authentication is disabled.")
+    if not hmac.compare_digest(code.encode(), config.APP_PASSWORD.encode()):
+        return fail("设置码错误 / wrong setup code", 401)
+    username = auth.normalize_username(username)
+    if not auth.valid_username(username):
+        return fail("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)")
+    if len(password) < 8:
+        return fail("Password must be at least 8 characters.")
+    db.user_upsert(username, auth.hash_password(password),
+                   display=display.strip(), is_admin=True)
+    return _session_response(username)
+
+
+# ------------------------------------------------------------------- team
+
+@app.get("/team", response_class=HTMLResponse)
+async def team_page(request: Request, msg: str = "", error: str = ""):
+    user = current_user(request)
+    return templates.TemplateResponse(request, "team.html", {
+        "user": user, "users": db.user_list(),
+        "msg": msg, "error": error,
+        "auth_enabled": bool(config.APP_PASSWORD),
+    })
+
+
+def _team_redirect(msg: str = "", error: str = "") -> RedirectResponse:
+    from urllib.parse import urlencode
+    q = urlencode({k: v for k, v in (("msg", msg), ("error", error)) if v})
+    return RedirectResponse(f"/team?{q}", status_code=303)
+
+
+@app.post("/team/add")
+async def team_add(request: Request, username: str = Form(...),
+                   password: str = Form(...), display: str = Form(""),
+                   is_admin: str = Form("0")):
+    user = current_user(request)
+    if not user or not user["is_admin"]:
+        return _team_redirect(error="Only admins can add accounts.")
+    username = auth.normalize_username(username)
+    if not auth.valid_username(username):
+        return _team_redirect(error="Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)")
+    if db.user_get(username):
+        return _team_redirect(error=f"User {username} already exists.")
+    if len(password) < 8:
+        return _team_redirect(error="Password must be at least 8 characters.")
+    db.user_upsert(username, auth.hash_password(password),
+                   display=display.strip(), is_admin=is_admin == "1")
+    return _team_redirect(msg=f"Account {username} created — share the initial "
+                              "password with them privately.")
+
+
+@app.post("/team/delete")
+async def team_delete(request: Request, username: str = Form(...)):
+    user = current_user(request)
+    if not user or not user["is_admin"]:
+        return _team_redirect(error="Only admins can remove accounts.")
+    username = auth.normalize_username(username)
+    target = db.user_get(username)
+    if not target:
+        return _team_redirect(error="No such user.")
+    if username == user["username"]:
+        return _team_redirect(error="You cannot delete your own account.")
+    if target["is_admin"] and db.admin_count() <= 1:
+        return _team_redirect(error="Cannot delete the last admin.")
+    db.user_delete(username)
+    return _team_redirect(msg=f"Account {username} removed.")
+
+
+@app.post("/team/password")
+async def team_password(request: Request, username: str = Form(...),
+                        password: str = Form(...)):
+    user = current_user(request)
+    if not user:
+        return _team_redirect(error="Not signed in.")
+    username = auth.normalize_username(username)
+    if username != user["username"] and not user["is_admin"]:
+        return _team_redirect(error="Only admins can reset other passwords.")
+    if not db.user_get(username):
+        return _team_redirect(error="No such user.")
+    if len(password) < 8:
+        return _team_redirect(error="Password must be at least 8 characters.")
+    db.user_set_password(username, auth.hash_password(password))
+    return _team_redirect(msg=f"Password updated for {username}.")
 
 
 @app.get("/healthz")
@@ -258,8 +387,10 @@ async def set_override(request: Request, run_id: str,
                        status: str = Form(""), note: str = Form("")):
     if not db.run_get(run_id):
         return Response("run not found", status_code=404)
+    user = current_user(request)
     if status:
-        db.override_set(run_id, excel_row, campaign, no, status, note)
+        db.override_set(run_id, excel_row, campaign, no, status, note,
+                        updated_by=user["username"] if user else "")
     else:
         db.override_clear(run_id, excel_row)
     return await results_fragment(request, run_id)

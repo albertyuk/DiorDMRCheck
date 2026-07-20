@@ -41,7 +41,8 @@
           <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
           {% if v.name_mislabel %}<br><span class="caveat">名字标注错误</span>{% endif %}
         </td>
-        <td>{% if v.override %}<b>{{ v.override.status }}</b> <span class="caveat">(override)</span>
+        <td>{% if v.override %}<b>{{ v.override.status }}</b>
+            <span class="caveat">(override{% if v.override.updated_by %} · {{ v.override.updated_by }}{% endif %})</span>
             {% else %}{{ v.column_s }}{% endif %}</td>
         <td>
           {% if v.matched_post_id %}

@@ -64,8 +64,17 @@ CREATE TABLE IF NOT EXISTS overrides (
     no         TEXT NOT NULL,
     status     TEXT NOT NULL,
     note       TEXT,
+    updated_by TEXT,
     updated_at REAL NOT NULL,
     PRIMARY KEY (run_id, excel_row)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,       -- stored casefolded
+    display       TEXT,
+    password_hash TEXT NOT NULL,
+    is_admin      INTEGER DEFAULT 0,
+    created_at    REAL NOT NULL
 );
 """
 
@@ -84,6 +93,7 @@ def connect() -> sqlite3.Connection:
                 # additive migrations for databases created by older versions
                 for stmt in (
                     "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
+                    "ALTER TABLE overrides ADD COLUMN updated_by TEXT",
                 ):
                     try:
                         conn.execute(stmt)
@@ -199,17 +209,72 @@ def run_bump_counter(run_id: str, column: str, amount: int = 1) -> None:
 # ----------------------------------------------------------------- overrides
 
 def override_set(run_id: str, excel_row: int, campaign: str, no: str,
-                 status: str, note: str = "") -> None:
+                 status: str, note: str = "", updated_by: str = "") -> None:
     with connect() as conn:
         conn.execute(
-            "INSERT INTO overrides (run_id, excel_row, campaign, no, status, note, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO overrides (run_id, excel_row, campaign, no, status, note, updated_by, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(run_id, excel_row) DO UPDATE SET "
             "campaign=excluded.campaign, no=excluded.no, "
-            "status=excluded.status, note=excluded.note, updated_at=excluded.updated_at",
-            (run_id, excel_row, campaign, no, status, note, time.time()),
+            "status=excluded.status, note=excluded.note, "
+            "updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            (run_id, excel_row, campaign, no, status, note, updated_by, time.time()),
         )
         conn.commit()
+
+
+# --------------------------------------------------------------------- users
+
+def user_get(username: str) -> Optional[dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ?",
+                           (username,)).fetchone()
+    return dict(row) if row else None
+
+
+def user_count() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+
+def user_list() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT username, display, is_admin, created_at FROM users "
+            "ORDER BY created_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def user_upsert(username: str, password_hash: str, display: str = "",
+                is_admin: bool = False) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO users (username, display, password_hash, is_admin, created_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(username) DO UPDATE SET display=excluded.display, "
+            "password_hash=excluded.password_hash, is_admin=excluded.is_admin",
+            (username, display, password_hash, int(is_admin), time.time()),
+        )
+        conn.commit()
+
+
+def user_set_password(username: str, password_hash: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?",
+                     (password_hash, username))
+        conn.commit()
+
+
+def user_delete(username: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
+
+
+def admin_count() -> int:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
 
 
 def override_clear(run_id: str, excel_row: int) -> None:

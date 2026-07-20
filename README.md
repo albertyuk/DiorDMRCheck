@@ -57,7 +57,7 @@ Environment (all optional — the app degrades gracefully):
 | `TIKHUB_API_KEY` | XHS link resolution (authoritative path). Without it, only the free direct-redirect path runs — usually blocked from datacenter IPs. |
 | `ANTHROPIC_API_KEY` | Tier-4 adjudication + bilingual run summary. |
 | `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5` (the current Sonnet, verified at build time — the older `claude-sonnet-4-6` works as an override). |
-| `APP_PASSWORD` | Enables the login wall (session cookie). Set it — this handles client campaign data. |
+| `APP_PASSWORD` | The **setup code** that enables the account system. Set it — this handles client campaign data. Visit `/setup`, enter the code, and create the admin account; admins add coworkers on `/team`. Without it the app runs open (local dev only). |
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
 
 TikHub endpoints are configurable (`TIKHUB_IMAGE_NOTE_PATH`,
@@ -111,6 +111,12 @@ excusing those two**.
   re-fetched).
 - The container starts as root only to `chown` the mounted `/data` volume,
   then drops to the unprivileged `appuser` before uvicorn starts.
+- **Accounts**: `APP_PASSWORD` is a setup code, not a login password. `/setup`
+  (requires the code) creates or resets an admin account; admins manage
+  coworker accounts on `/team` (add, remove, reset passwords), and everyone
+  can change their own password there. Passwords are stored as salted PBKDF2
+  hashes; sessions are signed HMAC cookies. Anyone holding the setup code can
+  make themselves admin, so treat it as the root secret.
 - Human overrides are stored per sheet row and win over the pipeline verdict
   in both the UI and the exports; the special choice `已匹配（清空S）` forces a
   blank column S (asserting a match), while clearing the dropdown reverts to

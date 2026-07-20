@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card authcard">
+  <span class="wordmark">DMR&nbsp;Reconciler</span>
+  <p class="muted" style="font-size:.72rem; letter-spacing:.2em; text-transform:uppercase">
+    {% if has_users %}Reset admin account{% else %}First-time setup{% endif %}</p>
+  {% if not auth_enabled %}
+    <div class="warn">APP_PASSWORD is not configured on the server, so
+      authentication is disabled and no accounts are needed.</div>
+    <p><a class="btn" href="/">Continue</a></p>
+  {% else %}
+    <p class="muted" style="font-size:.8rem">
+      The setup code is the server's <code>APP_PASSWORD</code> secret. The
+      account created here becomes an administrator
+      {% if has_users %}(an existing username is reset){% endif %} — keep the
+      code private.</p>
+    {% if error %}<div class="warn">{{ error }}</div>{% endif %}
+    <form method="post" action="/setup">
+      <label class="field"><span>Setup code</span>
+        <input type="password" name="code" required autofocus></label>
+      <label class="field"><span>Username</span>
+        <input type="text" name="username" autocapitalize="none" required
+               pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}"></label>
+      <label class="field"><span>Display name (optional)</span>
+        <input type="text" name="display"></label>
+      <label class="field"><span>Password (min 8 characters)</span>
+        <input type="password" name="password" minlength="8"
+               autocomplete="new-password" required></label>
+      <p style="text-align:center; margin-top:1.4rem">
+        <button type="submit" style="width:100%">Create admin account</button></p>
+    </form>
+    <p class="muted" style="font-size:.78rem"><a href="/login" style="color:var(--ink)">Back to sign in</a></p>
+  {% endif %}
+</div>
+{% endblock %}
