@@ -111,6 +111,11 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile):
     except ValueError as e:
         return templates.TemplateResponse(
             request, "error.html", {"message": str(e)}, status_code=422)
+    except Exception as e:  # corrupt zip, wrong format, … — never a 500
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": f"Could not read the uploaded file(s) as .xlsx: {e}"},
+            status_code=422)
 
     d_from, d_to = p.date_range
     out_of_window = 0

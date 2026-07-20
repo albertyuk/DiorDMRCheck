@@ -131,7 +131,9 @@ def run_create(run_id: str, **fields: Any) -> None:
                 run_id, time.time(),
                 fields.get("plog_path"), fields.get("dmr_path"),
                 fields.get("plog_name"), fields.get("dmr_name"),
-                json.dumps(fields.get("options") or {}),
+                # NULL until the user actually starts the run — the run page
+                # uses this to distinguish "not started" from "starting".
+                json.dumps(fields["options"]) if fields.get("options") is not None else None,
                 json.dumps(fields.get("preview") or {}, ensure_ascii=False, default=str),
             ),
         )

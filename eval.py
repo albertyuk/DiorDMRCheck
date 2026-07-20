@@ -50,12 +50,14 @@ def classify(text: str) -> str:
         return "无博主"
     if t.startswith("无帖子"):
         return "无帖子"
-    if "链接" in t or t.lower().startswith("check"):
+    # 人工复核 must be classified before the 链接 check — REVIEW reasons can
+    # mention 链接 (e.g. 人工复核（链接已解析但…）).
+    if t.startswith("人工") or "人工复核" in t:
+        return "人工复核"
+    if t.lower().startswith("check") or "链接" in t:
         return "Check链接错误"
     if "标注错误" in t or "名字" in t:
         return "有 但是DMR博主名字标注错误"
-    if "人工" in t:
-        return "人工复核"
     return t
 
 
