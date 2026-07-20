@@ -70,12 +70,21 @@ concurrency ≤ 4, and a per-run cost counter shown in the UI.
 
 ## Deploying on Fly.io
 
+All commands must run from the repo root (the directory containing
+`fly.toml`) — running them elsewhere produces *"the config for your app is
+missing an app name"*. Fly app names are globally unique, so pick your own:
+
 ```sh
-fly launch --no-deploy         # uses the checked-in fly.toml (region sin)
-fly volumes create data --region sin --size 1
-fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=...
-fly deploy
+APP=dmr-reconciler-yourname            # choose a unique name
+fly apps create "$APP"
+sed -i "s/^app = .*/app = \"$APP\"/" fly.toml   # keep fly.toml in sync
+fly volumes create data --region sin --size 1 -a "$APP"
+fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=... -a "$APP"
+fly deploy -a "$APP"
 ```
+
+(`fly launch` also works but interactively rewrites `fly.toml`; the explicit
+`fly apps create` + `fly deploy` sequence is deterministic.)
 
 ## Evaluation harness
 

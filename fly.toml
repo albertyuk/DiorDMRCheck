@@ -1,5 +1,9 @@
-# fly launch --no-deploy && fly volumes create data --region sin --size 1
-# fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=...
+# Deploy (run from this directory):
+#   fly apps create <your-app-name>        # app names are GLOBAL — pick something unique
+#   sed -i '' 's/^app = .*/app = "<your-app-name>"/' fly.toml   # or edit the line below by hand
+#   fly volumes create data --region sin --size 1 -a <your-app-name>
+#   fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=... -a <your-app-name>
+#   fly deploy -a <your-app-name>
 app = "dmr-reconciler"
 primary_region = "sin"
 
