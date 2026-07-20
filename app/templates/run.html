@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run_id }} — DMR Reconciler{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Run {{ run_id }}</h1>
+  <p class="muted">{{ run.plog_name }} ↔ {{ run.dmr_name }}</p>
+</div>
+<div id="run-body">
+  {% if run.status == "done" %}
+    <div hx-get="/runs/{{ run_id }}/results" hx-trigger="load" hx-target="#run-body"></div>
+  {% elif run.status == "error" %}
+    <div class="card"><h2>Run failed</h2>
+      <p>{{ run.message }}</p>
+      <pre class="muted" style="white-space:pre-wrap">{{ run.error }}</pre>
+      <form method="post" action="/runs/{{ run_id }}/start">
+        <button type="submit">Retry run</button></form>
+    </div>
+  {% elif run.status == "pending" and not run.options_json %}
+    <div class="card"><p>This run has not been started.
+      <a href="/">Upload again</a></p></div>
+  {% else %}
+    <div class="card" hx-get="/runs/{{ run_id }}/progress"
+         hx-trigger="load, every 1.5s" hx-swap="innerHTML">
+      Loading…
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

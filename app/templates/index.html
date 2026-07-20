@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>New reconciliation run</h1>
+  <p class="muted">Upload the internal tracker (PLOG) and the DMR
+     social-listening export. You will see a parse preview before anything
+     runs — no TikHub or Claude calls happen until you confirm.</p>
+  {% if not tikhub_configured %}
+    <div class="warn">TIKHUB_API_KEY is not configured — link resolution will
+      rely on the free direct-redirect path only, which is usually blocked
+      from datacenter IPs. Expect most rows to fall back to
+      Check链接错误 with name-based candidates.</div>
+  {% endif %}
+  {% if not anthropic_configured %}
+    <div class="warn">ANTHROPIC_API_KEY is not configured — Tier-4
+      adjudication and the bilingual summary are skipped; ambiguous rows stay
+      人工复核.</div>
+  {% else %}
+    <p class="muted">Adjudicator model: <code>{{ model }}</code></p>
+  {% endif %}
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <p><label>PLOG file (e.g. <code>PLOG_DMR_CHECK.xlsx</code>)<br>
+      <input type="file" name="plog" accept=".xlsx" required></label></p>
+    <p><label>DMR file (e.g. <code>YTD_DMR_MICRO_0720.xlsx</code>)<br>
+      <input type="file" name="dmr" accept=".xlsx" required></label></p>
+    <button type="submit">Upload &amp; preview</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Past runs</h2>
+  {% if runs %}
+  <table>
+    <tr><th>Run</th><th>Files</th><th>Status</th><th>Message</th></tr>
+    {% for r in runs %}
+    <tr>
+      <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+      <td>{{ r.plog_name }} ↔ {{ r.dmr_name }}</td>
+      <td>{{ r.status }}</td>
+      <td class="muted">{{ r.message or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">No runs yet.</p>{% endif %}
+</div>
+{% endblock %}

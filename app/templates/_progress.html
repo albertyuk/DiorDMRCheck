@@ -1,0 +1,12 @@
+<h2>{{ run.phase or "starting" }}</h2>
+<p>{{ run.message or "Working…" }}</p>
+{% set total = run.progress_total or 0 %}
+{% set done = run.progress_done or 0 %}
+<div class="progressbar">
+  <div style="width: {{ (100 * done / total) | round(1) if total else 5 }}%"></div>
+</div>
+<p class="muted">
+  {{ done }}/{{ total }} ·
+  TikHub calls this run: {{ run.tikhub_calls or 0 }} ·
+  LLM calls: {{ run.llm_calls or 0 }}
+</p>

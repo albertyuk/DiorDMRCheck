@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}DMR Reconciler{% endblock %}</title>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1c1c1c; --muted:#6b6b6b;
+          --line:#e4e2dd; --accent:#8a6d3b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", sans-serif; }
+  header { background:var(--card); border-bottom:1px solid var(--line);
+           padding:.8rem 1.4rem; display:flex; align-items:baseline; gap:1rem; }
+  header a { color:var(--ink); text-decoration:none; font-weight:700; }
+  header .sub { color:var(--muted); font-size:.85rem; }
+  main { max-width:1200px; margin:1.5rem auto; padding:0 1.2rem; }
+  .card { background:var(--card); border:1px solid var(--line);
+          border-radius:10px; padding:1.2rem 1.4rem; margin-bottom:1.2rem; }
+  h1 { font-size:1.3rem; } h2 { font-size:1.05rem; }
+  table { border-collapse:collapse; width:100%; font-size:.86rem; }
+  th, td { border-bottom:1px solid var(--line); padding:.4rem .5rem;
+           text-align:left; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; white-space:nowrap; }
+  .badge { display:inline-block; padding:.1rem .5rem; border-radius:99px;
+           font-size:.75rem; font-weight:600; white-space:nowrap; }
+  .badge.match { background:#e3f2e3; color:#1e6b1e; }
+  .badge.nopost { background:#fdeeda; color:#9a5b00; }
+  .badge.noblogger { background:#fbe3e3; color:#a12020; }
+  .badge.linkerror { background:#efe3fb; color:#5e2ba1; }
+  .badge.review { background:#e3ecfb; color:#2049a1; }
+  .muted { color:var(--muted); }
+  .warn { background:#fff8e6; border:1px solid #f0e0b0; border-radius:8px;
+          padding:.5rem .8rem; margin:.4rem 0; font-size:.85rem; }
+  button, .btn { background:var(--accent); color:#fff; border:0;
+          border-radius:8px; padding:.5rem 1rem; font-size:.9rem;
+          cursor:pointer; text-decoration:none; display:inline-block; }
+  button.secondary, .btn.secondary { background:#eceae5; color:var(--ink); }
+  input[type=file], input[type=password], select, input[type=text] {
+      border:1px solid var(--line); border-radius:8px; padding:.45rem .6rem;
+      font-size:.9rem; background:#fff; }
+  details.evidence { font-size:.8rem; }
+  details.evidence summary { cursor:pointer; color:var(--accent); }
+  details.evidence dl { margin:.4rem 0; display:grid;
+                        grid-template-columns:max-content 1fr; gap:.15rem .8rem; }
+  details.evidence dt { color:var(--muted); }
+  details.evidence dd { margin:0; word-break:break-all; }
+  .progressbar { background:#eceae5; border-radius:99px; height:14px;
+                 overflow:hidden; }
+  .progressbar>div { background:var(--accent); height:100%;
+                     transition:width .4s; }
+  .counts { display:flex; gap:1rem; flex-wrap:wrap; margin:.6rem 0; }
+  .counts .stat { background:var(--bg); border:1px solid var(--line);
+                  border-radius:8px; padding:.4rem .8rem; }
+  .caveat { font-size:.78rem; color:#9a5b00; }
+  .tablewrap { overflow-x:auto; }
+  nav.tabs { display:flex; gap:.4rem; margin-bottom:.8rem; }
+  nav.tabs button { background:#eceae5; color:var(--ink); }
+  nav.tabs button.active { background:var(--accent); color:#fff; }
+  .tab-panel { display:none; } .tab-panel.active { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">DMR Reconciler</a>
+  <span class="sub">PLOG ↔ YTD DMR cross-check · Xiaohongshu</span>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+}
+</script>
+</body>
+</html>

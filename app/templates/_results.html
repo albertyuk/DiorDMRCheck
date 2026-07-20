@@ -1,0 +1,128 @@
+<div class="card">
+  <div class="counts">
+    {% for k, v in counts.items() %}<span class="stat"><b>{{ v }}</b> {{ k }}</span>{% endfor %}
+    <span class="stat muted">TikHub calls: {{ run.tikhub_calls or 0 }}</span>
+    <span class="stat muted">LLM calls: {{ run.llm_calls or 0 }}</span>
+  </div>
+  <p>
+    <a class="btn" href="/runs/{{ run_id }}/export.xlsx">Download annotated .xlsx</a>
+    <a class="btn secondary" href="/runs/{{ run_id }}/export.json">JSON audit log</a>
+  </p>
+  {% if summary.zh or summary.en %}
+    <div class="warn" style="background:#f2f7f2;border-color:#cfe3cf">
+      <b>摘要</b> {{ summary.zh }}<br><b>Summary</b> {{ summary.en }}
+    </div>
+  {% endif %}
+  {% for w in plog_meta.warnings %}<div class="warn">PLOG: {{ w }}</div>{% endfor %}
+  {% for w in dmr_meta.warnings %}<div class="warn">DMR: {{ w }}</div>{% endfor %}
+</div>
+
+<div class="card">
+  <nav class="tabs">
+    <button class="active" data-tab="results" onclick="showTab('results')">Results ({{ verdicts | length }})</button>
+    <button data-tab="reverse" onclick="showTab('reverse')">Reverse audit ({{ reverse_rows | length }})</button>
+  </nav>
+
+  <div id="tab-results" class="tab-panel active tablewrap">
+    <table>
+      <tr>
+        <th>Campaign</th><th>NO</th><th>Name</th><th>Date</th>
+        <th>Status</th><th>Column S</th><th>Matched DMR</th>
+        <th>Evidence</th><th>Human override</th>
+      </tr>
+      {% for v in verdicts %}
+      <tr {% if v.out_of_window %}style="background:#fffcf2"{% endif %}>
+        <td>{{ v.campaign }}</td>
+        <td>{{ v.no }}</td>
+        <td>{{ v.name }}</td>
+        <td>{{ v.post_date or "" }}{% if v.out_of_window %} <span class="caveat" title="Outside DMR export window">⚠︎窗口外</span>{% endif %}</td>
+        <td>
+          {% set badge = badges.get(v.status, ("review", v.status)) %}
+          <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
+          {% if v.name_mislabel %}<br><span class="caveat">名字标注错误</span>{% endif %}
+        </td>
+        <td>{% if v.override %}<b>{{ v.override.status }}</b> <span class="caveat">(override)</span>
+            {% else %}{{ v.column_s }}{% endif %}</td>
+        <td>
+          {% if v.matched_post_id %}
+            {{ v.matched_blogger }}<br><code style="font-size:.7rem">{{ v.matched_post_id }}</code>
+          {% elif v.candidates %}
+            <span class="muted">{{ v.candidates | length }} candidate(s)</span>
+          {% endif %}
+        </td>
+        <td>
+          <details class="evidence">
+            <summary>tier {{ v.tier or "—" }}</summary>
+            <dl>
+              <dt>Decided by</dt><dd>{{ v.tier }}</dd>
+              <dt>Resolved note</dt><dd>{{ v.resolved_note_id or "—" }}</dd>
+              <dt>Resolved author</dt><dd>{{ v.resolved_author_id or "—" }}
+                {% if v.resolved_author_name %}({{ v.resolved_author_name }}){% endif %}</dd>
+              <dt>Resolution</dt><dd>{{ v.resolution_source or "—" }}
+                {% if v.resolution_error %}<span class="caveat">{{ v.resolution_error }}</span>{% endif %}</dd>
+              <dt>Matched row</dt><dd>{% if v.matched_dmr_row %}DMR sheet row {{ v.matched_dmr_row }}
+                · {{ v.matched_post_date or "" }}{% else %}—{% endif %}</dd>
+              <dt>Date Δ</dt><dd>{{ v.date_delta_days if v.date_delta_days is not none else "—" }} days</dd>
+              <dt>Name method</dt><dd>{{ v.name_method or "—" }}</dd>
+              <dt>Engagement</dt><dd>PLOG LIKE {{ v.plog_like if v.plog_like is not none else "?" }}
+                vs DMR Likes_Retweet {{ v.dmr_likes_retweet if v.dmr_likes_retweet is not none else "?" }}
+                <div class="caveat">{{ v.engagement_caveat }}</div></dd>
+              {% if v.candidates %}
+                <dt>Candidates</dt><dd>
+                  {% for c in v.candidates %}
+                    {{ c.blogger }} [{{ c.post_id }}] {{ c.post_date or "?" }}
+                    Δ{{ c.date_delta_days if c.date_delta_days is not none else "?" }}d
+                    · likes {{ c.likes_retweet if c.likes_retweet is not none else "?" }}
+                    ({{ c.name_method }})<br>
+                  {% endfor %}
+                  <span class="caveat">Candidate list is ranked by date proximity only — never auto-matched.</span>
+                </dd>
+              {% endif %}
+              {% if v.llm_verdict %}
+                <dt>Claude</dt><dd>{{ v.llm_verdict }}
+                  ({{ (v.llm_confidence * 100) | round | int if v.llm_confidence is not none }}%)<br>
+                  {{ v.llm_rationale_zh }}<br>{{ v.llm_rationale_en }}</dd>
+              {% endif %}
+              {% for n in v.notes %}<dt>Note</dt><dd>{{ n }}</dd>{% endfor %}
+            </dl>
+          </details>
+        </td>
+        <td>
+          <form hx-post="/runs/{{ run_id }}/override" hx-target="#run-body" hx-swap="innerHTML">
+            <input type="hidden" name="campaign" value="{{ v.campaign }}">
+            <input type="hidden" name="no" value="{{ v.no }}">
+            <select name="status" onchange="this.form.requestSubmit()">
+              {% for choice in override_choices %}
+                <option value="{{ choice }}"
+                  {% if v.override and v.override.status == choice %}selected{% endif %}>
+                  {{ choice if choice else "— pipeline verdict —" }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div id="tab-reverse" class="tab-panel tablewrap">
+    <p class="muted">DMR posts inside the campaign window by bloggers this
+      campaign resolved, whose PostID matched no PLOG row — extra posts DMR
+      captured that PLOG doesn't track.</p>
+    <table>
+      <tr><th>Blogger</th><th>Username</th><th>PostID</th><th>PostDate</th>
+          <th>Likes_Retweet</th><th>Engagement</th><th>DMR row</th></tr>
+      {% for r in reverse_rows %}
+      <tr>
+        <td>{{ r.blogger }}</td><td><code style="font-size:.7rem">{{ r.username }}</code></td>
+        <td><code style="font-size:.7rem">{{ r.post_id }}</code></td>
+        <td>{{ r.post_date or "" }}</td>
+        <td>{{ r.likes_retweet if r.likes_retweet is not none else "" }}</td>
+        <td>{{ r.engagement if r.engagement is not none else "" }}</td>
+        <td>{{ r.dmr_row }}</td>
+      </tr>
+      {% endfor %}
+      {% if not reverse_rows %}<tr><td colspan="7" class="muted">Nothing found.</td></tr>{% endif %}
+    </table>
+  </div>
+</div>
