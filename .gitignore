@@ -3,3 +3,4 @@ __pycache__/
 .test_data/
 data/
 .pytest_cache/
+dmr_reconciler.egg-info/

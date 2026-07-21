@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -18,83 +17,7 @@ from app.deck import assert_chart_cache, build_deck
 from app.effreport import (ReportConfig, VerificationError, analyze,
                            build_insights, compute_metrics,
                            compute_metrics_pandas, verify_dual_path)
-
-EFF_HEADERS = [
-    "NO", "MCN", "CAMPAIGN", "TYPE", "LEVEL", "NAME", "FAN BASE（K)",
-    "POST DATE", "MICRO MACRO", "POST LINK", "IMPRESSION", "LIKE",
-    "COLLECTION", "COMMENT", "TTL  ENGAGEMENT", "PRICE", "CPM", "CPE",
-]
-
-PAID, SOFT = "报备图文", "软植图文"
-
-
-def _row(no, type_, level, name, fan, link, impr, like, coll, comm, ttl,
-         price, cpm=None):
-    return [no, "", "EFF #001", type_, level, name, fan,
-            datetime(2026, 6, 1 + (no - 1) % 28), "", link, impr, like, coll,
-            comm, ttl,
-            price, cpm, None]
-
-
-def build_eff_bytes() -> bytes:
-    """43 active rows. Hand-computed groups:
-
-    MID PAID  n=2: prices 20k+10k, impr 200k+100k, eng 2000+1000
-              → pooled CPM 100, per-post CPM 100, pooled CPE 10, avg 15k
-    MID SOFT  n=3: 6k×3, impr 100k/50k/50k, eng 500/250/250
-              → pooled CPM 90, per-post CPM 100, pooled CPE 18, avg 6k
-    BOT SOFT  n=2: one normal + one IMPRESSION=0 (V3)
-              → pooled CPM 50 (zero-impr row out of CPM only), CPE 10
-    KOC PAID  n=4: impr 90k/90k/10k/10k → top-2 hold 90% (V10)
-    TOP SOFT  n=1 (V9); BOT PAID n=30 (filler, makes TOP SOFT a <3% sliver)
-    plus: V7 unknown TYPE row (in totals, no group), V2 missing-PRICE row
-    (excluded), V6 duplicate link, V4 identity break, V5 CPM-column drift,
-    V8 尾部+底部 both present.
-    """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "MASTER KOL LIST"
-    ws.append(EFF_HEADERS)
-    rows = [
-        _row(1, PAID, "腰部达人", "mp1", 800, "http://x.co/mp1",
-             200_000, 1_500, 300, 200, 2_000, 20_000,
-             cpm=0.5),                                    # V5: true 0.1
-        _row(2, PAID, "腰部达人", "mp2", 700, "http://x.co/mp2",
-             100_000, 800, 100, 100, 1_000, 10_000),
-        _row(3, SOFT, "腰部达人", "ms1", 600, "http://x.co/dup",
-             100_000, 400, 50, 50, 500, 6_000),
-        _row(4, SOFT, "腰部达人", "ms2", 600, "http://x.co/dup",  # V6 pair
-             50_000, 200, 25, 25, 250, 6_000),
-        _row(5, SOFT, "腰部达人", "ms3", 600, "http://x.co/ms3",
-             50_000, 200, 25, 25, 250, 6_000),
-        _row(6, SOFT, "尾部达人", "bs1", 250, "http://x.co/bs1",
-             100_000, 400, 50, 50, 500, 5_000),
-        _row(7, SOFT, "底部达人", "bs2", 150, "http://x.co/bs2",
-             0, 400, 50, 50, 500, 5_000),                 # V3 zero impr
-        _row(8, PAID, "KOC", "kp1", 50, "http://x.co/kp1",
-             90_000, 500, 50, 50, 600, 1_000),
-        _row(9, PAID, "KOC", "kp2", 50, "http://x.co/kp2",
-             90_000, 500, 50, 50, 999, 1_000),            # V4: 600≠999
-        _row(10, PAID, "KOC", "kp3", 50, "http://x.co/kp3",
-             10_000, 100, 10, 10, 120, 1_000),
-        _row(11, PAID, "KOC", "kp4", 50, "http://x.co/kp4",
-             10_000, 100, 10, 10, 120, 1_000),
-        _row(12, SOFT, "头部达人", "ts1", 1_500, "http://x.co/ts1",
-             1_000_000, 5_000, 500, 500, 6_000, 90_000),  # V9 n=1
-        _row(13, "其他合作", "腰部达人", "unk", 500, "http://x.co/unk",
-             10_000, 50, 5, 5, 60, 2_000),                # V7 TYPE
-        _row(14, PAID, "腰部达人", "gap", 500, "http://x.co/gap",
-             10_000, 50, 5, 5, 60, None),                 # V2 no PRICE
-    ]
-    for i in range(30):                                   # BOT PAID filler
-        rows.append(_row(15 + i, PAID, "尾部达人", f"bp{i}", 250,
-                         f"http://x.co/bp{i}", 10_000, 80, 10, 10, 100,
-                         1_000))
-    for r in rows:
-        ws.append(r)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+from tests.fixtures import build_eff_bytes
 
 
 @pytest.fixture(scope="module")

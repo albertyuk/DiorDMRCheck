@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app import config
 from app import main as main_mod
-from tests.test_effreport import build_eff_bytes
+from tests.fixtures import build_eff_bytes
 
 
 @pytest.fixture

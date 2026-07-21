@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmr-reconciler"
+version = "1.0.0"
+description = "Reconciles a KOL campaign tracker (PLOG) against a DMR social-listening export, plus a KOL efficiency report/deck generator."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "jinja2>=3.1,<4",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1,<4",
+    # pillow: without it openpyxl silently drops embedded images/shapes when
+    # re-saving the annotated workbook, breaking the "A-R untouched" contract.
+    "pillow>=10",
+    # pandas is part of the specified deployment dependency set; the pipeline
+    # itself reads xlsx via openpyxl directly.
+    "pandas>=2.2,<3",
+    "rapidfuzz>=3.9,<4",
+    "pypinyin>=0.51",
+    "httpx>=0.27,<1",
+    "anthropic>=0.40",
+    "pydantic>=2.7,<3",
+    # KOL efficiency report: native editable charts in the .pptx, patched at
+    # the chart-XML level (donut hole, per-point label colors, sliver callouts).
+    "python-pptx>=1.0,<2",
+    "lxml>=5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["templates/**/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Replaces the former sys.path hack in tests/conftest.py: the repo root (and
+# therefore the `tests` package) is importable regardless of invocation cwd.
+pythonpath = ["."]

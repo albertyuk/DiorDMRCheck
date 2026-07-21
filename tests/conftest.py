@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import sys
+import os
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 # Keep test SQLite state away from any real /data volume.
-import os  # noqa: E402
-
 os.environ.setdefault("DATA_DIR", str(ROOT / ".test_data"))
 
 from tests import fixtures  # noqa: E402
