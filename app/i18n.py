@@ -143,6 +143,12 @@ ZH: dict[str, str] = {
         "「投放效率」页面只需一份 PLOG 追踪表，就能生成一页式 CPM/CPE 图表汇报——可编辑 .pptx 外加网页版——同时列出数据校验发现。全程只在内存中运行，每份报告 2 小时后过期。",
     "Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.":
         "界面语言随时可以用左上角的按钮切换——本指南也可以从旁边的按钮再次打开。",
+    # efficiency demo image (index + efficiency form) -----------------------
+    "Sample efficiency slide generated from synthetic demo data":
+        "由合成演示数据生成的效率幻灯片示例",
+    "Sample output (synthetic demo data)": "示例输出（合成演示数据）",
+    "The slide this produces — this sample is built from synthetic demo data, not client data. The donut shows group shares; the bars compare 报备 vs 软植 prices, CPM and CPE per tier, with data caveats printed on the slide.":
+        "生成的幻灯片就长这样——本示例由合成演示数据生成，非客户数据。环图展示各分组占比；柱状图按层级对比 报备 vs 软植 的合作价格、CPM 与 CPE，数据风险提示会直接标注在幻灯片上。",
     # template strings (merged from the per-template translation pass) --
     "(an existing username is reset)": "（若该用户名已存在，会重置其账号）",
     " (detected by Blogger + PostID fingerprint)": "（按 Blogger + PostID 指纹识别）",

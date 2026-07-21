@@ -223,6 +223,17 @@ def test_per_post_basis_footnote():
 
 # --------------------------------------------------------------------- deck
 
+def test_donut_order_covers_every_group():
+    """DONUT_ORDER filters which groups the donut plots — a TIER × COOP combo
+    missing from it silently vanishes from the chart (the reference file has
+    no TOP PAID, which hid exactly that)."""
+    from app.deck import DONUT_COLORS, DONUT_ORDER
+    from app.effreport import COOPS, TIERS
+    every = {f"{t} {c}" for t in TIERS for c in COOPS}
+    assert set(DONUT_ORDER) == every
+    assert set(DONUT_COLORS) == every
+
+
 def test_build_deck_and_chart_cache(analysis):
     pptx = build_deck(analysis)
     assert_chart_cache(pptx, analysis)        # must not raise

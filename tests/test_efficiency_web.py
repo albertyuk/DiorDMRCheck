@@ -84,6 +84,20 @@ def test_invalid_config_values_fall_back_to_defaults(client):
     assert "Basis: pooled" in r.text
 
 
+def test_demo_image_shipped_and_shown_per_language(client):
+    """The feature-demo slide images are synthetic-data renders committed to
+    /static — both language variants must exist and be wired to the UI lang."""
+    from pathlib import Path
+    static = Path(main_mod.__file__).parent / "static"
+    for lang in ("en", "zh"):
+        assert (static / f"eff_demo_{lang}.jpg").stat().st_size > 10_000
+    assert "/static/eff_demo_en.jpg" in client.get("/").text
+    assert "/static/eff_demo_en.jpg" in client.get("/efficiency").text
+    client.cookies.set("dmr_lang", "zh")
+    assert "/static/eff_demo_zh.jpg" in client.get("/").text
+    assert "/static/eff_demo_zh.jpg" in client.get("/efficiency").text
+
+
 def test_store_cap_evicts_oldest():
     main_mod._EFF_REPORTS.clear()
     tokens = [main_mod._eff_store({"analysis": {}, "pptx": None,

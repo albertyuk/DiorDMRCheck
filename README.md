@@ -95,6 +95,11 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
 - **Privacy** — the workbook is analyzed in memory, never written to disk or
   the database; the finished report is held in an in-process store and
   expires after two hours.
+- **Demo image** — the sample slide shown next to the feature (home card and
+  the `/efficiency` form, `app/static/eff_demo_{en,zh}.jpg`) is rendered
+  through the real deck builder from *synthetic* data — client workbooks are
+  never used for site assets. Regenerate with the scratch script if the deck
+  design changes.
 
 ## First-visit guide
 

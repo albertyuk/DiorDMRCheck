@@ -35,14 +35,17 @@ PAID_COLOR = RGBColor(0xC0, 0x00, 0x00)
 PANEL_GRAY = RGBColor(0xF2, 0xF2, 0xF2)
 BLACK = RGBColor(0x00, 0x00, 0x00)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-DONUT_COLORS = {  # clockwise from 12 o'clock
-    "TOP SOFT": "4472C4", "MID PAID": "ED7D31", "MID SOFT": "F8CBAD",
-    "BOT PAID": "A6A6A6", "BOT SOFT": "D9D9D9", "KOC PAID": "203864",
-    "KOC SOFT": "FFC000",
+DONUT_COLORS = {  # clockwise from 12 o'clock; must cover every TIER × COOP —
+    # the reference deck's file happens to lack TOP PAID, but uploads can
+    # contain it, and a group missing here would vanish from the donut.
+    "TOP PAID": "8FAADC", "TOP SOFT": "4472C4",
+    "MID PAID": "ED7D31", "MID SOFT": "F8CBAD",
+    "BOT PAID": "A6A6A6", "BOT SOFT": "D9D9D9",
+    "KOC PAID": "203864", "KOC SOFT": "FFC000",
 }
 UNCLASSIFIED_COLOR = "BFBFBF"
-DONUT_ORDER = ["TOP SOFT", "MID PAID", "MID SOFT", "BOT PAID", "BOT SOFT",
-               "KOC PAID", "KOC SOFT"]
+DONUT_ORDER = ["TOP PAID", "TOP SOFT", "MID PAID", "MID SOFT", "BOT PAID",
+               "BOT SOFT", "KOC PAID", "KOC SOFT"]
 
 
 def _luminance(hex6: str) -> float:
