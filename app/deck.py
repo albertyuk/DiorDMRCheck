@@ -235,6 +235,17 @@ def _postprocess_donut_xml(chart_part, slices: list[tuple[str, float]]):
         anchor.addprevious(dlbls)
     n_dlbl = len(dlbls.findall(_c("dLbl")))
     total = sum(v for _, v in slices) or 1
+
+    # share format — reused verbatim in every per-point override below, since
+    # PowerPoint does not reliably inherit the ser-level numFmt into a c:dLbl
+    # that carries its own layout/txPr (labels render as bare "7.9" without it)
+    fmt = '0.0"%"'
+    plot_dlbls = donut.find(_c("dLbls"))
+    if plot_dlbls is not None:
+        nf = plot_dlbls.find(_c("numFmt"))
+        if nf is not None and nf.get("formatCode"):
+            fmt = nf.get("formatCode")
+
     for i, (label, val) in enumerate(slices):
         hex6 = DONUT_COLORS.get(label, UNCLASSIFIED_COLOR)
         dark = _luminance(hex6) < DARK_LUMA
@@ -253,6 +264,9 @@ def _postprocess_donut_xml(chart_part, slices: list[tuple[str, float]]):
             for tag, v in (("x", "0.18"), ("y", "-0.12")):
                 el = etree.SubElement(manual, _c(tag))
                 el.set("val", v)
+        ptfmt = etree.SubElement(dlbl, _c("numFmt"))  # after layout, before txPr
+        ptfmt.set("formatCode", fmt)
+        ptfmt.set("sourceLinked", "0")
         _lbl_txpr(dlbl, white=dark and not sliver)
         for tag in ("showLegendKey", "showVal", "showCatName", "showSerName",
                     "showPercent", "showBubbleSize"):
@@ -263,12 +277,6 @@ def _postprocess_donut_xml(chart_part, slices: list[tuple[str, float]]):
     # their own defaults (category + series name, theme font) for anything it
     # omits, so it must carry the full series-wide config, not just overrides.
     # Schema order within dLbls: dLbl*, numFmt, txPr, show*, showLeaderLines.
-    fmt = '0.0"%"'
-    plot_dlbls = donut.find(_c("dLbls"))
-    if plot_dlbls is not None:
-        nf = plot_dlbls.find(_c("numFmt"))
-        if nf is not None and nf.get("formatCode"):
-            fmt = nf.get("formatCode")
     numfmt = etree.SubElement(dlbls, _c("numFmt"))
     numfmt.set("formatCode", fmt)
     numfmt.set("sourceLinked", "0")
@@ -325,7 +333,10 @@ def build_deck(analysis: dict) -> bytes:
     rx, rw = Inches(4.9), Inches(8.08)
     _panel(slide, rx, Inches(0.62), rw, Inches(6.52), texts["eff_title"])
     _legend_swatches(slide, rx + Inches(0.15), Inches(1.06))
-    half = (rw - Inches(0.4)) / 2
+    # floor-divide: EMU coordinates are xsd integers — a float here (e.g.
+    # cx="3511296.0") makes PowerPoint "repair" the deck by deleting the
+    # chart frame, though LibreOffice renders it fine.
+    half = (rw - Inches(0.4)) // 2
     _text(slide, rx + Inches(0.15), Inches(1.28), half, Inches(0.2),
           [texts["cpm"]], size=9, bold=True)
     _bar_chart(slide, rx + Inches(0.1), Inches(1.5), half, Inches(2.95),

@@ -249,6 +249,35 @@ def test_build_deck_and_chart_cache(analysis):
         or '0.0"%"' in xml                    # share number format present
 
 
+def test_slide_geometry_is_integer_emu(analysis):
+    """EMU coordinates are xsd integers. A float (cx="3511296.0" — produced
+    by true-dividing an Emu) renders fine in LibreOffice but makes PowerPoint
+    'repair' the deck by DELETING the chart frame."""
+    import re
+    pptx = build_deck(analysis)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as z:
+        slide = z.read("ppt/slides/slide1.xml").decode()
+    floats = re.findall(r'(?:\b[xy]|\bc[xy])="-?\d+\.\d*"', slide)
+    assert not floats, f"non-integer EMU coordinates: {floats}"
+
+
+def test_donut_perpoint_labels_carry_numfmt(analysis):
+    """PowerPoint does not reliably inherit the ser-level numFmt into a
+    per-point c:dLbl override — without its own, the sliver/dark labels
+    render as bare numbers ("7.9") instead of "7.9%"."""
+    pptx = build_deck(analysis)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as z:
+        donut = min(n for n in z.namelist()
+                    if n.startswith("ppt/charts/chart") and n.endswith(".xml"))
+        xml = z.read(donut).decode()
+    import html
+    import re
+    labels = re.findall(r"<c:dLbl>.*?</c:dLbl>", xml, re.S)
+    assert labels, "expected per-point label overrides in the donut"
+    for dlbl in labels:
+        assert "numFmt" in dlbl and '0.0"%"' in html.unescape(dlbl), dlbl[:200]
+
+
 def test_chart_cache_catches_tampering(analysis):
     pptx = build_deck(analysis)
     import copy
