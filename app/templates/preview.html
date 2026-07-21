@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h1>Parse preview — confirm before running</h1>
+  <h1>{{ t("Parse preview — confirm before running") }}</h1>
   <div style="display:flex; gap:2rem; flex-wrap:wrap">
     <div>
       <h2>PLOG</h2>
       <table>
-        <tr><th>Sheet</th><td>{{ preview.plog.sheet }}</td></tr>
-        <tr><th>Header row</th><td>{{ preview.plog.header_row }} (detected by NAME + POST LINK fingerprint)</td></tr>
-        <tr><th>Data rows</th><td>{{ preview.plog.rows }}</td></tr>
-        <tr><th>Date range</th><td>{{ preview.plog.date_range[0] }} → {{ preview.plog.date_range[1] }}</td></tr>
+        <tr><th>{{ t("Sheet") }}</th><td>{{ preview.plog.sheet }}</td></tr>
+        <tr><th>{{ t("Header row") }}</th><td>{{ preview.plog.header_row }}{{ t(" (detected by NAME + POST LINK fingerprint)") }}</td></tr>
+        <tr><th>{{ t("Data rows") }}</th><td>{{ preview.plog.rows }}</td></tr>
+        <tr><th>{{ t("Date range") }}</th><td>{{ preview.plog.date_range[0] }} → {{ preview.plog.date_range[1] }}</td></tr>
       </table>
-      <h2>Campaign sections</h2>
+      <h2>{{ t("Campaign sections") }}</h2>
       <table>
-        <tr><th>Campaign</th><th>Rows</th></tr>
+        <tr><th>{{ t("Campaign") }}</th><th>{{ t("Rows") }}</th></tr>
         {% for c in preview.plog.campaigns %}
           <tr><td>{{ c.name }}</td><td>{{ c.rows }}</td></tr>
         {% endfor %}
@@ -22,50 +22,47 @@
     <div>
       <h2>DMR</h2>
       <table>
-        <tr><th>Sheet</th><td>{{ preview.dmr.sheet }}</td></tr>
-        <tr><th>Header row</th><td>{{ preview.dmr.header_row }} (detected by Blogger + PostID fingerprint)</td></tr>
-        <tr><th>Data rows</th><td>{{ preview.dmr.rows }}</td></tr>
-        <tr><th>Export window</th><td>{{ preview.dmr.window[0] or "?" }} → {{ preview.dmr.window[1] or "?" }}</td></tr>
+        <tr><th>{{ t("Sheet") }}</th><td>{{ preview.dmr.sheet }}</td></tr>
+        <tr><th>{{ t("Header row") }}</th><td>{{ preview.dmr.header_row }}{{ t(" (detected by Blogger + PostID fingerprint)") }}</td></tr>
+        <tr><th>{{ t("Data rows") }}</th><td>{{ preview.dmr.rows }}</td></tr>
+        <tr><th>{{ t("Export window") }}</th><td>{{ preview.dmr.window[0] or "?" }} → {{ preview.dmr.window[1] or "?" }}</td></tr>
       </table>
       {% if preview.out_of_window_rows %}
-        <div class="warn">⚠ {{ preview.out_of_window_rows }} PLOG row(s) have a
-        POST DATE outside the DMR export window — an absent post there is
-        expected-missing, not a DMR gap. They are flagged in the results.</div>
+        <div class="warn">⚠ {{ t("{n} PLOG row(s) have a POST DATE outside the DMR export window — an absent post there is expected-missing, not a DMR gap. They are flagged in the results.", n=preview.out_of_window_rows) }}</div>
       {% endif %}
     </div>
   </div>
 
   {% if preview.perimeter %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>Perimeter (Micro):</b> {{ preview.perimeter.filename }} ·
-      extracted {{ preview.perimeter.extraction_date or "unknown date" }} ·
-      {{ "{:,}".format(preview.perimeter.rows) }} rows,
-      {{ "{:,}".format(preview.perimeter.redbook_count) }} with REDBOOK_ID —
-      无博主 rows will be split by membership.</div>
-    {% for w in preview.perimeter.warnings %}<div class="warn">Perimeter: {{ w }}</div>{% endfor %}
+      <b>{{ t("Perimeter (Micro):") }}</b>
+      {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID — 无博主 rows will be split by membership.",
+           filename=preview.perimeter.filename,
+           date=preview.perimeter.extraction_date or t("unknown date"),
+           rows="{:,}".format(preview.perimeter.rows),
+           redbook="{:,}".format(preview.perimeter.redbook_count)) }}</div>
+    {% for w in preview.perimeter.warnings %}<div class="warn">{{ t("Perimeter:") }} {{ td(w) }}</div>{% endfor %}
   {% else %}
-    <p class="muted" style="font-size:.78rem">No perimeter — 无博主 rows stay
-      unsplit.</p>
+    <p class="muted" style="font-size:.78rem">{{ t("No perimeter — 无博主 rows stay unsplit.") }}</p>
   {% endif %}
 
-  {% for w in preview.plog.warnings %}<div class="warn">PLOG: {{ w }}</div>{% endfor %}
-  {% for w in preview.dmr.warnings %}<div class="warn">DMR: {{ w }}</div>{% endfor %}
+  {% for w in preview.plog.warnings %}<div class="warn">{{ t("PLOG:") }} {{ td(w) }}</div>{% endfor %}
+  {% for w in preview.dmr.warnings %}<div class="warn">{{ t("DMR:") }} {{ td(w) }}</div>{% endfor %}
 
   <form method="post" action="/runs/{{ run_id }}/start" style="margin-top:1rem">
     {# hidden fallbacks: an unchecked checkbox sends nothing, so the server
        could never see "off" without these #}
     <input type="hidden" name="retry_failed_links" value="0">
     <p><label><input type="checkbox" name="retry_failed_links" value="1">
-      Retry links whose previous resolution failed (successful resolutions are
-      always served from cache and never re-fetched)</label></p>
+      {{ t("Retry links whose previous resolution failed (successful resolutions are always served from cache and never re-fetched)") }}</label></p>
     <input type="hidden" name="use_llm" value="0">
     <p><label><input type="checkbox" name="use_llm" value="1"
         {% if anthropic_configured %}checked{% endif %}
         {% if not anthropic_configured %}disabled{% endif %}>
-      Use Claude for residue adjudication + bilingual summary
-      {% if not anthropic_configured %}(no API key configured){% endif %}</label></p>
-    <button type="submit">Run reconciliation</button>
-    <a class="btn secondary" href="/">Cancel</a>
+      {{ t("Use Claude for residue adjudication + bilingual summary") }}
+      {% if not anthropic_configured %}{{ t("(no API key configured)") }}{% endif %}</label></p>
+    <button type="submit">{{ t("Run reconciliation") }}</button>
+    <a class="btn secondary" href="/">{{ t("Cancel") }}</a>
   </form>
 </div>
 {% endblock %}

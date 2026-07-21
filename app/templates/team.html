@@ -1,32 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Team — DMR Reconciler{% endblock %}
+{% block title %}{{ t("Team — DMR Reconciler") }}{% endblock %}
 {% block content %}
 {% if not auth_enabled %}
-  <div class="card"><h1>Team</h1>
-    <div class="warn">APP_PASSWORD is not configured — the app runs open and
-      accounts are disabled.</div></div>
+  <div class="card"><h1>{{ t("Team") }}</h1>
+    <div class="warn">{{ t("APP_PASSWORD is not configured — the app runs open and accounts are disabled.") }}</div></div>
 {% else %}
 <div class="card">
-  <h1>Team</h1>
+  <h1>{{ t("Team") }}</h1>
   {% if msg %}<div class="msg-ok">{{ msg }}</div>{% endif %}
   {% if error %}<div class="warn">{{ error }}</div>{% endif %}
 
   <table>
-    <tr><th>Username</th><th>Display</th><th>Role</th>
+    <tr><th>{{ t("Username") }}</th><th>{{ t("Display") }}</th><th>{{ t("Role") }}</th>
         {% if user and user.is_admin %}<th></th>{% endif %}</tr>
     {% for u in users %}
     <tr>
       <td>{{ u.username }}{% if user and u.username == user.username %}
-          <span class="muted">(you)</span>{% endif %}</td>
+          <span class="muted">{{ t("(you)") }}</span>{% endif %}</td>
       <td>{{ u.display or "" }}</td>
-      <td>{{ "Admin" if u.is_admin else "Member" }}</td>
+      <td>{{ t("Admin") if u.is_admin else t("Member") }}</td>
       {% if user and user.is_admin %}
       <td style="white-space:nowrap">
         {% if u.username != user.username %}
         <form method="post" action="/team/delete" style="display:inline"
-              onsubmit="return confirm('Remove account {{ u.username }}?')">
+              onsubmit="return confirm('{{ t("Remove account {username}?", username=u.username) }}')">
           <input type="hidden" name="username" value="{{ u.username }}">
-          <button type="submit" class="secondary" style="padding:.35rem .8rem">Remove</button>
+          <button type="submit" class="secondary" style="padding:.35rem .8rem">{{ t("Remove") }}</button>
         </form>
         {% endif %}
       </td>
@@ -36,37 +35,36 @@
   </table>
 
   {% if user and user.is_admin %}
-  <h2>Add a coworker</h2>
-  <p class="muted" style="font-size:.8rem">Create the account with an initial
-    password and share it privately; they can change it here afterwards.</p>
+  <h2>{{ t("Add a coworker") }}</h2>
+  <p class="muted" style="font-size:.8rem">{{ t("Create the account with an initial password and share it privately; they can change it here afterwards.") }}</p>
   <form method="post" action="/team/add" style="max-width:420px">
-    <label class="field"><span>Username</span>
+    <label class="field"><span>{{ t("Username") }}</span>
       <input type="text" name="username" autocapitalize="none" required
              pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}"></label>
-    <label class="field"><span>Display name (optional)</span>
+    <label class="field"><span>{{ t("Display name (optional)") }}</span>
       <input type="text" name="display"></label>
-    <label class="field"><span>Initial password (min 8 characters)</span>
+    <label class="field"><span>{{ t("Initial password (min 8 characters)") }}</span>
       <input type="text" name="password" minlength="8" required></label>
     <input type="hidden" name="is_admin" value="0">
     <p><label><input type="checkbox" name="is_admin" value="1">
-      Administrator (can manage accounts)</label></p>
-    <p><button type="submit">Create account</button></p>
+      {{ t("Administrator (can manage accounts)") }}</label></p>
+    <p><button type="submit">{{ t("Create account") }}</button></p>
   </form>
   {% endif %}
 
-  <h2>Change {% if user and user.is_admin %}a{% else %}your{% endif %} password</h2>
+  <h2>{% if user and user.is_admin %}{{ t("Change a password") }}{% else %}{{ t("Change your password") }}{% endif %}</h2>
   <form method="post" action="/team/password" style="max-width:420px">
     {% if user and user.is_admin %}
-      <label class="field"><span>Username</span>
+      <label class="field"><span>{{ t("Username") }}</span>
         <input type="text" name="username" value="{{ user.username }}"
                autocapitalize="none" required></label>
     {% else %}
       <input type="hidden" name="username" value="{{ user.username if user }}">
     {% endif %}
-    <label class="field"><span>New password (min 8 characters)</span>
+    <label class="field"><span>{{ t("New password (min 8 characters)") }}</span>
       <input type="password" name="password" minlength="8"
              autocomplete="new-password" required></label>
-    <p><button type="submit">Update password</button></p>
+    <p><button type="submit">{{ t("Update password") }}</button></p>
   </form>
 </div>
 {% endif %}

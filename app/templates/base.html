@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ 'zh-CN' if lang == 'zh' else 'en' }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -28,6 +28,12 @@
   .headnav a { color:var(--ink); text-decoration:none; margin-left:1.2rem;
                border-bottom:1px solid transparent; padding-bottom:2px; }
   .headnav a:hover { border-bottom-color:var(--ink); }
+  .langtoggle { grid-column:1; justify-self:start; font-size:.68rem;
+                letter-spacing:.14em; text-transform:uppercase; }
+  .langtoggle a { color:var(--ink); text-decoration:none;
+                  border:1px solid var(--line); padding:.3rem .7rem;
+                  transition:border-color .2s; }
+  .langtoggle a:hover { border-color:var(--ink); }
   .tagline { grid-column:1/-1; text-align:center; margin-top:.55rem;
              font-size:.62rem; letter-spacing:.32em; text-transform:uppercase;
              color:var(--muted); text-indent:.32em; }
@@ -124,17 +130,22 @@
 </head>
 <body>
 <header>
+  <nav class="langtoggle">
+    {# not a translated string — each label is written in the language it switches TO #}
+    {% if lang == "zh" %}<a href="/lang/en" lang="en">English</a>
+    {% else %}<a href="/lang/zh" lang="zh-CN">中文</a>{% endif %}
+  </nav>
   <a class="wordmark" href="/">DMR&nbsp;Reconciler</a>
   <nav class="headnav">
     {% set cu = user_of(request) %}
-    <a href="/efficiency">Efficiency</a>
+    <a href="/efficiency">{{ t("Efficiency") }}</a>
     {% if cu %}
       <span>{{ cu.display or cu.username }}</span>
-      <a href="/team">Team</a>
-      <a href="/logout">Sign out</a>
+      <a href="/team">{{ t("Team") }}</a>
+      <a href="/logout">{{ t("Sign out") }}</a>
     {% endif %}
   </nav>
-  <div class="tagline">PLOG · DMR · Xiaohongshu</div>
+  <div class="tagline">{{ t("PLOG · DMR · Xiaohongshu") }}</div>
 </header>
 <main>{% block content %}{% endblock %}</main>
 <script>

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Run {{ run_id }} — DMR Reconciler{% endblock %}
+{% block title %}{{ t("Run {id}", id=run_id) }} — DMR Reconciler{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>Run {{ run_id }}</h1>
+  <h1>{{ t("Run {id}", id=run_id) }}</h1>
   <p class="muted">{{ run.plog_name }} ↔ {{ run.dmr_name }}</p>
 </div>
 <div id="run-body">
@@ -13,12 +13,12 @@
       {% include "_error_panel.html" %}
     {% endwith %}
   {% elif run.status == "pending" and not run.options_json %}
-    <div class="card"><p>This run has not been started.
-      <a href="/">Upload again</a></p></div>
+    <div class="card"><p>{{ t("This run has not been started.") }}
+      <a href="/">{{ t("Upload again") }}</a></p></div>
   {% else %}
     <div class="card" hx-get="/runs/{{ run_id }}/progress"
          hx-trigger="load, every 1.5s" hx-swap="innerHTML">
-      Loading…
+      {{ t("Loading…") }}
     </div>
   {% endif %}
 </div>

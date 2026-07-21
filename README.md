@@ -96,6 +96,26 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
   the database; the finished report is held in an in-process store and
   expires after two hours.
 
+## Interface language (中文界面)
+
+The button in the top-left corner of every page toggles the interface between
+English and Chinese (choice remembered in a `dmr_lang` cookie for a year; it
+works on the sign-in page too). The Chinese copy is written for the China-side
+KOL-operations audience rather than translated literally — a reconciliation
+run is 核对, impressions are 曝光量, and domain vocabulary the team already
+uses (无博主 / 无帖子 / 人工复核 / 报备 / 软植 / Perimeter / CPM) is kept
+verbatim in both languages. English remains the default and renders exactly
+as before.
+
+Mechanics (`app/i18n.py`): static strings go through `t()` keyed by the
+English source text (English is the identity, so a missing translation
+degrades to English, never breaks); text that was *stored* in English at run
+time — progress lines, parser warnings, run statuses — is translated at
+render time by `td()` via exact and regex patterns that carry row numbers and
+counts into the Chinese sentence. Data itself (statuses, campaign names,
+column-S vocabulary, uploaded content) is never translated. The efficiency
+form's slide-language default follows the interface language.
+
 ## Running locally
 
 ```sh

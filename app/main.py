@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, perimeter as perimeter_mod, runner
+from . import auth, config, db, i18n, perimeter as perimeter_mod, runner
 from .deck import DONUT_COLORS, assert_chart_cache, build_deck
 from .effreport import (COOPS, TIERS, ReportConfig, VerificationError,
                         analyze as analyze_efficiency)
@@ -36,8 +36,19 @@ from .report import OVERRIDE_MATCH_BLANK, build_audit_json, write_annotated_xlsx
 app = FastAPI(title="DMR Reconciler")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")),
           name="static")
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"),
+                            context_processors=[i18n.context])
 templates.env.filters["fromjson"] = json.loads
+
+
+def _tr(request: Request):
+    """Translator for messages built inside handlers (same t as templates)."""
+    return i18n.make_t(i18n.get_lang(request))
+
+
+def _td(request: Request):
+    """Pattern translator for dynamic English text (parser errors etc.)."""
+    return i18n.make_td(i18n.get_lang(request))
 
 _start_lock = threading.Lock()
 
@@ -95,7 +106,8 @@ def _session_response(username: str, url: str = "/") -> RedirectResponse:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/healthz", "/login", "/setup") or path.startswith("/static"):
+    if (path in ("/healthz", "/login", "/setup")
+            or path.startswith("/static") or path.startswith("/lang/")):
         return await call_next(request)
     if not config.APP_PASSWORD:
         return await call_next(request)
@@ -104,6 +116,25 @@ async def auth_middleware(request: Request, call_next):
     if db.user_count() == 0:
         return RedirectResponse("/setup", status_code=303)
     return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/lang/{code}")
+async def set_lang(request: Request, code: str):
+    """Top-left toggle target — remembers the choice for a year and returns
+    to the page the user was on (path only, so the redirect can't leave the
+    site)."""
+    if code not in i18n.SUPPORTED:
+        code = "en"
+    from urllib.parse import urlparse
+    ref = urlparse(request.headers.get("referer", ""))
+    back = ref.path or "/"
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/"
+    elif ref.query:  # keep e.g. /team?msg=… flash messages across the toggle
+        back += "?" + ref.query
+    resp = RedirectResponse(back, status_code=303)
+    resp.set_cookie(i18n.COOKIE, code, max_age=365 * 24 * 3600, samesite="lax")
+    return resp
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -121,7 +152,7 @@ async def login(request: Request, username: str = Form(""),
         return _session_response(username)
     return templates.TemplateResponse(
         request, "login.html",
-        {"error": "用户名或密码错误 / wrong username or password",
+        {"error": _tr(request)("Wrong username or password."),
          "no_users": db.user_count() == 0},
         status_code=401)
 
@@ -151,15 +182,16 @@ async def setup(request: Request, code: str = Form(...),
              "has_users": db.user_count() > 0},
             status_code=status)
 
+    tr = _tr(request)
     if not config.APP_PASSWORD:
-        return fail("APP_PASSWORD is not configured — authentication is disabled.")
+        return fail(tr("APP_PASSWORD is not configured — authentication is disabled."))
     if not hmac.compare_digest(code.encode(), config.APP_PASSWORD.encode()):
-        return fail("设置码错误 / wrong setup code", 401)
+        return fail(tr("Wrong setup code."), 401)
     username = auth.normalize_username(username)
     if not auth.valid_username(username):
-        return fail("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)")
+        return fail(tr("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)"))
     if len(password) < 8:
-        return fail("Password must be at least 8 characters.")
+        return fail(tr("Password must be at least 8 characters."))
     db.user_upsert(username, auth.hash_password(password),
                    display=display.strip(), is_admin=True)
     return _session_response(username)
@@ -188,53 +220,60 @@ async def team_add(request: Request, username: str = Form(...),
                    password: str = Form(...), display: str = Form(""),
                    is_admin: str = Form("0")):
     user = current_user(request)
+    tr = _tr(request)
     if not user or not user["is_admin"]:
-        return _team_redirect(error="Only admins can add accounts.")
+        return _team_redirect(error=tr("Only admins can add accounts."))
     username = auth.normalize_username(username)
     if not auth.valid_username(username):
-        return _team_redirect(error="Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)")
+        return _team_redirect(error=tr("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)"))
     if db.user_get(username):
-        return _team_redirect(error=f"User {username} already exists.")
+        return _team_redirect(error=tr("User {username} already exists.",
+                                       username=username))
     if len(password) < 8:
-        return _team_redirect(error="Password must be at least 8 characters.")
+        return _team_redirect(error=tr("Password must be at least 8 characters."))
     db.user_upsert(username, auth.hash_password(password),
                    display=display.strip(), is_admin=is_admin == "1")
-    return _team_redirect(msg=f"Account {username} created — share the initial "
-                              "password with them privately.")
+    return _team_redirect(msg=tr("Account {username} created — share the "
+                                 "initial password with them privately.",
+                                 username=username))
 
 
 @app.post("/team/delete")
 async def team_delete(request: Request, username: str = Form(...)):
     user = current_user(request)
+    tr = _tr(request)
     if not user or not user["is_admin"]:
-        return _team_redirect(error="Only admins can remove accounts.")
+        return _team_redirect(error=tr("Only admins can remove accounts."))
     username = auth.normalize_username(username)
     target = db.user_get(username)
     if not target:
-        return _team_redirect(error="No such user.")
+        return _team_redirect(error=tr("No such user."))
     if username == user["username"]:
-        return _team_redirect(error="You cannot delete your own account.")
+        return _team_redirect(error=tr("You cannot delete your own account."))
     if target["is_admin"] and db.admin_count() <= 1:
-        return _team_redirect(error="Cannot delete the last admin.")
+        return _team_redirect(error=tr("Cannot delete the last admin."))
     db.user_delete(username)
-    return _team_redirect(msg=f"Account {username} removed.")
+    return _team_redirect(msg=tr("Account {username} removed.",
+                                 username=username))
 
 
 @app.post("/team/password")
 async def team_password(request: Request, username: str = Form(...),
                         password: str = Form(...)):
     user = current_user(request)
+    tr = _tr(request)
     if not user:
-        return _team_redirect(error="Not signed in.")
+        return _team_redirect(error=tr("Not signed in."))
     username = auth.normalize_username(username)
     if username != user["username"] and not user["is_admin"]:
-        return _team_redirect(error="Only admins can reset other passwords.")
+        return _team_redirect(error=tr("Only admins can reset other passwords."))
     if not db.user_get(username):
-        return _team_redirect(error="No such user.")
+        return _team_redirect(error=tr("No such user."))
     if len(password) < 8:
-        return _team_redirect(error="Password must be at least 8 characters.")
+        return _team_redirect(error=tr("Password must be at least 8 characters."))
     db.user_set_password(username, auth.hash_password(password))
-    return _team_redirect(msg=f"Password updated for {username}.")
+    return _team_redirect(msg=tr("Password updated for {username}.",
+                                 username=username))
 
 
 @app.get("/healthz")
@@ -280,11 +319,13 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
         d = await run_in_threadpool(parse_dmr, str(dmr_path))
     except ValueError as e:
         return templates.TemplateResponse(
-            request, "error.html", {"message": str(e)}, status_code=422)
+            request, "error.html", {"message": _td(request)(str(e))},
+            status_code=422)
     except Exception as e:  # corrupt zip, wrong format, … — never a 500
         return templates.TemplateResponse(
             request, "error.html",
-            {"message": f"Could not read the uploaded file(s) as .xlsx: {e}"},
+            {"message": _tr(request)(
+                "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
             status_code=422)
 
     # Optional perimeter: a new upload replaces the persisted one; otherwise
@@ -299,11 +340,13 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
             perim_warnings = parsed.warnings
         except ValueError as e:
             return templates.TemplateResponse(
-                request, "error.html", {"message": str(e)}, status_code=422)
+                request, "error.html", {"message": _td(request)(str(e))},
+                status_code=422)
         except Exception as e:
             return templates.TemplateResponse(
                 request, "error.html",
-                {"message": f"Could not read the perimeter file: {e}"},
+                {"message": _tr(request)(
+                    "Could not read the perimeter file: {e}", e=e)},
                 status_code=422)
     perim_meta = perimeter_mod.current_meta()
 
@@ -367,7 +410,8 @@ async def run_page(request: Request, run_id: str):
     run = db.run_get(run_id)
     if not run:
         return templates.TemplateResponse(
-            request, "error.html", {"message": "Run not found"}, status_code=404)
+            request, "error.html", {"message": _tr(request)("Run not found")},
+            status_code=404)
     return templates.TemplateResponse(request, "run.html", {
         "run": run, "run_id": run_id,
         "preview": json.loads(run.get("preview_json") or "{}"),
@@ -571,16 +615,19 @@ async def efficiency_run(request: Request, report: UploadFile,
         analysis, pptx = await run_in_threadpool(_analyze_and_build)
     except ValueError as e:  # V1 — wrong sheet shape
         return templates.TemplateResponse(
-            request, "error.html", {"message": str(e)}, status_code=422)
+            request, "error.html", {"message": _td(request)(str(e))},
+            status_code=422)
     except VerificationError as e:
         return templates.TemplateResponse(
             request, "error.html",
-            {"message": f"Internal cross-check failed — report not generated: {e}"},
+            {"message": _tr(request)(
+                "Internal cross-check failed — report not generated: {e}", e=e)},
             status_code=500)
     except Exception as e:  # corrupt zip, wrong format, … — never a 500
         return templates.TemplateResponse(
             request, "error.html",
-            {"message": f"Could not read the uploaded file as .xlsx: {e}"},
+            {"message": _tr(request)(
+                "Could not read the uploaded file as .xlsx: {e}", e=e)},
             status_code=422)
 
     filename = Path(report.filename or "report.xlsx").stem
@@ -595,8 +642,9 @@ async def efficiency_report(request: Request, token: str):
     if not entry:
         return templates.TemplateResponse(
             request, "error.html",
-            {"message": "This report has expired (reports are kept in memory "
-                        "for 2 hours, never stored). Re-upload the workbook."},
+            {"message": _tr(request)(
+                "This report has expired (reports are kept in memory for 2 "
+                "hours, never stored). Re-upload the workbook.")},
             status_code=404)
     return templates.TemplateResponse(request, "efficiency_report.html",
                                       _eff_report_context(token, entry))

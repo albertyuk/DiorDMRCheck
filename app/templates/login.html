@@ -3,21 +3,19 @@
 <div class="card authcard">
   <span class="wordmark">DMR&nbsp;Reconciler</span>
   <p class="muted" style="font-size:.72rem; letter-spacing:.2em; text-transform:uppercase">
-    Sign in</p>
+    {{ t("Sign in") }}</p>
   {% if error %}<div class="warn">{{ error }}</div>{% endif %}
   <form method="post" action="/login">
-    <label class="field"><span>Username</span>
+    <label class="field"><span>{{ t("Username") }}</span>
       <input type="text" name="username" autocomplete="username" required
              autofocus autocapitalize="none"></label>
-    <label class="field"><span>Password</span>
+    <label class="field"><span>{{ t("Password") }}</span>
       <input type="password" name="password" autocomplete="current-password" required></label>
     <p style="text-align:center; margin-top:1.4rem">
-      <button type="submit" style="width:100%">Sign in</button></p>
+      <button type="submit" style="width:100%">{{ t("Sign in") }}</button></p>
   </form>
   {% if no_users %}
-    <p class="muted" style="font-size:.78rem">No accounts exist yet —
-      <a href="/setup" style="color:var(--ink)">create the admin account</a>
-      with the setup code.</p>
+    <p class="muted" style="font-size:.78rem">{{ t('No accounts exist yet — <a href="/setup" style="color:var(--ink)">create the admin account</a> with the setup code.') | safe }}</p>
   {% endif %}
 </div>
 {% endblock %}

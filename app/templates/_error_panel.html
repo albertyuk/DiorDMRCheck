@@ -1,5 +1,5 @@
-<div class="card"><h2>Run failed</h2>
-  <p>{{ run.message }}</p>
+<div class="card"><h2>{{ t("Run failed") }}</h2>
+  <p>{{ td(run.message) }}</p>
   {% if run.error %}<pre class="muted" style="white-space:pre-wrap">{{ run.error }}</pre>{% endif %}
   <form method="post" action="/runs/{{ run_id }}/start">
     {# preserve the options the user originally chose #}
@@ -7,6 +7,6 @@
            value="{{ '1' if options.get('retry_failed_links') else '0' }}">
     <input type="hidden" name="use_llm"
            value="{{ '1' if options.get('use_llm') else '0' }}">
-    <button type="submit">Retry run</button>
+    <button type="submit">{{ t("Retry run") }}</button>
   </form>
 </div>

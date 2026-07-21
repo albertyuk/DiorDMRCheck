@@ -1,39 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Efficiency report — {{ filename }}{% endblock %}
+{% block title %}{{ t("Efficiency report — {name}", name=filename) }}{% endblock %}
 {% block content %}
 
 <div class="card">
-  <h1>KOL efficiency report</h1>
-  <p class="muted">{{ filename }}.xlsx · sheet
+  <h1>{{ t("KOL efficiency report") }}</h1>
+  <p class="muted">{{ filename }}.xlsx · {{ t("sheet") }}
     <code>{{ analysis.meta.sheet }}</code> ·
-    {{ analysis.rows_total }} rows parsed ·
-    basis <b>{{ analysis.config.basis }}</b> ·
-    tiers from <b>{{ analysis.config.tier_mode }}</b></p>
+    {{ t("{n} rows parsed", n=analysis.rows_total) }} ·
+    {{ t("basis") }} <b>{{ t(analysis.config.basis) }}</b> ·
+    {{ t("tiers from") }} <b>{{ t(analysis.config.tier_mode) }}</b></p>
   {% if has_deck %}
-    <p><a class="btn" href="/efficiency/{{ token }}/deck.pptx">Download .pptx</a>
+    <p><a class="btn" href="/efficiency/{{ token }}/deck.pptx">{{ t("Download .pptx") }}</a>
        <span class="muted" style="font-size:.74rem;margin-left:.8rem">
-         Native editable charts — every cached chart value is verified against
-         the computed metrics before the file is offered.</span></p>
+         {{ t("Native editable charts — every cached chart value is verified against the computed metrics before the file is offered.") }}</span></p>
   {% else %}
-    <div class="warn"><b>Deck not generated</b> — a validation error below is
-      blocking (missing_row_policy=block). Fix the source data or re-run with
-      the default policy.</div>
+    <div class="warn">{{ t("<b>Deck not generated</b> — a validation error below is blocking (missing_row_policy=block). Fix the source data or re-run with the default policy.") | safe }}</div>
   {% endif %}
 </div>
 
 {% if analysis.findings %}
 <div class="card">
-  <h2>Validation findings ({{ analysis.findings|length }})</h2>
-  <p class="muted" style="font-size:.78rem">The source file is never
-    mutated — issues are reported here and, where they bias a metric, called
-    out on the slide itself.</p>
+  <h2>{{ t("Validation findings ({n})", n=analysis.findings|length) }}</h2>
+  <p class="muted" style="font-size:.78rem">{{ t("The source file is never mutated — issues are reported here and, where they bias a metric, called out on the slide itself.") }}</p>
   <table>
-    <tr><th>Code</th><th>Severity</th><th>Finding</th><th>Excel rows</th></tr>
+    <tr><th>{{ t("Code") }}</th><th>{{ t("Severity") }}</th><th>{{ t("Finding") }}</th><th>{{ t("Excel rows") }}</th></tr>
     {% for f in analysis.findings %}
     <tr>
       <td><code>{{ f.code }}</code></td>
-      <td>{% if f.severity == "ERROR" %}<b>ERROR</b>{% else %}WARN{% endif %}</td>
-      <td>{{ f.message }}</td>
+      <td>{% if f.severity == "ERROR" %}<b>{{ t("ERROR") }}</b>{% else %}{{ t("WARN") }}{% endif %}</td>
+      <td>{{ td(f.message) }}</td>
       <td class="muted">{{ f.rows[:12]|join(", ") }}{% if f.rows|length > 12 %}… ({{ f.rows|length }}){% endif %}</td>
     </tr>
     {% endfor %}
@@ -42,25 +37,25 @@
 {% endif %}
 
 <div class="card">
-  <h2>Group metrics</h2>
+  <h2>{{ t("Group metrics") }}</h2>
   <div class="counts">
-    <span class="stat"><b>{{ analysis.metrics.totals.rows }}</b> posts</span>
-    <span class="stat"><b>¥{{ "{:,.0f}".format(analysis.metrics.totals.spend) }}</b> spend</span>
-    <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.impressions) }}</b> impressions</span>
-    <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.engagements) }}</b> engagements</span>
+    <span class="stat"><b>{{ analysis.metrics.totals.rows }}</b> {{ t("posts") }}</span>
+    <span class="stat"><b>¥{{ "{:,.0f}".format(analysis.metrics.totals.spend) }}</b> {{ t("spend") }}</span>
+    <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.impressions) }}</b> {{ t("impressions") }}</span>
+    <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.engagements) }}</b> {{ t("engagements") }}</span>
     {% if analysis.metrics.totals.excluded_rows %}
-      <span class="stat"><b>{{ analysis.metrics.totals.excluded_rows }}</b> excluded (V2)</span>
+      <span class="stat"><b>{{ analysis.metrics.totals.excluded_rows }}</b> {{ t("excluded (V2)") }}</span>
     {% endif %}
     {% if analysis.metrics.totals.unclassified %}
-      <span class="stat"><b>{{ analysis.metrics.totals.unclassified }}</b> unclassified</span>
+      <span class="stat"><b>{{ analysis.metrics.totals.unclassified }}</b> {{ t("unclassified") }}</span>
     {% endif %}
   </div>
   <div class="tablewrap">
   <table>
-    <tr><th></th><th>Group</th><th>n</th><th>Share</th><th>Avg price</th>
-        <th>CPM pooled</th><th>CPM per-post</th>
-        <th>CPE pooled</th><th>CPE per-post</th>
-        <th>Top-2 impression share</th></tr>
+    <tr><th></th><th>{{ t("Group") }}</th><th>n</th><th>{{ t("Share") }}</th><th>{{ t("Avg price") }}</th>
+        <th>{{ t("CPM pooled") }}</th><th>{{ t("CPM per-post") }}</th>
+        <th>{{ t("CPE pooled") }}</th><th>{{ t("CPE per-post") }}</th>
+        <th>{{ t("Top-2 impression share") }}</th></tr>
     {% for name, g in ordered_groups %}
     <tr>
       <td><span style="display:inline-block;width:11px;height:11px;background:#{{ donut_colors.get(name, 'BFBFBF') }}"></span></td>
@@ -81,28 +76,23 @@
       <td class="muted">UNCLASSIFIED</td>
       <td>{{ analysis.metrics.totals.unclassified }}</td>
       <td>{{ analysis.metrics.totals.unclassified_share }}%</td>
-      <td colspan="6" class="muted">counted in totals, excluded from group metrics (V7)</td>
+      <td colspan="6" class="muted">{{ t("counted in totals, excluded from group metrics (V7)") }}</td>
     </tr>
     {% endif %}
   </table>
   </div>
-  <p class="muted" style="font-size:.74rem">Missing groups are absent —
-    rendered as gaps on the slide, never zero bars. The source file's CPM
-    column (price per <i>single</i> impression) is never reused; CPM here is
-    the industry-standard ¥ per 1,000.</p>
+  <p class="muted" style="font-size:.74rem">{{ t("Missing groups are absent — rendered as gaps on the slide, never zero bars. The source file's CPM column (price per <i>single</i> impression) is never reused; CPM here is the industry-standard ¥ per 1,000.") | safe }}</p>
 </div>
 
 <div class="card">
-  <h2>Insights (data-driven only)</h2>
-  {% for b in analysis.insights.price %}<p>• {{ b }}</p>{% endfor %}
-  {% for b in analysis.insights.efficiency %}<p>• {{ b }}</p>{% endfor %}
-  {% for b in analysis.insights.caveats %}<p class="caveat">• {{ b }}</p>{% endfor %}
+  <h2>{{ t("Insights (data-driven only)") }}</h2>
+  {% for b in analysis.insights.price %}<p>• {{ td(b) }}</p>{% endfor %}
+  {% for b in analysis.insights.efficiency %}<p>• {{ td(b) }}</p>{% endfor %}
+  {% for b in analysis.insights.caveats %}<p class="caveat">• {{ td(b) }}</p>{% endfor %}
   <p class="muted" style="font-size:.76rem;border-top:1px solid var(--hairline);padding-top:.7rem">
-    {{ analysis.insights.footnote }}</p>
-  <p class="muted" style="font-size:.7rem">No wave-over-wave comparisons are
-    generated — this report sees one wave only. This page and the download
-    expire two hours after generation; nothing is stored server-side.</p>
+    {{ td(analysis.insights.footnote) }}</p>
+  <p class="muted" style="font-size:.7rem">{{ t("No wave-over-wave comparisons are generated — this report sees one wave only. This page and the download expire two hours after generation; nothing is stored server-side.") }}</p>
 </div>
 
-<p><a class="btn secondary" href="/efficiency">New report</a></p>
+<p><a class="btn secondary" href="/efficiency">{{ t("New report") }}</a></p>
 {% endblock %}

@@ -1,76 +1,67 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h1>New reconciliation run</h1>
-  <p class="muted">Upload the internal tracker (PLOG) and the DMR
-     social-listening export. You will see a parse preview before anything
-     runs — no TikHub or Claude calls happen until you confirm.</p>
+  <h1>{{ t("New reconciliation run") }}</h1>
+  <p class="muted">{{ t("Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
   {% if not tikhub_configured %}
-    <div class="warn">TIKHUB_API_KEY is not configured — link resolution will
-      rely on the free direct-redirect path only, which is usually blocked
-      from datacenter IPs. Expect most rows to fall back to
-      Check链接错误 with name-based candidates.</div>
+    <div class="warn">{{ t("TIKHUB_API_KEY is not configured — link resolution will rely on the free direct-redirect path only, which is usually blocked from datacenter IPs. Expect most rows to fall back to Check链接错误 with name-based candidates.") }}</div>
   {% endif %}
   {% if not anthropic_configured %}
-    <div class="warn">ANTHROPIC_API_KEY is not configured — Tier-4
-      adjudication and the bilingual summary are skipped; ambiguous rows stay
-      人工复核.</div>
+    <div class="warn">{{ t("ANTHROPIC_API_KEY is not configured — Tier-4 adjudication and the bilingual summary are skipped; ambiguous rows stay 人工复核.") }}</div>
   {% else %}
-    <p class="muted">Adjudicator model: <code>{{ model }}</code></p>
+    <p class="muted">{{ t("Adjudicator model:") }} <code>{{ model }}</code></p>
   {% endif %}
   <form method="post" action="/upload" enctype="multipart/form-data">
-    <p><label>PLOG file (e.g. <code>PLOG_DMR_CHECK.xlsx</code>)<br>
+    <p><label>{{ t("PLOG file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
       <input type="file" name="plog" accept=".xlsx" required></label></p>
-    <p><label>DMR file (e.g. <code>YTD_DMR_MICRO_0720.xlsx</code>)<br>
+    <p><label>{{ t("DMR file (e.g.") }} <code>YTD_DMR_MICRO_0720.xlsx</code>{{ t(")") }}<br>
       <input type="file" name="dmr" accept=".xlsx" required></label></p>
-    <p><label>Perimeter (Micro) — optional
-      {% if perimeter %}<span class="muted">(replaces the current one below)</span>{% endif %}<br>
+    <p><label>{{ t("Perimeter (Micro) — optional") }}
+      {% if perimeter %}<span class="muted">{{ t("(replaces the current one below)") }}</span>{% endif %}<br>
       <input type="file" name="perimeter" accept=".xlsx"></label></p>
-    <button type="submit">Upload &amp; preview</button>
+    <button type="submit">{{ t("Upload & preview") }}</button>
   </form>
 
   {% if perimeter %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>Perimeter in use:</b> {{ perimeter.filename }} ·
-      extracted {{ perimeter.extraction_date or "unknown date" }} ·
-      {{ "{:,}".format(perimeter.rows) }} rows,
-      {{ "{:,}".format(perimeter.redbook_count) }} with REDBOOK_ID.
-      无博主 rows will be split by perimeter membership. The perimeter updates
-      regularly — replace it when the extraction date gets stale.
+      <b>{{ t("Perimeter in use:") }}</b>
+      {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.",
+           filename=perimeter.filename,
+           date=perimeter.extraction_date or t("unknown date"),
+           rows="{:,}".format(perimeter.rows),
+           redbook="{:,}".format(perimeter.redbook_count)) }}
+      {{ t("无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.") }}
       <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
-            onsubmit="return confirm('Remove the perimeter? Runs revert to plain 无博主.')">
-        <button type="submit" class="secondary" style="padding:.3rem .8rem">Remove</button>
+            onsubmit="return confirm('{{ t("Remove the perimeter? Runs revert to plain 无博主.") }}')">
+        <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
       </form>
     </div>
   {% else %}
-    <p class="muted" style="font-size:.78rem">No perimeter uploaded — 无博主
-      rows are not split by perimeter membership.</p>
+    <p class="muted" style="font-size:.78rem">{{ t("No perimeter uploaded — 无博主 rows are not split by perimeter membership.") }}</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>KOL efficiency report</h2>
-  <p class="muted">Turn a PLOG tracker into a chart-based efficiency
-    presentation (TIER × 报备/软植 CPM &amp; CPE, price premiums, validation
-    caveats) — editable <code>.pptx</code> plus an HTML view. Runs entirely
-    in memory; nothing is stored.
-    <a href="/efficiency" style="color:var(--ink)">Generate →</a></p>
+  <h2>{{ t("KOL efficiency report") }}</h2>
+  <p class="muted">{{ t("Turn a PLOG tracker into a chart-based efficiency presentation (TIER × 报备/软植 CPM & CPE, price premiums, validation caveats) — editable") }}
+    <code>.pptx</code> {{ t("plus an HTML view. Runs entirely in memory; nothing is stored.") }}
+    <a href="/efficiency" style="color:var(--ink)">{{ t("Generate →") }}</a></p>
 </div>
 
 <div class="card">
-  <h2>Past runs</h2>
+  <h2>{{ t("Past runs") }}</h2>
   {% if runs %}
   <table>
-    <tr><th>Run</th><th>Files</th><th>Status</th><th>Message</th></tr>
+    <tr><th>{{ t("Run") }}</th><th>{{ t("Files") }}</th><th>{{ t("Status") }}</th><th>{{ t("Message") }}</th></tr>
     {% for r in runs %}
     <tr>
       <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
       <td>{{ r.plog_name }} ↔ {{ r.dmr_name }}</td>
-      <td>{{ r.status }}</td>
-      <td class="muted">{{ r.message or "" }}</td>
+      <td>{{ td(r.status) }}</td>
+      <td class="muted">{{ td(r.message or "") }}</td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="muted">No runs yet.</p>{% endif %}
+  {% else %}<p class="muted">{{ t("No runs yet.") }}</p>{% endif %}
 </div>
 {% endblock %}
