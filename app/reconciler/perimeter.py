@@ -26,10 +26,11 @@ from rapidfuzz import fuzz, process
 
 from ..core import db
 from ..core.textnorm import ascii_part, cjk, header_key, norm
+from .name_match import (FUZZY_CUTOFF, METHOD_ASCII_FUZZY, METHOD_CJK,
+                         METHOD_NORM, METHOD_PINYIN, MIN_COMPARE_LEN)
 
 PERIMETER_REQUIRED = {"name", "redbook_id"}
 HEADER_SCAN_ROWS = 15
-FUZZY_CUTOFF = 85
 
 _EXTRACTION_RE = re.compile(
     r"date of extraction\s*[:：]?\s*([0-9]{2}/[0-9]{2}/[0-9]{4}(?:\s+[0-9:]{5,8})?)",
@@ -199,15 +200,17 @@ class PerimeterIndex:
                 self.by_redbook[rid] = r
         # fuzzy choice lists (index-aligned with self.rows; short forms
         # excluded — partial_ratio saturates on 1-3 char strings)
-        self._an = [(i, r["an"]) for i, r in enumerate(rows) if len(r["an"]) >= 4]
-        self._ab = [(i, r["ab"]) for i, r in enumerate(rows) if len(r["ab"]) >= 4]
+        self._an = [(i, r["an"]) for i, r in enumerate(rows)
+                    if len(r["an"]) >= MIN_COMPARE_LEN]
+        self._ab = [(i, r["ab"]) for i, r in enumerate(rows)
+                    if len(r["ab"]) >= MIN_COMPARE_LEN]
 
     def lookup_author(self, author_id: str) -> Optional[dict]:
         return self.by_redbook.get((author_id or "").strip().lower())
 
     def _fuzzy(self, query: str, choices: list[tuple[int, str]],
                hits: dict[int, str], method: str) -> None:
-        if len(query) < 4 or not choices:
+        if len(query) < MIN_COMPARE_LEN or not choices:
             return
         found = process.extract(
             query, [c[1] for c in choices], scorer=fuzz.partial_ratio,
@@ -223,16 +226,16 @@ class PerimeterIndex:
         # ladder steps a/b — exact containment over precomputed forms
         for i, r in enumerate(self.rows):
             if pc and r["cb"] and pc in r["cb"]:
-                hits.setdefault(i, "cjk-substring")
+                hits.setdefault(i, METHOD_CJK)
             elif pn and ((r["nn"] and pn in r["nn"]) or (r["nb"] and pn in r["nb"])):
-                hits.setdefault(i, "norm-substring")
+                hits.setdefault(i, METHOD_NORM)
         # ladder steps c/d — fuzzy over the ASCII forms (rapidfuzz batch)
-        self._fuzzy(pa, self._an, hits, "ascii-fuzzy")
-        self._fuzzy(pa, self._ab, hits, "ascii-fuzzy")
+        self._fuzzy(pa, self._an, hits, METHOD_ASCII_FUZZY)
+        self._fuzzy(pa, self._ab, hits, METHOD_ASCII_FUZZY)
         if pc:
             pinyin = "".join(lazy_pinyin(pc)).casefold()
-            self._fuzzy(pinyin, self._an, hits, "pinyin-bridge")
-            self._fuzzy(pinyin, self._ab, hits, "pinyin-bridge")
+            self._fuzzy(pinyin, self._an, hits, METHOD_PINYIN)
+            self._fuzzy(pinyin, self._ab, hits, METHOD_PINYIN)
         return [(self.rows[i], m) for i, m in sorted(hits.items())]
 
 

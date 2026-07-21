@@ -7,7 +7,7 @@ import httpx
 import pytest
 from openpyxl import Workbook
 
-from app.reconciler.pipeline import name_contains, name_ladder
+from app.reconciler.name_match import name_contains, name_ladder
 from app.core.xlsx import to_date as _to_date, to_int as _to_int
 from app.reconciler.parsers import parse_dmr, parse_plog
 from app.reconciler.links import (_extract_note_fields, _normalize_url,

@@ -13,11 +13,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Optional
 
-from pypinyin import lazy_pinyin
-from rapidfuzz import fuzz
-
 from .. import config
-from ..core.textnorm import ascii_part, cjk, norm
+from ..core.textnorm import cjk, norm
+from .name_match import (METHOD_CJK, METHOD_NORM, name_contains,
+                         name_ladder)
 from .parsers import DmrParse, DmrRow, PlogParse, PlogRow
 from .domain import (ENGAGEMENT_CAVEAT, LINK_ERROR, MATCH,  # noqa: F401
                      NAME_MISLABEL, NO_BLOGGER,
@@ -46,41 +45,6 @@ def build_indexes(dmr: DmrParse) -> DmrIndexes:
 
 
 # ------------------------------------------------------------- name matching
-
-def name_contains(plog_name: str, dmr_blogger: str) -> bool:
-    """Strict containment used for the MATCH name-mislabel nuance: the DMR
-    Blogger must contain the (normalized) PLOG NAME. Fuzzy matching is
-    deliberately NOT used here — the human flags e.g. gungun_ vs gungunnnnn."""
-    c = cjk(plog_name)
-    if c and c in cjk(dmr_blogger):
-        return True
-    n = norm(plog_name)
-    if not n:
-        # An all-emoji/blank PLOG name normalizes to nothing — there is no
-        # basis to accuse DMR of mislabeling, so treat as containing.
-        return True
-    return n in norm(dmr_blogger)
-
-
-def name_ladder(plog_name: str, dmr_blogger: str) -> str:
-    """First-hit-wins ladder; returns the method name or '' for no match."""
-    pc, dc = cjk(plog_name), cjk(dmr_blogger)
-    if pc and pc in dc:
-        return "cjk-substring"
-    pn, dn = norm(plog_name), norm(dmr_blogger)
-    if pn and pn in dn:
-        return "norm-substring"
-    # Both sides need ≥ 4 ASCII chars: partial_ratio aligns the shorter string
-    # inside the longer, so a 1-3 char remainder scores 100 against anything.
-    pa, da = ascii_part(plog_name), ascii_part(dmr_blogger)
-    if len(pa) >= 4 and len(da) >= 4 and fuzz.partial_ratio(pa, da) >= 85:
-        return "ascii-fuzzy"
-    if pc and len(da) >= 4:
-        pinyin = "".join(lazy_pinyin(pc)).casefold()
-        if len(pinyin) >= 4 and fuzz.partial_ratio(pinyin, da) >= 85:
-            return "pinyin-bridge"
-    return ""
-
 
 def scan_by_name(plog_name: str, rows: list[DmrRow]) -> list[tuple[DmrRow, str]]:
     hits = []
@@ -305,8 +269,8 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 foreign = [
                     (r, m) for r, m in name_hits
                     if r.username and r.username != res.author_id
-                    and ((m == "cjk-substring" and len(cjk(prow.name)) >= 2)
-                         or (m == "norm-substring" and len(norm(prow.name)) >= 4))
+                    and ((m == METHOD_CJK and len(cjk(prow.name)) >= 2)
+                         or (m == METHOD_NORM and len(norm(prow.name)) >= 4))
                 ]
                 if foreign and not any(r.username == res.author_id for r, _ in name_hits):
                     v.status = REVIEW
@@ -328,8 +292,8 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             # Length floors keep 1-char CJK / short norm names from flipping
             # correct verdicts to REVIEW via coincidental substrings.
             strong = [(r, m) for r, m in name_hits
-                      if (m == "cjk-substring" and len(cjk(prow.name)) >= 2)
-                      or (m == "norm-substring" and len(norm(prow.name)) >= 4)]
+                      if (m == METHOD_CJK and len(cjk(prow.name)) >= 2)
+                      or (m == METHOD_NORM and len(norm(prow.name)) >= 4)]
             if strong:
                 v.status = REVIEW
                 v.tier = "2:author-id+name-conflict"
