@@ -91,7 +91,8 @@ class Verdict:
     name_method: str = ""
     plog_like: Optional[int] = None
     dmr_likes_retweet: Optional[int] = None
-    engagement_caveat: str = ENGAGEMENT_CAVEAT
+    # NOTE: the engagement caveat (ENGAGEMENT_CAVEAT) is document-level
+    # context, emitted once per result/audit document — not stored per row.
     out_of_window: bool = False
     candidates: list[Candidate] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)

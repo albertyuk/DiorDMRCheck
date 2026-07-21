@@ -21,6 +21,7 @@ from ..remap.routes import FLOW_HANDLERS
 from ..remap.service import PENDING_MAPS, attempt_remap, remap_note
 from ..web import current_user, templates, td as _td, tr as _tr
 from . import perimeter as perimeter_mod, runs
+from .domain import ENGAGEMENT_CAVEAT
 from .export import build_audit_json, load_verdicts, write_annotated_xlsx
 from .parsers import parse_dmr, parse_plog
 from .presentation import OVERRIDE_CHOICES, STATUS_BADGES
@@ -315,6 +316,7 @@ async def results_fragment(request: Request, run_id: str):
         "plog_meta": result.get("plog_meta", {}),
         "dmr_meta": result.get("dmr_meta", {}),
         "summary": summary,
+        "engagement_caveat": ENGAGEMENT_CAVEAT,
         "badges": STATUS_BADGES, "override_choices": OVERRIDE_CHOICES,
     })
 

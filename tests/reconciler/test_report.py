@@ -76,3 +76,41 @@ def test_match_blank_override_forces_empty_s(plog_path, dmr_path, fake_resolver,
                          overrides=overrides)
     ann = load_workbook(str(out))["MASTER KOL LIST"]
     assert ann.cell(row=v.excel_row, column=19).value in (None, "")
+
+
+def test_load_verdicts_tolerates_legacy_and_derived_keys():
+    """Stored result documents carry derived fields (column_s) and may
+    predate the schema (per-row engagement_caveat, unknown future keys) —
+    rehydration must drop them, never TypeError on historical runs."""
+    import json
+    from app.reconciler.export import load_verdicts
+    legacy_verdict = {
+        "campaign": "C", "no": "1", "name": "n", "post_date": None,
+        "post_link": "http://x", "excel_row": 2, "status": "MATCH",
+        "column_s": "",                                # derived
+        "engagement_caveat": "old per-row caveat",     # pre-schema
+        "some_future_field": 123,                      # forward compat
+        "candidates": [{
+            "dmr_row": 5, "post_id": "p", "blogger": "b", "username": "u",
+            "post_date": None, "date_delta_days": None,
+            "likes_retweet": None, "name_method": "cjk-substring",
+            "novel_candidate_key": True,               # forward compat
+        }],
+    }
+    run = {"result_json": json.dumps({"verdicts": [legacy_verdict]})}
+    (v,) = load_verdicts(run)
+    assert v.status == "MATCH" and v.candidates[0].post_id == "p"
+
+
+def test_audit_json_has_document_level_caveat(plog_path, dmr_path,
+                                              fake_resolver):
+    import json
+    from app.reconciler.domain import ENGAGEMENT_CAVEAT
+    from app.reconciler.export import build_audit_json
+    plog = parse_plog(plog_path)
+    dmr = parse_dmr(dmr_path)
+    verdicts = run_pipeline(plog, dmr)
+    doc = json.loads(build_audit_json(
+        {"id": "t", "summary_json": None}, verdicts, {}, {}, {}, []))
+    assert doc["engagement_caveat"] == ENGAGEMENT_CAVEAT
+    assert all("engagement_caveat" not in v for v in doc["verdicts"])

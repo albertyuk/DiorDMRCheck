@@ -19,6 +19,7 @@ from .. import config
 from ..core import db
 from . import perimeter as perimeter_mod
 from .adjudicator import adjudicate, summarize_run
+from .domain import ENGAGEMENT_CAVEAT
 from .pipeline import run_pipeline, status_counts, summary_buckets
 from .parsers import parse_dmr, parse_plog
 from .reverse_audit import reverse_audit
@@ -133,6 +134,9 @@ def _run(run_id: str) -> None:
             "verdicts": [v.to_dict() for v in verdicts],
             "counts": counts,
             "buckets": summary_buckets(counts),
+            # document-level context: DMR engagement numbers in the rows are
+            # early-crawl snapshots, never a matching signal
+            "engagement_caveat": ENGAGEMENT_CAVEAT,
             "perimeter_meta": ({
                 "filename": perim.filename,
                 "extraction_date": perim.extraction_date,

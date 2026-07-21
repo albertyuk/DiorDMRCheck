@@ -16,7 +16,9 @@ from openpyxl.styles import Font
 
 from ..core.xlsx import find_header_row
 from .parsers import PLOG_REQUIRED
-from .domain import Candidate, Verdict
+from dataclasses import fields as dataclass_fields
+
+from .domain import ENGAGEMENT_CAVEAT, Candidate, Verdict
 
 S_COL = 19  # column S
 # The reference uses "已匹配/blank" for matched rows; this sentinel lets a human
@@ -147,6 +149,7 @@ def build_audit_json(run: dict, verdicts: list[Verdict], counts: dict,
         "plog": plog_meta,
         "dmr": dmr_meta,
         "counts": counts,
+        "engagement_caveat": ENGAGEMENT_CAVEAT,
         "tikhub_calls": run.get("tikhub_calls"),
         "llm_calls": run.get("llm_calls"),
         "summary": json.loads(run["summary_json"]) if run.get("summary_json") else None,
@@ -160,15 +163,25 @@ def build_audit_json(run: dict, verdicts: list[Verdict], counts: dict,
     return json.dumps(doc, ensure_ascii=False, indent=2, default=str)
 
 
+_VERDICT_FIELDS = frozenset(f.name for f in dataclass_fields(Verdict))
+_CANDIDATE_FIELDS = frozenset(f.name for f in dataclass_fields(Candidate))
+
+
 def load_verdicts(run: dict) -> list[Verdict]:
-    """Rehydrate Verdict objects from a finished run's result_json."""
+    """Rehydrate Verdict objects from a finished run's result_json.
+
+    Unknown keys are dropped, not fatal: stored documents carry derived
+    fields (column_s) and may predate the current schema (older runs stored
+    a per-row engagement_caveat) — a rendering-side change must never make
+    historical runs unexportable."""
     result = json.loads(run.get("result_json") or "{}")
     out = []
     for d in result.get("verdicts", []):
         d = dict(d)
-        d.pop("column_s", None)
-        cands = [Candidate(**c) for c in d.pop("candidates", [])]
-        v = Verdict(**d)
+        cands = [Candidate(**{k: v for k, v in c.items()
+                              if k in _CANDIDATE_FIELDS})
+                 for c in d.pop("candidates", [])]
+        v = Verdict(**{k: v for k, v in d.items() if k in _VERDICT_FIELDS})
         v.candidates = cands
         out.append(v)
     return out

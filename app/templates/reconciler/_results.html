@@ -79,7 +79,7 @@
               <dt>{{ t("Engagement") }}</dt><dd>{{ t("PLOG LIKE {a} vs DMR Likes_Retweet {b}",
                     a=v.plog_like if v.plog_like is not none else "?",
                     b=v.dmr_likes_retweet if v.dmr_likes_retweet is not none else "?") }}
-                <div class="caveat">{{ td(v.engagement_caveat) }}</div></dd>
+                <div class="caveat">{{ td(engagement_caveat) }}</div></dd>
               {% if v.candidates %}
                 <dt>{{ t("Candidates") }}</dt><dd>
                   {% for c in v.candidates %}
