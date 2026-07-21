@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ t("Header mapping — audit") }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ t("Unfamiliar headers — review the proposed mapping") }}</h1>
+  <p class="muted">{{ t("This file's headers don't match the format the pipeline knows. Claude looked at the sheet names and the first rows only, and proposed the mapping below — it maps columns, it never touches your data.") }}
+     <b>{{ t("Nothing runs until you approve.") }}</b>
+     {{ t("Applying rewrites only the header cells to the canonical names; every data cell stays byte-identical, and the deterministic pipeline runs unchanged. Approved mappings are remembered, so this format is audited once.") }}</p>
+  {% if error %}<div class="warn"><b>{{ error }}</b></div>{% endif %}
+
+  <form method="post" action="/remap/{{ token }}/apply">
+    {% for f in files %}
+    <h2>{{ f.label }} — <code>{{ f.filename }}</code></h2>
+    <p class="muted" style="font-size:.78rem">
+      {{ t("Sheet") }} <code>{{ f.sheet }}</code> ·
+      {{ t("header row") }} {{ f.header_row }}</p>
+    {% for w in f.warnings %}
+      <div class="warn">⚠ {{ t("Model warning:") }} {{ w }}</div>
+    {% endfor %}
+    <div class="tablewrap">
+    <table>
+      <tr><th>{{ t("Canonical field") }}</th><th>{{ t("Meaning") }}</th>
+          <th>{{ t("Source column") }}</th><th>{{ t("Confidence") }}</th></tr>
+      {% for fld in f.fields %}
+      <tr>
+        <td><b>{{ fld.canonical }}</b>
+            {% if fld.required %}<span class="caveat"> *{{ t("required") }}</span>{% endif %}</td>
+        <td class="muted">{{ t(fld.desc) }}</td>
+        <td>
+          <select name="{{ f.kind }}:{{ fld.key }}">
+            <option value="">{{ t("— not present —") }}</option>
+            {% for c in f.choices %}
+              <option value="{{ c.col }}"
+                {% if fld.proposed == c.col %}selected{% endif %}>
+                {{ c.letter }} · {{ c.header or "(" + t("no header") + ")" }}{% if c.samples %} — {{ t("e.g.") }} {{ c.samples|join(", ") }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </td>
+        <td class="muted">
+          {% if fld.proposed and fld.confidence is not none %}
+            {{ (fld.confidence * 100) | round | int }}%
+            {% if fld.confidence < 0.8 %}<span class="caveat">⚠ {{ t("check this one") }}</span>{% endif %}
+          {% elif not fld.proposed %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+    {% endfor %}
+
+    <p style="margin-top:1.4rem">
+      <button type="submit">{{ t("Approve mapping & continue") }}</button>
+      <button type="submit" class="secondary"
+              formaction="/remap/{{ token }}/reject">{{ t("Cancel") }}</button>
+    </p>
+    <p class="muted" style="font-size:.72rem">
+      {{ t("Each dropdown shows the column letter, its original header, and example values from that column — correct anything the model got wrong before approving.") }}</p>
+  </form>
+</div>
+{% endblock %}

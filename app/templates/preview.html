@@ -2,6 +2,19 @@
 {% block content %}
 <div class="card">
   <h1>{{ t("Parse preview — confirm before running") }}</h1>
+  {% if preview.remap %}
+    {% for kind, m in preview.remap.items() %}
+    <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
+      <b>{{ t("Headers remapped") }}</b> ({{ "PLOG" if kind == "plog" else "DMR" }}) —
+      {{ t("sheet") }} <code>{{ m.sheet }}</code>, {{ t("header row") }} {{ m.header_row }}:
+      {% for field, col in m.columns.items() %}{{ field }} ← {{ t("column {n}", n=col) }}{% if not loop.last %} · {% endif %}{% endfor %}.
+      {% if m.auto %}{{ t("Applied automatically — this exact format was approved by") }}
+        <b>{{ m.approved_by or "?" }}</b> {{ m.approved_at }}.
+      {% else %}{{ t("Approved just now by") }} <b>{{ m.approved_by or "?" }}</b>.{% endif %}
+      {{ t("Only header names were rewritten; data cells are untouched.") }}
+    </div>
+    {% endfor %}
+  {% endif %}
   <div style="display:flex; gap:2rem; flex-wrap:wrap">
     <div>
       <h2>PLOG</h2>

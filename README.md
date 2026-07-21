@@ -101,6 +101,36 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
   never used for site assets. Regenerate with the scratch script if the deck
   design changes.
 
+## Unfamiliar sheet formats — LLM header mapping with human audit
+
+When an uploaded workbook's headers don't match the deterministic
+fingerprint (PLOG, DMR, or the efficiency workbook — e.g. a tracker with
+Chinese headers like 博主昵称/笔记链接), the app no longer just fails:
+
+1. Claude is shown a small **structural sample** — sheet names plus the
+   first 15 rows — and proposes which sheet/header-row/columns correspond to
+   the canonical fields, with per-field confidence and warnings for anything
+   a human must double-check (suspected unit differences, rate-vs-count
+   columns). It maps columns; it never rewrites data.
+2. **A human audits before anything runs.** The proposal renders as an
+   editable table: each field shows the original header, example values from
+   that column, and the model's confidence (low-confidence picks are
+   flagged). Correct any column, or cancel. Required fields must be mapped.
+3. On approval, **only the header cells are rewritten** to canonical names
+   (in a copy — the uploaded original is kept); every data cell is
+   byte-identical and the normal deterministic pipeline runs unchanged. The
+   preview/report shows exactly what was remapped and who approved it.
+4. Approved mappings are **cached by a signature of the header region** —
+   each new format costs one LLM call and one approval ever; identical
+   formats later auto-apply with a visible "approved by X on date" note.
+
+Efficiency-report uploads keep their privacy contract: the workbook and the
+pending mapping live only in memory. Without `ANTHROPIC_API_KEY` the
+behavior is exactly the old one (clear parse error). Genuinely missing data
+is out of scope by design — a mapping can rename columns but never conjure
+a join key, and the model is instructed to leave unmappable fields empty
+rather than guess.
+
 ## First-visit guide
 
 A quick-guide popup opens automatically on a user's first visit (suppressed

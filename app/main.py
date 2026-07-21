@@ -23,10 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, i18n, perimeter as perimeter_mod, runner
+from . import (auth, config, db, i18n, perimeter as perimeter_mod, runner,
+               schema_map)
 from .deck import DONUT_COLORS, assert_chart_cache, build_deck
 from .effreport import (COOPS, TIERS, ReportConfig, VerificationError,
-                        analyze as analyze_efficiency)
+                        analyze as analyze_efficiency,
+                        parse_report as parse_eff_report)
 from .matcher import (LINK_ERROR, MATCH, NO_BLOGGER,
                       NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
                       NO_POST_IN_PERIMETER, REVIEW, NAME_MISLABEL, S_TEXT)
@@ -300,43 +302,101 @@ async def perimeter_remove():
     return RedirectResponse("/", status_code=303)
 
 
-@app.post("/upload", response_class=HTMLResponse)
-async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
-                 perimeter: Optional[UploadFile] = File(None)):
-    config.ensure_dirs()
-    run_id = uuid.uuid4().hex[:12]
-    run_dir = config.UPLOAD_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    plog_path = run_dir / ("plog_" + Path(plog.filename or "plog.xlsx").name)
-    dmr_path = run_dir / ("dmr_" + Path(dmr.filename or "dmr.xlsx").name)
-    plog_path.write_bytes(await plog.read())
-    dmr_path.write_bytes(await dmr.read())
+# ------------------------------------------------- LLM header remap + audit
+#
+# When a workbook's headers don't match the deterministic fingerprint, Claude
+# proposes a header→canonical mapping from a small structural sample. NOTHING
+# is applied until a human approves it on the audit screen; approved mappings
+# are cached by header signature and auto-applied (visibly) afterwards.
 
+_MAP_LOCK = threading.Lock()
+_PENDING_MAPS: dict[str, dict] = {}
+_MAP_TTL_SECONDS = 30 * 60
+_MAP_MAX = 10
+
+
+def _map_store(entry: dict) -> str:
+    token = uuid.uuid4().hex[:16]
+    now = time.time()
+    with _MAP_LOCK:
+        for k in [k for k, v in _PENDING_MAPS.items()
+                  if now - v["created"] > _MAP_TTL_SECONDS]:
+            del _PENDING_MAPS[k]
+        while len(_PENDING_MAPS) >= _MAP_MAX:
+            oldest = min(_PENDING_MAPS, key=lambda k: _PENDING_MAPS[k]["created"])
+            del _PENDING_MAPS[oldest]
+        _PENDING_MAPS[token] = {**entry, "created": now}
+    return token
+
+
+def _map_get(token: str) -> Optional[dict]:
+    with _MAP_LOCK:
+        entry = _PENDING_MAPS.get(token)
+        if entry and time.time() - entry["created"] > _MAP_TTL_SECONDS:
+            del _PENDING_MAPS[token]
+            return None
+        return entry
+
+
+def _parser_of(kind: str):
+    return parse_plog if kind == "plog" else parse_dmr
+
+
+def _attempt_remap(kind: str, data: bytes):
+    """After a fingerprint failure. Returns one of
+    ("cached", mapping_dict)   — an already-approved mapping fits this format
+    ("audit", proposal, choices, sig) — LLM proposal awaiting human approval
+    ("fail", reason_or_None)."""
     try:
-        # openpyxl parsing is CPU-bound; keep it off the event loop so
-        # /healthz and progress polls stay responsive during big uploads.
+        sample = schema_map.build_sample(data)
+    except Exception:
+        return ("fail", None)
+    sig = schema_map.signature(sample)
+    cached = schema_map.cache_get(kind, sig)
+    if cached:
+        return ("cached", cached)
+    if not config.ANTHROPIC_API_KEY:
+        return ("fail", None)
+    try:
+        prop = schema_map.propose(sample, kind)
+        choices = schema_map.column_choices(data, prop.sheet, prop.header_row)
+        return ("audit", prop, choices, sig)
+    except schema_map.SchemaMapError as e:
+        return ("fail", str(e))
+
+
+def _remap_note(mapping: dict, kind: str, auto: bool) -> dict:
+    canonical = {key: text for text, key, _, _ in schema_map.FIELDS[kind]}
+    return {
+        "sheet": mapping["sheet"], "header_row": mapping["header_row"],
+        "columns": {canonical.get(k, k): v
+                    for k, v in mapping["columns"].items()},
+        "approved_by": mapping.get("approved_by", ""),
+        "approved_at": mapping.get("approved_at", ""),
+        "auto": auto,
+    }
+
+
+async def _finish_upload(request: Request, run_id: str, run_dir: Path,
+                         plog_path: Path, dmr_path: Path,
+                         plog_name: str, dmr_name: str,
+                         perim_data: Optional[bytes], perim_name: str,
+                         remap: dict):
+    """Everything after both workbooks parse: perimeter ingest, preview,
+    run row, preview page. `remap` records any header mappings applied."""
+    try:
         p = await run_in_threadpool(parse_plog, str(plog_path))
         d = await run_in_threadpool(parse_dmr, str(dmr_path))
     except ValueError as e:
         return templates.TemplateResponse(
             request, "error.html", {"message": _td(request)(str(e))},
             status_code=422)
-    except Exception as e:  # corrupt zip, wrong format, … — never a 500
-        return templates.TemplateResponse(
-            request, "error.html",
-            {"message": _tr(request)(
-                "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
-            status_code=422)
 
-    # Optional perimeter: a new upload replaces the persisted one; otherwise
-    # the last uploaded perimeter (if any) is reused for this run.
-    perim_meta = None
     perim_warnings: list[str] = []
-    if perimeter is not None and perimeter.filename:
-        data = await perimeter.read()
+    if perim_data:
         try:
             parsed = await run_in_threadpool(
-                perimeter_mod.ingest, data, Path(perimeter.filename).name)
+                perimeter_mod.ingest, perim_data, perim_name)
             perim_warnings = parsed.warnings
         except ValueError as e:
             return templates.TemplateResponse(
@@ -375,9 +435,10 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
         "out_of_window_rows": out_of_window,
         "perimeter": ({**perim_meta, "warnings": perim_warnings}
                       if perim_meta else None),
+        "remap": remap or None,
     }
     db.run_create(run_id, plog_path=str(plog_path), dmr_path=str(dmr_path),
-                  plog_name=plog.filename, dmr_name=dmr.filename,
+                  plog_name=plog_name, dmr_name=dmr_name,
                   preview=preview,
                   perimeter_hash=perim_meta["hash"] if perim_meta else None)
     return templates.TemplateResponse(request, "preview.html", {
@@ -385,6 +446,207 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
         "tikhub_configured": bool(config.TIKHUB_API_KEY),
         "anthropic_configured": bool(config.ANTHROPIC_API_KEY),
     })
+
+
+@app.post("/upload", response_class=HTMLResponse)
+async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
+                 perimeter: Optional[UploadFile] = File(None)):
+    config.ensure_dirs()
+    run_id = uuid.uuid4().hex[:12]
+    run_dir = config.UPLOAD_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    plog_path = run_dir / ("plog_" + Path(plog.filename or "plog.xlsx").name)
+    dmr_path = run_dir / ("dmr_" + Path(dmr.filename or "dmr.xlsx").name)
+    plog_path.write_bytes(await plog.read())
+    dmr_path.write_bytes(await dmr.read())
+    perim_data = None
+    perim_name = ""
+    if perimeter is not None and perimeter.filename:
+        perim_data = await perimeter.read()
+        perim_name = Path(perimeter.filename).name
+
+    paths = {"plog": plog_path, "dmr": dmr_path}
+    remap: dict = {}
+    audits: dict = {}
+    fail_msgs: dict = {}
+    for kind in ("plog", "dmr"):
+        try:
+            # openpyxl parsing is CPU-bound; keep it off the event loop so
+            # /healthz and progress polls stay responsive during big uploads.
+            await run_in_threadpool(_parser_of(kind), str(paths[kind]))
+        except ValueError as e:
+            # unfamiliar headers — cached approved mapping, LLM proposal for
+            # the audit screen, or (mapper unavailable) the plain error
+            outcome = await run_in_threadpool(
+                _attempt_remap, kind, paths[kind].read_bytes())
+            if outcome[0] == "cached":
+                mapping = outcome[1]
+                remapped = schema_map.apply_mapping(
+                    paths[kind].read_bytes(), kind, mapping["sheet"],
+                    int(mapping["header_row"]),
+                    {k: int(v) for k, v in mapping["columns"].items()})
+                new_path = paths[kind].with_name("remapped_" + paths[kind].name)
+                new_path.write_bytes(remapped)
+                paths[kind] = new_path
+                remap[kind] = _remap_note(mapping, kind, auto=True)
+            elif outcome[0] == "audit":
+                _, prop, choices, sig = outcome
+                audits[kind] = {"proposal": prop.model_dump(),
+                                "choices": choices, "sig": sig}
+            else:
+                fail_msgs[kind] = (str(e), outcome[1])
+        except Exception as e:  # corrupt zip, wrong format, … — never a 500
+            return templates.TemplateResponse(
+                request, "error.html",
+                {"message": _tr(request)(
+                    "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
+                status_code=422)
+
+    if fail_msgs:
+        parse_err, map_err = next(iter(fail_msgs.values()))
+        msg = _td(request)(parse_err)
+        if map_err:
+            msg += f" ({_tr(request)('Header mapping also failed: {e}', e=map_err)})"
+        return templates.TemplateResponse(
+            request, "error.html", {"message": msg}, status_code=422)
+
+    if audits:
+        token = _map_store({
+            "flow": "run", "run_id": run_id, "run_dir": str(run_dir),
+            "paths": {k: str(v) for k, v in paths.items()},
+            "names": {"plog": plog.filename or "plog.xlsx",
+                      "dmr": dmr.filename or "dmr.xlsx"},
+            "perim_data": perim_data, "perim_name": perim_name,
+            "audits": audits, "remap": remap,
+        })
+        return RedirectResponse(f"/remap/{token}", status_code=303)
+
+    return await _finish_upload(
+        request, run_id, run_dir, paths["plog"], paths["dmr"],
+        plog.filename or "plog.xlsx", dmr.filename or "dmr.xlsx",
+        perim_data, perim_name, remap)
+
+
+def _audit_context(token: str, entry: dict, error: str = "") -> dict:
+    files = []
+    for kind, audit in entry["audits"].items():
+        prop = audit["proposal"]
+        fields = [{
+            "key": key, "canonical": text, "required": req, "desc": desc,
+            "proposed": prop["columns"].get(key),
+            "confidence": prop.get("confidence", {}).get(key),
+        } for text, key, req, desc in schema_map.FIELDS[kind]]
+        files.append({
+            "kind": kind, "label": schema_map.KIND_LABELS[kind],
+            "filename": (entry.get("names", {}).get(kind)
+                         or entry.get("filename", "")),
+            "sheet": prop["sheet"], "header_row": prop["header_row"],
+            "warnings": prop.get("warnings", []),
+            "fields": fields, "choices": audit["choices"],
+        })
+    return {"token": token, "files": files, "flow": entry["flow"],
+            "error": error}
+
+
+@app.get("/remap/{token}", response_class=HTMLResponse)
+async def remap_audit(request: Request, token: str):
+    entry = _map_get(token)
+    if not entry:
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": _tr(request)(
+                "This mapping session has expired — upload the file again.")},
+            status_code=404)
+    return templates.TemplateResponse(request, "remap_audit.html",
+                                      _audit_context(token, entry))
+
+
+@app.post("/remap/{token}/reject")
+async def remap_reject(token: str):
+    with _MAP_LOCK:
+        entry = _PENDING_MAPS.pop(token, None)
+    dest = "/efficiency" if entry and entry["flow"] == "eff" else "/"
+    return RedirectResponse(dest, status_code=303)
+
+
+@app.post("/remap/{token}/apply", response_class=HTMLResponse)
+async def remap_apply(request: Request, token: str):
+    entry = _map_get(token)
+    if not entry:
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"message": _tr(request)(
+                "This mapping session has expired — upload the file again.")},
+            status_code=404)
+    form = await request.form()
+    tr = _tr(request)
+    user = current_user(request)
+
+    # collect + validate the (possibly human-corrected) selections
+    approved: dict[str, dict] = {}
+    for kind, audit in entry["audits"].items():
+        columns: dict[str, int] = {}
+        for text, key, required, _desc in schema_map.FIELDS[kind]:
+            raw = str(form.get(f"{kind}:{key}", "")).strip()
+            if raw:
+                columns[key] = int(raw)
+            elif required:
+                return templates.TemplateResponse(
+                    request, "remap_audit.html",
+                    _audit_context(token, entry, error=tr(
+                        "Required field {field} has no column selected.",
+                        field=text)),
+                    status_code=422)
+        if len(set(columns.values())) != len(columns):
+            return templates.TemplateResponse(
+                request, "remap_audit.html",
+                _audit_context(token, entry, error=tr(
+                    "Two fields point at the same column — each column can "
+                    "serve only one field.")),
+                status_code=422)
+        approved[kind] = {
+            "sheet": audit["proposal"]["sheet"],
+            "header_row": int(audit["proposal"]["header_row"]),
+            "columns": columns, "sig": audit["sig"],
+        }
+
+    username = (user or {}).get("username", "") or "open-mode"
+    remap = dict(entry.get("remap") or {})
+
+    if entry["flow"] == "eff":
+        data = entry["data"]
+        for kind, m in approved.items():   # single "eff" entry
+            data = schema_map.apply_mapping(
+                data, kind, m["sheet"], m["header_row"], m["columns"])
+            schema_map.cache_put(kind, m["sig"], m["sheet"], m["header_row"],
+                                 m["columns"], username)
+            remap[kind] = _remap_note(
+                {**m, "approved_by": username}, kind, auto=False)
+        with _MAP_LOCK:
+            _PENDING_MAPS.pop(token, None)
+        return await _efficiency_analyze(
+            request, data, entry["filename"], entry["cfg"], remap.get("eff"))
+
+    # run flow — write remapped copies next to the originals, then continue
+    paths = {k: Path(v) for k, v in entry["paths"].items()}
+    for kind, m in approved.items():
+        src = paths[kind]
+        remapped = schema_map.apply_mapping(
+            src.read_bytes(), kind, m["sheet"], m["header_row"], m["columns"])
+        new_path = src.with_name("remapped_" + src.name)
+        new_path.write_bytes(remapped)
+        paths[kind] = new_path
+        schema_map.cache_put(kind, m["sig"], m["sheet"], m["header_row"],
+                             m["columns"], username)
+        remap[kind] = _remap_note(
+            {**m, "approved_by": username}, kind, auto=False)
+    with _MAP_LOCK:
+        _PENDING_MAPS.pop(token, None)
+    return await _finish_upload(
+        request, entry["run_id"], Path(entry["run_dir"]),
+        paths["plog"], paths["dmr"],
+        entry["names"]["plog"], entry["names"]["dmr"],
+        entry.get("perim_data"), entry.get("perim_name", ""), remap)
 
 
 @app.post("/runs/{run_id}/start")
@@ -583,6 +845,7 @@ def _eff_report_context(token: str, entry: dict) -> dict:
         "ordered_groups": ordered,
         "donut_colors": DONUT_COLORS,
         "has_deck": entry.get("pptx") is not None,
+        "remap": entry.get("remap"),
     }
 
 
@@ -591,17 +854,11 @@ async def efficiency_form(request: Request):
     return templates.TemplateResponse(request, "efficiency.html", {})
 
 
-@app.post("/efficiency", response_class=HTMLResponse)
-async def efficiency_run(request: Request, report: UploadFile,
-                         basis: str = Form("pooled"),
-                         tier_mode: str = Form("label"),
-                         language: str = Form("en")):
-    cfg = ReportConfig(
-        basis=basis if basis in EFF_BASES else "pooled",
-        tier_mode=tier_mode if tier_mode in EFF_TIER_MODES else "label",
-        language=language if language in EFF_LANGUAGES else "en",
-    )
-    data = await report.read()
+async def _efficiency_analyze(request: Request, data: bytes, filename: str,
+                              cfg_raw: dict, remap_note: Optional[dict]):
+    """Analyze → build deck → store → redirect. Shared by the direct upload
+    path and the post-audit remap path (everything stays in memory)."""
+    cfg = ReportConfig(**cfg_raw)
 
     def _analyze_and_build():
         analysis = analyze_efficiency(io.BytesIO(data), cfg)
@@ -630,10 +887,57 @@ async def efficiency_run(request: Request, report: UploadFile,
                 "Could not read the uploaded file as .xlsx: {e}", e=e)},
             status_code=422)
 
-    filename = Path(report.filename or "report.xlsx").stem
     token = _eff_store({"analysis": analysis, "pptx": pptx,
-                        "filename": filename})
+                        "filename": filename, "remap": remap_note})
     return RedirectResponse(f"/efficiency/{token}", status_code=303)
+
+
+@app.post("/efficiency", response_class=HTMLResponse)
+async def efficiency_run(request: Request, report: UploadFile,
+                         basis: str = Form("pooled"),
+                         tier_mode: str = Form("label"),
+                         language: str = Form("en")):
+    cfg_raw = {
+        "basis": basis if basis in EFF_BASES else "pooled",
+        "tier_mode": tier_mode if tier_mode in EFF_TIER_MODES else "label",
+        "language": language if language in EFF_LANGUAGES else "en",
+    }
+    data = await report.read()
+    filename = Path(report.filename or "report.xlsx").stem
+
+    # cheap pre-check: does the header fingerprint bind at all? If not, offer
+    # the LLM mapping + human audit instead of a bare V1 error. The workbook
+    # stays in memory throughout — client data is never written to disk.
+    try:
+        await run_in_threadpool(parse_eff_report, io.BytesIO(data))
+    except ValueError as e:
+        outcome = await run_in_threadpool(_attempt_remap, "eff", data)
+        if outcome[0] == "cached":
+            mapping = outcome[1]
+            remapped = schema_map.apply_mapping(
+                data, "eff", mapping["sheet"], int(mapping["header_row"]),
+                {k: int(v) for k, v in mapping["columns"].items()})
+            return await _efficiency_analyze(
+                request, remapped, filename, cfg_raw,
+                _remap_note(mapping, "eff", auto=True))
+        if outcome[0] == "audit":
+            _, prop, choices, sig = outcome
+            token = _map_store({
+                "flow": "eff", "data": data, "filename": filename,
+                "cfg": cfg_raw,
+                "audits": {"eff": {"proposal": prop.model_dump(),
+                                   "choices": choices, "sig": sig}},
+            })
+            return RedirectResponse(f"/remap/{token}", status_code=303)
+        msg = _td(request)(str(e))
+        if outcome[1]:
+            msg += f" ({_tr(request)('Header mapping also failed: {e}', e=outcome[1])})"
+        return templates.TemplateResponse(
+            request, "error.html", {"message": msg}, status_code=422)
+    except Exception:
+        pass  # not a header problem — let the real path produce the error
+
+    return await _efficiency_analyze(request, data, filename, cfg_raw, None)
 
 
 @app.get("/efficiency/{token}", response_class=HTMLResponse)

@@ -9,6 +9,17 @@
     {{ t("{n} rows parsed", n=analysis.rows_total) }} ·
     {{ t("basis") }} <b>{{ t(analysis.config.basis) }}</b> ·
     {{ t("tiers from") }} <b>{{ t(analysis.config.tier_mode) }}</b></p>
+  {% if remap %}
+    <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
+      <b>{{ t("Headers remapped") }}</b> —
+      {{ t("sheet") }} <code>{{ remap.sheet }}</code>, {{ t("header row") }} {{ remap.header_row }}:
+      {% for field, col in remap.columns.items() %}{{ field }} ← {{ t("column {n}", n=col) }}{% if not loop.last %} · {% endif %}{% endfor %}.
+      {% if remap.auto %}{{ t("Applied automatically — this exact format was approved by") }}
+        <b>{{ remap.approved_by or "?" }}</b> {{ remap.approved_at }}.
+      {% else %}{{ t("Approved just now by") }} <b>{{ remap.approved_by or "?" }}</b>.{% endif %}
+      {{ t("Only header names were rewritten; data cells are untouched.") }}
+    </div>
+  {% endif %}
   {% if has_deck %}
     <p><a class="btn" href="/efficiency/{{ token }}/deck.pptx">{{ t("Download .pptx") }}</a>
        <span class="muted" style="font-size:.74rem;margin-left:.8rem">

@@ -149,6 +149,77 @@ ZH: dict[str, str] = {
     "Sample output (synthetic demo data)": "示例输出（合成演示数据）",
     "The slide this produces — this sample is built from synthetic demo data, not client data. The donut shows group shares; the bars compare 报备 vs 软植 prices, CPM and CPE per tier, with data caveats printed on the slide.":
         "生成的幻灯片就长这样——本示例由合成演示数据生成，非客户数据。环图展示各分组占比；柱状图按层级对比 报备 vs 软植 的合作价格、CPM 与 CPE，数据风险提示会直接标注在幻灯片上。",
+    # LLM header mapping + human audit -------------------------------------
+    "Header mapping — audit": "表头映射——人工审核",
+    "Unfamiliar headers — review the proposed mapping":
+        "表头不属于已知格式——请审核建议的映射",
+    "This file's headers don't match the format the pipeline knows. Claude looked at the sheet names and the first rows only, and proposed the mapping below — it maps columns, it never touches your data.":
+        "该文件的表头与流水线已知的格式不匹配。Claude 只看了工作表名和前几行，给出下面的映射建议——它只负责列的对应，绝不改动你的数据。",
+    "Nothing runs until you approve.": "你批准之前不会运行任何处理。",
+    "Applying rewrites only the header cells to the canonical names; every data cell stays byte-identical, and the deterministic pipeline runs unchanged. Approved mappings are remembered, so this format is audited once.":
+        "应用映射只是把表头单元格改写为标准名称；所有数据单元格保持原样，确定性流水线照常运行。批准过的映射会被记住——同一格式只需审核一次。",
+    "header row": "表头行",
+    "Model warning:": "模型提示：",
+    "Canonical field": "标准字段",
+    "Meaning": "含义",
+    "Source column": "来源列",
+    "Confidence": "置信度",
+    "required": "必填",
+    "— not present —": "——不存在——",
+    "no header": "无表头",
+    "e.g.": "如",
+    "check this one": "请核对",
+    "Approve mapping & continue": "批准映射并继续",
+    "Each dropdown shows the column letter, its original header, and example values from that column — correct anything the model got wrong before approving.":
+        "每个下拉框都显示列号、原表头和该列的示例值——批准前请把模型映射错的地方改过来。",
+    "Headers remapped": "表头已重映射",
+    "sheet": "工作表",
+    "column {n}": "第 {n} 列",
+    "Applied automatically — this exact format was approved by":
+        "已自动应用——该格式此前已获批准，批准人：",
+    "Approved just now by": "刚刚批准，批准人：",
+    "Only header names were rewritten; data cells are untouched.":
+        "只改写了表头名称；数据单元格未做任何改动。",
+    "Header mapping also failed: {e}": "表头映射也失败了：{e}",
+    "This mapping session has expired — upload the file again.":
+        "该映射会话已过期——请重新上传文件。",
+    "Required field {field} has no column selected.":
+        "必填字段 {field} 尚未选择来源列。",
+    "Two fields point at the same column — each column can serve only one field.":
+        "有两个字段指向同一列——每列只能对应一个字段。",
+    # canonical-field descriptions (schema_map.FIELDS, shown on the audit page)
+    "KOL / blogger display name": "KOL／博主昵称",
+    "URL of the Xiaohongshu post (often an xhslink.com short link)":
+        "小红书帖子链接（常为 xhslink.com 短链）",
+    "campaign / wave the row belongs to": "该行所属的投放项目／波次",
+    "row number within the campaign": "项目内的行号",
+    "date the post went live": "发帖日期",
+    "like count": "点赞数",
+    "collect/save count": "收藏数",
+    "comment count": "评论数",
+    "impression / view count": "曝光／浏览量",
+    "total engagement (like + collection + comment)":
+        "互动总量（点赞＋收藏＋评论）",
+    "blogger display name": "博主昵称",
+    "Xiaohongshu note id — 24-char hex string":
+        "小红书笔记 ID——24 位十六进制字符串",
+    "platform author/user id (join key for blogger presence)":
+        "平台作者／用户 ID（判断博主是否在库的关联键）",
+    "crawl-recorded post date": "抓取记录的发帖日期",
+    "likes at first crawl": "首次抓取时的点赞数",
+    "shares/favorites": "分享／收藏",
+    "total engagement at crawl": "抓取时的互动总量",
+    "comment count at crawl": "抓取时的评论数",
+    "post URL (hyperlink cell often embeds the note id)":
+        "帖子链接（超链接单元格常内嵌笔记 ID）",
+    "row number": "行号",
+    "campaign / wave name": "投放项目／波次名称",
+    "cooperation type — 报备 (declared/paid) vs 软植 (soft placement)":
+        "合作类型——报备 vs 软植",
+    "tier label — 头部/腰部/尾部/底部/KOC": "层级标签——头部/腰部/尾部/底部/KOC",
+    "follower count in thousands": "粉丝量（千）",
+    "URL of the post": "帖子链接",
+    "collaboration price in CNY": "合作价格（人民币）",
     # template strings (merged from the per-template translation pass) --
     "(an existing username is reset)": "（若该用户名已存在，会重置其账号）",
     " (detected by Blogger + PostID fingerprint)": "（按 Blogger + PostID 指纹识别）",
