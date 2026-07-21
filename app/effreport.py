@@ -19,13 +19,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from datetime import date
-from typing import Any, Optional
+from typing import Optional
 
 from openpyxl import load_workbook
 
-from .normalize import header_key, nfkc
-from .parsers import (HEADER_SCAN_ROWS, MAX_CONSECUTIVE_BLANK_ROWS, _cell_str,
-                      _find_header_row, _to_date, _to_int)
+from .core.textnorm import header_key, nfkc
+from .core.xlsx import (MAX_CONSECUTIVE_BLANK_ROWS, cell_str, find_header_row,
+                        to_date, to_float, to_int)
 
 TIERS = ["TOP", "MID", "BOT", "KOC"]
 COOPS = ["SOFT", "PAID"]
@@ -100,18 +100,6 @@ class Finding:
         return asdict(self)
 
 
-def _to_float(v: Any) -> Optional[float]:
-    if v is None or v == "" or isinstance(v, bool):
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    s = nfkc(str(v)).strip().replace(",", "").replace("，", "")
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
 # ---------------------------------------------------------------- parsing
 
 def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
@@ -131,7 +119,7 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
             f"Sheet 'MASTER KOL LIST' not found — using first sheet "
             f"{ws.title!r}."))
 
-    hit = _find_header_row(ws, {"name", "postlink"})
+    hit = find_header_row(ws, {"name", "postlink"})
     if not hit:
         raise ValueError(
             "V1: no header row containing NAME and POST LINK found in "
@@ -158,36 +146,36 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
     for excel_row_cells in ws.iter_rows(min_row=header_row + 1):
         r = excel_row_cells[0].row
         get = lambda k: ws.cell(row=r, column=c[k]).value if c.get(k) else None
-        name = _cell_str(get("name"))
+        name = cell_str(get("name"))
         link_cell = ws.cell(row=r, column=c["postlink"]) if c.get("postlink") else None
         link = ""
         if link_cell is not None:
             if link_cell.hyperlink and link_cell.hyperlink.target:
                 link = str(link_cell.hyperlink.target).strip()
             else:
-                link = _cell_str(link_cell.value)
+                link = cell_str(link_cell.value)
         if not name and not link:
             blank += 1
             if blank >= MAX_CONSECUTIVE_BLANK_ROWS:
                 break
             continue
         blank = 0
-        campaign = _cell_str(get("campaign"))
+        campaign = cell_str(get("campaign"))
         if campaign:
             current_campaign = campaign
         rows.append(Row(
             idx=len(rows), excel_row=r,
-            campaign=current_campaign, no=_cell_str(get("no")), name=name,
-            type_raw=_cell_str(get("type")), level_raw=_cell_str(get("level")),
-            fanbase_k=_to_float(get("fanbase(k)")),
-            post_date=_to_date(get("postdate")),
+            campaign=current_campaign, no=cell_str(get("no")), name=name,
+            type_raw=cell_str(get("type")), level_raw=cell_str(get("level")),
+            fanbase_k=to_float(get("fanbase(k)")),
+            post_date=to_date(get("postdate")),
             post_link=link.strip(),
-            impression=_to_int(get("impression")), like=_to_int(get("like")),
-            collection=_to_int(get("collection")),
-            comment=_to_int(get("comment")),
-            ttl_engagement=_to_int(get("ttlengagement")),
-            price=_to_float(get("price")),
-            cpm_src=_to_float(get("cpm")), cpe_src=_to_float(get("cpe")),
+            impression=to_int(get("impression")), like=to_int(get("like")),
+            collection=to_int(get("collection")),
+            comment=to_int(get("comment")),
+            ttl_engagement=to_int(get("ttlengagement")),
+            price=to_float(get("price")),
+            cpm_src=to_float(get("cpm")), cpe_src=to_float(get("cpe")),
         ))
     meta = {"sheet": ws.title, "header_row": header_row, "rows": len(rows),
             "campaigns": sorted({r.campaign for r in rows if r.campaign})}

@@ -11,7 +11,6 @@ import hmac
 import io
 import json
 import threading
-import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -25,13 +24,15 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (auth, config, db, i18n, perimeter as perimeter_mod, runner,
                schema_map)
+from .core.token_store import TokenStore
 from .deck import DONUT_COLORS, assert_chart_cache, build_deck
 from .effreport import (COOPS, TIERS, ReportConfig, VerificationError,
                         analyze as analyze_efficiency,
                         parse_report as parse_eff_report)
-from .matcher import (LINK_ERROR, MATCH, NO_BLOGGER,
-                      NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
-                      NO_POST_IN_PERIMETER, REVIEW, NAME_MISLABEL, S_TEXT)
+from .reconciler.domain import (LINK_ERROR, MATCH, NO_BLOGGER,
+                                NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
+                                NO_POST_IN_PERIMETER, REVIEW,
+                                NAME_MISLABEL, S_TEXT)
 from .parsers import parse_dmr, parse_plog
 from .report import OVERRIDE_MATCH_BLANK, build_audit_json, write_annotated_xlsx
 
@@ -63,8 +64,9 @@ STATUS_BADGES = {
     NO_POST_IN_PERIMETER: ("periin", "Perimeter内 无帖子"),
     NO_BLOGGER_NOT_IN_PERIMETER: ("periout", "不在Perimeter"),
 }
-OVERRIDE_CHOICES = ["", OVERRIDE_MATCH_BLANK, "无博主", "无帖子", "Check链接错误",
-                    NAME_MISLABEL, "人工复核",
+OVERRIDE_CHOICES = ["", OVERRIDE_MATCH_BLANK, S_TEXT[NO_BLOGGER],
+                    S_TEXT[NO_POST], S_TEXT[LINK_ERROR],
+                    NAME_MISLABEL, S_TEXT[REVIEW],
                     S_TEXT[NO_POST_IN_PERIMETER],
                     S_TEXT[NO_BLOGGER_NOT_IN_PERIMETER]]
 
@@ -309,33 +311,7 @@ async def perimeter_remove():
 # is applied until a human approves it on the audit screen; approved mappings
 # are cached by header signature and auto-applied (visibly) afterwards.
 
-_MAP_LOCK = threading.Lock()
-_PENDING_MAPS: dict[str, dict] = {}
-_MAP_TTL_SECONDS = 30 * 60
-_MAP_MAX = 10
-
-
-def _map_store(entry: dict) -> str:
-    token = uuid.uuid4().hex[:16]
-    now = time.time()
-    with _MAP_LOCK:
-        for k in [k for k, v in _PENDING_MAPS.items()
-                  if now - v["created"] > _MAP_TTL_SECONDS]:
-            del _PENDING_MAPS[k]
-        while len(_PENDING_MAPS) >= _MAP_MAX:
-            oldest = min(_PENDING_MAPS, key=lambda k: _PENDING_MAPS[k]["created"])
-            del _PENDING_MAPS[oldest]
-        _PENDING_MAPS[token] = {**entry, "created": now}
-    return token
-
-
-def _map_get(token: str) -> Optional[dict]:
-    with _MAP_LOCK:
-        entry = _PENDING_MAPS.get(token)
-        if entry and time.time() - entry["created"] > _MAP_TTL_SECONDS:
-            del _PENDING_MAPS[token]
-            return None
-        return entry
+PENDING_MAPS = TokenStore(ttl_seconds=30 * 60, max_entries=10)
 
 
 def _parser_of(kind: str):
@@ -511,7 +487,7 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
             request, "error.html", {"message": msg}, status_code=422)
 
     if audits:
-        token = _map_store({
+        token = PENDING_MAPS.put({
             "flow": "run", "run_id": run_id, "run_dir": str(run_dir),
             "paths": {k: str(v) for k, v in paths.items()},
             "names": {"plog": plog.filename or "plog.xlsx",
@@ -550,7 +526,7 @@ def _audit_context(token: str, entry: dict, error: str = "") -> dict:
 
 @app.get("/remap/{token}", response_class=HTMLResponse)
 async def remap_audit(request: Request, token: str):
-    entry = _map_get(token)
+    entry = PENDING_MAPS.get(token)
     if not entry:
         return templates.TemplateResponse(
             request, "error.html",
@@ -563,15 +539,14 @@ async def remap_audit(request: Request, token: str):
 
 @app.post("/remap/{token}/reject")
 async def remap_reject(token: str):
-    with _MAP_LOCK:
-        entry = _PENDING_MAPS.pop(token, None)
+    entry = PENDING_MAPS.pop(token)
     dest = "/efficiency" if entry and entry["flow"] == "eff" else "/"
     return RedirectResponse(dest, status_code=303)
 
 
 @app.post("/remap/{token}/apply", response_class=HTMLResponse)
 async def remap_apply(request: Request, token: str):
-    entry = _map_get(token)
+    entry = PENDING_MAPS.get(token)
     if not entry:
         return templates.TemplateResponse(
             request, "error.html",
@@ -622,8 +597,7 @@ async def remap_apply(request: Request, token: str):
                                  m["columns"], username)
             remap[kind] = _remap_note(
                 {**m, "approved_by": username}, kind, auto=False)
-        with _MAP_LOCK:
-            _PENDING_MAPS.pop(token, None)
+        PENDING_MAPS.pop(token)
         return await _efficiency_analyze(
             request, data, entry["filename"], entry["cfg"], remap.get("eff"))
 
@@ -640,8 +614,7 @@ async def remap_apply(request: Request, token: str):
                              m["columns"], username)
         remap[kind] = _remap_note(
             {**m, "approved_by": username}, kind, auto=False)
-    with _MAP_LOCK:
-        _PENDING_MAPS.pop(token, None)
+    PENDING_MAPS.pop(token)
     return await _finish_upload(
         request, entry["run_id"], Path(entry["run_dir"]),
         paths["plog"], paths["dmr"],
@@ -800,37 +773,11 @@ async def export_json(run_id: str):
 # memory and never written to disk or the database. Finished reports live in
 # a small in-process store (TTL + cap) just long enough to be downloaded.
 
-_EFF_LOCK = threading.Lock()
-_EFF_REPORTS: dict[str, dict] = {}
-_EFF_TTL_SECONDS = 2 * 3600
-_EFF_MAX = 20
+EFF_REPORTS = TokenStore(ttl_seconds=2 * 3600, max_entries=20)
 
 EFF_BASES = {"pooled", "per_post"}
 EFF_TIER_MODES = {"label", "fanbase"}
 EFF_LANGUAGES = {"en", "zh"}
-
-
-def _eff_store(entry: dict) -> str:
-    token = uuid.uuid4().hex[:16]
-    now = time.time()
-    with _EFF_LOCK:
-        for k in [k for k, v in _EFF_REPORTS.items()
-                  if now - v["created"] > _EFF_TTL_SECONDS]:
-            del _EFF_REPORTS[k]
-        while len(_EFF_REPORTS) >= _EFF_MAX:
-            oldest = min(_EFF_REPORTS, key=lambda k: _EFF_REPORTS[k]["created"])
-            del _EFF_REPORTS[oldest]
-        _EFF_REPORTS[token] = {**entry, "created": now}
-    return token
-
-
-def _eff_get(token: str) -> Optional[dict]:
-    with _EFF_LOCK:
-        entry = _EFF_REPORTS.get(token)
-        if entry and time.time() - entry["created"] > _EFF_TTL_SECONDS:
-            del _EFF_REPORTS[token]
-            return None
-        return entry
 
 
 def _eff_report_context(token: str, entry: dict) -> dict:
@@ -887,7 +834,7 @@ async def _efficiency_analyze(request: Request, data: bytes, filename: str,
                 "Could not read the uploaded file as .xlsx: {e}", e=e)},
             status_code=422)
 
-    token = _eff_store({"analysis": analysis, "pptx": pptx,
+    token = EFF_REPORTS.put({"analysis": analysis, "pptx": pptx,
                         "filename": filename, "remap": remap_note})
     return RedirectResponse(f"/efficiency/{token}", status_code=303)
 
@@ -922,7 +869,7 @@ async def efficiency_run(request: Request, report: UploadFile,
                 _remap_note(mapping, "eff", auto=True))
         if outcome[0] == "audit":
             _, prop, choices, sig = outcome
-            token = _map_store({
+            token = PENDING_MAPS.put({
                 "flow": "eff", "data": data, "filename": filename,
                 "cfg": cfg_raw,
                 "audits": {"eff": {"proposal": prop.model_dump(),
@@ -942,7 +889,7 @@ async def efficiency_run(request: Request, report: UploadFile,
 
 @app.get("/efficiency/{token}", response_class=HTMLResponse)
 async def efficiency_report(request: Request, token: str):
-    entry = _eff_get(token)
+    entry = EFF_REPORTS.get(token)
     if not entry:
         return templates.TemplateResponse(
             request, "error.html",
@@ -956,7 +903,7 @@ async def efficiency_report(request: Request, token: str):
 
 @app.get("/efficiency/{token}/deck.pptx")
 async def efficiency_deck(token: str):
-    entry = _eff_get(token)
+    entry = EFF_REPORTS.get(token)
     if not entry or entry.get("pptx") is None:
         return Response("report expired or deck blocked by validation",
                         status_code=404)

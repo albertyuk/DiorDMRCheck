@@ -14,7 +14,9 @@ from typing import Optional
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 
-from .matcher import Verdict
+from .core.xlsx import find_header_row
+from .parsers import PLOG_REQUIRED
+from .reconciler.domain import Verdict
 
 S_COL = 19  # column S
 # The reference uses "已匹配/blank" for matched rows; this sentinel lets a human
@@ -84,9 +86,8 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
     wb = load_workbook(plog_path)
     ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else None
     if ws is None:
-        from .parsers import PLOG_REQUIRED, _find_header_row
         for candidate in wb.worksheets:
-            if _find_header_row(candidate, PLOG_REQUIRED):
+            if find_header_row(candidate, PLOG_REQUIRED):
                 ws = candidate
                 break
     if ws is None:

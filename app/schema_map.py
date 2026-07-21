@@ -21,17 +21,21 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import re
-from dataclasses import dataclass, field
+import time
 from typing import Any, Optional
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field, ValidationError
 
 from . import config, db
-from .normalize import header_key
+from .core import llm
+from .core.textnorm import header_key
+from .core.xlsx import HEADER_SCAN_ROWS, cell_str
 
-SAMPLE_ROWS = 15          # matches parsers.HEADER_SCAN_ROWS
+# The sample must cover at least the rows the deterministic parser scans for
+# a header, or the mapper could approve a header row the parser cannot find.
+SAMPLE_ROWS = HEADER_SCAN_ROWS
 SAMPLE_COLS = 24
 SAMPLE_CELL_CHARS = 60
 MAX_SHEETS = 6
@@ -102,12 +106,8 @@ KIND_LABELS = {"plog": "PLOG tracker", "dmr": "DMR export",
 # ------------------------------------------------------------------- sample
 
 def _cell_str(v: Any) -> str:
-    if v is None:
-        return ""
-    if isinstance(v, float) and v.is_integer():
-        return str(int(v))
-    s = str(v).strip()
-    return s[:SAMPLE_CELL_CHARS]
+    """cell_str truncated for the structural sample sent to the model."""
+    return cell_str(v)[:SAMPLE_CELL_CHARS]
 
 
 def build_sample(data: bytes) -> dict:
@@ -164,32 +164,14 @@ SYSTEM_PROMPT = (
     "convert or fix anything; mapping is your only output."
 )
 
-_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
 def _call_llm(system: str, user: str) -> str:
     """Isolated for tests to monkeypatch."""
-    import anthropic
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    resp = client.messages.create(
-        model=config.ANTHROPIC_MODEL,
-        max_tokens=2000,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return "".join(b.text for b in resp.content if b.type == "text")
+    return llm.complete(llm.make_client(), system=system, user=user,
+                        max_tokens=2000)
 
 
 def _parse_proposal(text: str) -> Optional[Proposal]:
-    text = (text or "").strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    candidates = [text]
-    m = _JSON_RE.search(text)
-    if m:
-        candidates.append(m.group(0))
-    for cand in candidates:
+    for cand in llm.json_candidates(text):
         try:
             return Proposal.model_validate(json.loads(cand))
         except (ValueError, ValidationError):
@@ -256,7 +238,6 @@ def column_choices(data: bytes, sheet: str, header_row: int,
                 _cell_str(ws.cell(row=header_row + 1 + i, column=col).value)
                 for i in range(n_samples)]
             if header or any(samples):
-                from openpyxl.utils import get_column_letter
                 out.append({"col": col, "letter": get_column_letter(col),
                             "header": header,
                             "samples": [s for s in samples if s]})
@@ -306,7 +287,6 @@ def cache_get(kind: str, sig: str) -> Optional[dict]:
 
 def cache_put(kind: str, sig: str, sheet: str, header_row: int,
               columns: dict[str, int], approved_by: str) -> None:
-    import time
     db.setting_set(_cache_key(kind, sig), json.dumps({
         "sheet": sheet, "header_row": header_row, "columns": columns,
         "approved_by": approved_by,

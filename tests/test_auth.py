@@ -14,7 +14,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
     monkeypatch.setattr(config, "APP_PASSWORD", "setup-code-9")
     monkeypatch.setattr(config, "APP_SECRET", "dmr-setup-code-9")
-    monkeypatch.setattr(db, "_initialized", False)
     from fastapi.testclient import TestClient
     from app.main import app
     with TestClient(app, follow_redirects=False) as c:

@@ -11,13 +11,13 @@ and the model is instructed not to use them as a decision signal.
 from __future__ import annotations
 
 import json
-import re
 from typing import Callable, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
 from . import config
-from .matcher import LINK_ERROR, REVIEW, Verdict
+from .core import llm
+from .reconciler.domain import LINK_ERROR, MATCH, REVIEW, Verdict
 
 
 class Adjudication(BaseModel):
@@ -47,14 +47,6 @@ SYSTEM_PROMPT = (
     "those. Never guess.\n"
     "- rationale_en and rationale_zh are one line each."
 )
-
-_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def _client():
-    import anthropic
-    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
 
 def _row_key(v: Verdict) -> str:
     # excel_row makes the key unique even when (CAMPAIGN, NO) identities
@@ -97,19 +89,7 @@ def _question_for(v: Verdict) -> Optional[dict]:
 
 
 def _parse_batch(text: str) -> Optional[AdjudicationBatch]:
-    text = (text or "").strip()
-    # strip a markdown code fence if the model wrapped its JSON in one
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    candidates = [text]
-    m = _JSON_RE.search(text)
-    if m:
-        candidates.append(m.group(0))
-    arr = re.search(r"\[.*\]", text, re.DOTALL)
-    if arr:
-        candidates.append(arr.group(0))
-    for c in candidates:
+    for c in llm.json_candidates(text):
         try:
             data = json.loads(c)
         except ValueError:
@@ -140,7 +120,7 @@ def adjudicate(verdicts: list[Verdict],
     asked = [(v, q) for v, q in ((v, _question_for(v)) for v in residue) if q]
     if not asked:
         return
-    client = _client()
+    client = llm.make_client()
     for start in range(0, len(asked), BATCH_SIZE):
         chunk = asked[start:start + BATCH_SIZE]
         _adjudicate_chunk(client, chunk, llm_counter)
@@ -164,15 +144,11 @@ def _adjudicate_chunk(client, chunk: list[tuple[Verdict, dict]],
     batch: Optional[AdjudicationBatch] = None
     for attempt in range(2):  # validate and retry once on parse failure
         try:
-            resp = client.messages.create(
-                model=config.ANTHROPIC_MODEL,
-                max_tokens=max(config.ANTHROPIC_MAX_TOKENS, BATCH_MAX_TOKENS),
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
-            )
+            text = llm.complete(
+                client, system=SYSTEM_PROMPT, user=user_msg,
+                max_tokens=max(config.ANTHROPIC_MAX_TOKENS, BATCH_MAX_TOKENS))
             if llm_counter:
                 llm_counter()
-            text = "".join(b.text for b in resp.content if b.type == "text")
             batch = _parse_batch(text)
             if batch:
                 break
@@ -218,31 +194,26 @@ def summarize_run(verdicts: list[Verdict], counts: dict, warnings: list[str],
     anomalies = [
         {"row": f"{v.campaign}|{v.no}", "name": v.name, "status": v.status,
          "column_s": v.column_s(), "notes": v.notes[:2]}
-        for v in verdicts if v.status not in ("MATCH",)
+        for v in verdicts if v.status != MATCH
     ][:40]
     try:
-        client = _client()
-        resp = client.messages.create(
-            model=config.ANTHROPIC_MODEL,
-            max_tokens=2000,  # headroom for adaptive thinking + both languages
+        text = llm.complete(
+            llm.make_client(),
             system=(
                 "Write a short reconciliation-run summary for a KOL campaign "
                 "team, in Chinese then English. 3-5 sentences each. Mention "
                 "counts per status and notable anomalies. Return JSON only: "
                 '{"zh": "...", "en": "..."}'
             ),
-            messages=[{
-                "role": "user",
-                "content": json.dumps(
-                    {"counts": counts, "anomalies": anomalies,
-                     "parser_warnings": warnings[:20]},
-                    ensure_ascii=False),
-            }],
+            user=json.dumps(
+                {"counts": counts, "anomalies": anomalies,
+                 "parser_warnings": warnings[:20]},
+                ensure_ascii=False),
+            max_tokens=2000,  # headroom for adaptive thinking + both languages
         )
         if llm_counter:
             llm_counter()
-        text = "".join(b.text for b in resp.content if b.type == "text")
-        m = _JSON_RE.search(text)
+        m = llm.JSON_OBJECT_RE.search(text)
         if m:
             data = json.loads(m.group(0))
             if isinstance(data, dict) and data.get("zh") and data.get("en"):

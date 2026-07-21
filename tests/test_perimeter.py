@@ -71,7 +71,6 @@ def build_perimeter_bytes(extraction="19/05/2026 10:30:00") -> bytes:
 def perim_index(tmp_path, monkeypatch) -> PerimeterIndex:
     from app import config, db
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "perim.sqlite3")
-    monkeypatch.setattr(db, "_initialized", False)
     data = build_perimeter_bytes()
     h = file_hash(data)
     parsed = parse_perimeter(io.BytesIO(data), filename="perim.xlsx",
