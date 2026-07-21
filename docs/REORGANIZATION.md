@@ -530,3 +530,56 @@ These are real, verified issues, deliberately **excluded** from the move-only pl
 9. **`Verdict` decomposition** (A7): compose from evidence sub-records and emit
    `ENGAGEMENT_CAVEAT` once per document instead of per row (changes audit JSON shape —
    coordinate with any consumers).
+
+---
+
+# Execution log (2026-07-21)
+
+The playbook above was executed in full on this branch. Every step landed as
+its own commit with the full suite green and both safety snapshots
+(route table, golden export) byte-identical throughout:
+
+| Step | Commit | Result |
+|---|---|---|
+| 1 — packaging + harnesses | `cf1f434` | pyproject.toml; route-table + golden-export snapshots; fixture move |
+| 2 — core seams | `553270d` | core/{textnorm,xlsx,token_store,llm,migrations}.py; reconciler/domain.py |
+| 3a — package moves | `e89152e` | all modules into reconciler/ efficiency/ remap/ core/ (git-mv, history kept) |
+| 3b — router carve | `49db212` | main.py → assembly only; auth/ package; web.py; per-product routers; templates split |
+| 3c — i18n split | `9fe1558` | i18n package, catalogs merged at import (verified identical: 324 entries, 47 patterns) |
+| 4 — cleanup | *(this branch)* | shims deleted; tools/evaluate.py; tests mirrored; imports hoisted |
+
+**Verification performed:** full suite (134 passed, 1 skipped — the skip is
+the real-client-workbook golden test, absent by design) from the working
+tree AND from a fresh clone with `pip install -e .`; route-table snapshot
+identical; golden-export snapshot identical; `uvicorn app.main:app` boots
+and serves `/healthz`, `/`, and `/efficiency`; `tools/evaluate.py --help`
+runs against the installed package; grep sweeps for every legacy module
+path return nothing. **Not verified here:** `docker build` (no daemon in
+the execution sandbox) — the only image change is dropping `eval.py` from
+a COPY line, but run the build in CI before deploying.
+
+## Deviations from the plan (all deliberate, none behavioral)
+
+1. **`app/web.py` added** (not in the Phase-2 tree): the shared Jinja
+   environment, `current_user`, and translator helpers. Routers and
+   `main.py` both need these; a separate leaf module avoids a circular
+   import between routers and the app assembly.
+2. **`core/xlsx.py` does not include `iter_data_rows`/forward-fill.** The
+   three parse loops keep their inline blank-run counters — extracting the
+   loop skeleton would restructure control flow, which crosses the
+   move-only line. Remains open as a follow-up (Appendix/C4).
+3. **`reconciler/documents.py` was not created.** Typing the run-result
+   document changes its serialized shape risk surface; deferred with the
+   Verdict decomposition (Appendix items 9 and A6's document schema).
+4. **db init is keyed per DB path** inside `connect()` rather than being a
+   startup-only call: the runner thread and the eval harness open
+   connections outside web startup, so fully lazy-free init would have
+   changed their behavior. The schema/migration logic itself did move to
+   `core/migrations.py`, and tests no longer reset a private flag.
+5. **i18n:** the sections with clear owners moved to
+   `catalog/{reconciler,efficiency}.py`; the per-template static-string
+   blob (mixed sources) stayed in `catalog/common.py` pending a
+   per-template attribution pass.
+6. **`extract_link_target` divergence kept as documented behavior** (strict
+   http-only DMR variant in core/xlsx; PLOG/efficiency keep their
+   permissive inline extraction) — unifying it is a behavior change (C4).
