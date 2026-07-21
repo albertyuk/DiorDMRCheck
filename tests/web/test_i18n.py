@@ -165,3 +165,38 @@ def test_handler_messages_translate(client):
                                       "application/zip")}, data={})
     assert r.status_code == 422
     assert "上传的文件无法按 .xlsx 读取" in r.text
+
+
+# ------------------------------------------------- wording-drift detector
+
+# English keys that intentionally share one Chinese value. Because the
+# catalog is keyed by the exact emitted English text, wording drift at an
+# emit site silently forces a near-duplicate catalog row (the plural/singular
+# .xlsx pair was the first real case). Every duplicate group must be listed
+# here deliberately — a new one fails this lint until the emit sites are
+# unified or the group is consciously allowed.
+ALLOWED_ZH_DUPLICATE_GROUPS = {
+    frozenset({"KOL Efficiency Report", "KOL efficiency report"}),
+    frozenset({"Could not read the uploaded file(s) as .xlsx: {e}",
+               "Could not read the uploaded file as .xlsx: {e}"}),  # plural vs singular sites
+    frozenset({"Human override", "override"}),
+    frozenset({"Guide", "Quick guide"}),
+    frozenset({"date the post went live", "Date"}),
+    frozenset({"sheet", "Sheet"}),
+    frozenset({"header row", "Header row"}),
+}
+
+
+def test_zh_duplicate_values_are_deliberate():
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for en, zh in i18n.ZH.items():
+        groups[zh].append(en)
+    unexpected = [
+        sorted(ens) for zh, ens in groups.items()
+        if len(ens) > 1 and frozenset(ens) not in ALLOWED_ZH_DUPLICATE_GROUPS
+    ]
+    assert not unexpected, (
+        "New English keys translating to identical Chinese — emit-site "
+        "wording drift? Reuse the existing English string (share a constant) "
+        f"or add the group to ALLOWED_ZH_DUPLICATE_GROUPS: {unexpected}")
