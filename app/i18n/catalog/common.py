@@ -1,38 +1,11 @@
-"""UI localization — English default, context-aware Chinese via a header toggle.
-
-Two translators, both keyed by the ENGLISH SOURCE TEXT so templates stay
-readable and the English rendering is byte-identical to a non-localized app:
-
-- ``t(text, **kw)``    — static template/UI strings. Looks *text* up in ``ZH``
-  (exact match), falls back to the English text itself. Keyword args are
-  ``str.format`` placeholders, so Chinese can reorder them freely instead of
-  gluing fragments in English word order.
-- ``td(text)``         — dynamic text that was *stored* at run time in English
-  (progress messages, parser warnings, phase names). Tries ``ZH`` exactly,
-  then the ``ZH_PATTERNS`` regexes (which carry row numbers, counts and other
-  captured values into the Chinese sentence), else returns the text as-is —
-  an untranslated diagnostic degrades to English, never to a broken string.
-
-The Chinese copy is written for the actual audience — a China-side social /
-KOL operations team working with 小红书, DMR exports and Perimeter lists —
-not as literal translation: domain vocabulary the team already uses stays
-untouched (无博主 / 无帖子 / 人工复核 / 报备 / 软植 / Perimeter / PLOG / DMR
-/ CPM / CPE), a reconciliation *run* is 核对, and sentences are rebuilt
-around the meaning rather than the English syntax.
+"""Shared UI strings: chrome, auth, first-visit guide, header-remap audit,
+and the per-template static strings of both products.
+Merged into the app-wide catalog by app.i18n — see that module for the
+translation contract (English-source keys, whole-message patterns).
 """
 from __future__ import annotations
 
-import re
-from typing import Callable
-
-from fastapi import Request
-
-SUPPORTED = ("en", "zh")
-COOKIE = "dmr_lang"
-
-# --------------------------------------------------------------- static UI
-# English source text → Chinese. Populated by every template's strings; the
-# tests scan templates for t("...") calls and assert full coverage here.
+import re  # noqa: F401  (patterns)
 
 ZH: dict[str, str] = {
     # base chrome -----------------------------------------------------------
@@ -73,41 +46,6 @@ ZH: dict[str, str] = {
     "This report has expired (reports are kept in memory for 2 hours, never stored). Re-upload the workbook.":
         "该报告已过期（报告只在内存中保留 2 小时，绝不落盘存储）。请重新上传工作簿。",
 
-    # runtime progress / phases (stored in English, translated at render) ---
-    "Parsing workbooks…": "正在解析工作簿…",
-    "Adjudicating residue with Claude…": "正在让 Claude 复核剩余存疑行…",
-    "Drafting run summary…": "正在撰写核对摘要…",
-    "Run complete.": "核对完成。",
-    "Run interrupted by a restart — use Retry.": "核对因服务重启而中断——请点「重试」。",
-    "Working…": "处理中…",
-    "starting": "正在启动",
-    "parse": "解析文件",
-    "resolve": "解析链接",
-    "match": "逐行匹配",
-    "adjudicate": "复核存疑行",
-    "summary": "生成摘要",
-    "done": "完成",
-    "error": "出错",
-
-    # fixed evidence / warning sentences stored at run time -----------------
-    "DMR engagement is a first-crawl snapshot (often within hours of posting) and is NOT comparable to PLOG finals — shown as context only, never used for matching.":
-        "DMR 的互动数是首次抓取时的快照（往往在发帖后几小时内），与 PLOG 的最终数据不可比——仅作参考展示，绝不用于匹配判断。",
-    "PLOG sheet parsed but contained no data rows.":
-        "PLOG 工作表解析成功，但没有数据行。",
-    "DMR sheet parsed but contained no data rows.":
-        "DMR 工作表解析成功，但没有数据行。",
-    "Perimeter sheet parsed but had no data rows.":
-        "Perimeter 工作表解析成功，但没有数据行。",
-    "Could not parse the DMR export date window from the metadata rows; out-of-window checks are disabled for this run.":
-        "无法从元信息行解析出 DMR 导出的日期窗口；本次核对不做「窗口外」检查。",
-    "DMR has no 'Username' column — blogger-presence checks (无博主 vs 无帖子) cannot be decided deterministically for this file.":
-        "DMR 文件没有「Username」列——该文件无法确定地判断博主有没有被 DMR 收录（无博主 vs 无帖子）。",
-    "DMR 'Username' column is entirely empty — blogger-presence checks (无博主 vs 无帖子) cannot be decided deterministically for this file.":
-        "DMR 的「Username」列全为空——该文件无法确定地判断博主有没有被 DMR 收录（无博主 vs 无帖子）。",
-    "Could not find 'Date of extraction' in the metadata rows — perimeter staleness cannot be shown.":
-        "在元信息行中找不到「Date of extraction」——无法显示 Perimeter 名单的提取日期。",
-    "The perimeter file recorded for this run is no longer in the cache — running without the perimeter split.":
-        "这条核对原先记录的 Perimeter 文件已不在缓存中——本次不做 Perimeter 拆分。",
     # first-visit guide (base.html modal) -----------------------------------
     "Guide": "使用指南",
     "Quick guide": "使用指南",
@@ -143,12 +81,6 @@ ZH: dict[str, str] = {
         "「投放效率」页面只需一份 PLOG 追踪表，就能生成一页式 CPM/CPE 图表汇报——可编辑 .pptx 外加网页版——同时列出数据校验发现。全程只在内存中运行，每份报告 2 小时后过期。",
     "Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.":
         "界面语言随时可以用左上角的按钮切换——本指南也可以从旁边的按钮再次打开。",
-    # efficiency demo image (index + efficiency form) -----------------------
-    "Sample efficiency slide generated from synthetic demo data":
-        "由合成演示数据生成的效率幻灯片示例",
-    "Sample output (synthetic demo data)": "示例输出（合成演示数据）",
-    "The slide this produces — this sample is built from synthetic demo data, not client data. The donut shows group shares; the bars compare 报备 vs 软植 prices, CPM and CPE per tier, with data caveats printed on the slide.":
-        "生成的幻灯片就长这样——本示例由合成演示数据生成，非客户数据。环图展示各分组占比；柱状图按层级对比 报备 vs 软植 的合作价格、CPM 与 CPE，数据风险提示会直接标注在幻灯片上。",
     # LLM header mapping + human audit -------------------------------------
     "Header mapping — audit": "表头映射——人工审核",
     "Unfamiliar headers — review the proposed mapping":
@@ -459,192 +391,6 @@ ZH: dict[str, str] = {
         "链接失效，仅作参考：名字命中Perimeter条目——仅记录为判定依据，结论不变。",
 }
 
-# ------------------------------------------------- dynamic (parameterized)
-# Stored English diagnostics that embed row numbers / counts / cell values.
-# Each pattern must consume the whole message; captured groups are spliced
-# into the Chinese sentence where *its* grammar wants them.
-
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^Resolving links (\d+/\d+)…$"), r"正在解析链接 \1…"),
-    (re.compile(r"^Matching rows (\d+/\d+)…$"), r"正在逐行匹配 \1…"),
-    (re.compile(r"^Run failed: (.*)$", re.S), r"核对失败：\1"),
-    (re.compile(r"^PLOG row (\d+): POST DATE (.+) could not be parsed — "
-                r"date-based checks are skipped for this row\.$"),
-     r"PLOG 表第 \1 行：POST DATE \2 无法解析——该行跳过所有基于日期的检查。"),
-    (re.compile(r"^Duplicate row identity \(CAMPAIGN=(.+), NO=(.+)\) at sheet "
-                r"row (\d+) — each row is still annotated individually \(rows "
-                r"are tracked by sheet row\), but check the source data\.$"),
-     r"表第 \3 行的行标识重复（CAMPAIGN=\1，NO=\2）——每行仍按表格行号单独标注，但请核查源数据。"),
-    (re.compile(r"^PLOG: (\d+) rows in total had unparseable POST DATE values\.$"),
-     r"PLOG：共 \1 行的 POST DATE 无法解析。"),
-    (re.compile(r"^DMR row (\d+): PostID (.+) is not a 24-char hex note id — "
-                r"this row cannot join against resolved links\.$"),
-     r"DMR 表第 \1 行：PostID \2 不是 24 位十六进制的笔记 ID——该行无法与解析出的链接做关联。"),
-    (re.compile(r"^DMR row (\d+): Link hyperlink embeds PostID (.+) but the "
-                r"PostID column says (.+) — using the PostID column for the join\.$"),
-     r"DMR 表第 \1 行：Link 超链接内嵌的 PostID 是 \2，而 PostID 列写的是 \3——关联时以 PostID 列为准。"),
-    (re.compile(r"^DMR: (\d+) rows in total had non-hex PostID values\.$"),
-     r"DMR：共 \1 行的 PostID 不是十六进制格式。"),
-    (re.compile(r"^PLOG parse failed: no sheet has a header row containing "
-                r"both 'NAME' and 'POST LINK' within the first (\d+) rows\.$"),
-     r"PLOG 解析失败：所有工作表的前 \1 行里都找不到同时包含「NAME」和「POST LINK」的表头行。"),
-    (re.compile(r"^DMR parse failed: no sheet has a header row containing "
-                r"both 'Blogger' and 'PostID' within the first (\d+) rows\.$"),
-     r"DMR 解析失败：所有工作表的前 \1 行里都找不到同时包含「Blogger」和「PostID」的表头行。"),
-    (re.compile(r"^Perimeter parse failed: no 'List Micro' sheet found "
-                r"\(sheets: (.+)\)$", re.S),
-     r"Perimeter 解析失败：找不到「List Micro」工作表（现有工作表：\1）。"),
-    (re.compile(r"^Perimeter parse failed: no header row containing both "
-                r"'NAME' and 'REDBOOK_ID' within the first (\d+) rows of (.+)$",
-                re.S),
-     r"Perimeter 解析失败：\2 的前 \1 行里找不到同时包含「NAME」和「REDBOOK_ID」的表头行。"),
-    (re.compile(r"^V1: no header row containing NAME and POST LINK found in "
-                r"sheet (.+)\.$"),
-     r"V1：工作表 \1 中找不到包含「NAME」和「POST LINK」的表头行。"),
-    (re.compile(r"^V1: required columns missing after header normalization: (.+)$",
-                re.S),
-     r"V1：表头标准化后仍缺少必需列：\1"),
-    # per-row evidence notes (matcher.py / adjudicator.py) ------------------
-    (re.compile(r"^PLOG POST DATE (.+) is outside the DMR export window "
-                r"(.+)\.\.(.+) — an absent post is expected-missing, not a "
-                r"DMR gap\.$"),
-     r"PLOG 的 POST DATE \1 在 DMR 导出窗口 \2～\3 之外——查不到帖子属于预期缺失，而不是 DMR 漏抓。"),
-    (re.compile(r"^Note-ID join is certain, but DMR records the blogger as "
-                r"(.+) which does not contain PLOG name (.+)\.$"),
-     r"笔记 ID 关联无疑，但 DMR 里登记的博主名是 \1，并不包含 PLOG 的名字 \2。"),
-    (re.compile(r"^DMR tracks author (\S+) \((.+), (\d+) post\(s\)\) but this "
-                r"note (\S+) is not among them\.$"),
-     r"DMR 在跟踪作者 \1（\2，共 \3 篇），但这条笔记 \4 不在其中。"),
-    (re.compile(r"^Link dead/unresolvable, so the note id is unverifiable — "
-                r"Tier 3 only ranks same-name candidates; it never asserts a "
-                r"match\. Best candidate: (.+) \((\S+)\) Δ=(.+) days\.$"),
-     r"链接失效或无法解析，笔记 ID 无从核实——Tier 3 只对同名候选排序，绝不断言匹配。最接近的候选：\1（\2），日期差 \3 天。"),
-    (re.compile(r"^Blogger is inside DMR's monitored Micro perimeter "
-                r"\(REDBOOK_ID (\S+)\) yet absent from the export — a genuine "
-                r"DMR gap, grouped with 无帖子\.$"),
-     r"博主在 DMR 监测的 Micro Perimeter 名单内（REDBOOK_ID \1），导出文件里却没有——属于真正的 DMR 漏抓，与「无帖子」同类处理。"),
-    (re.compile(r"^同名Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
-                r"perimeter entry carries a different REDBOOK_ID "
-                r"\((\S+) vs resolved (\S+)\)$"),
-     r"同名Perimeter条目但REDBOOK_ID不同（近似未命中）：名单登记 \1，实际解析出 \2。"),
-    (re.compile(r"^(\d+)个同名Perimeter条目，无法按名字判定 / name matches "
-                r"multiple perimeter rows — never auto-picked by name$"),
-     r"\1个同名Perimeter条目，无法按名字判定——绝不按名字自动选取。"),
-    (re.compile(r"^match_row failed: (.*)$", re.S), r"该行匹配失败：\1"),
-    (re.compile(r"^LLM adjudication unavailable: (.*)$", re.S),
-     r"LLM 复核不可用：\1"),
-    # efficiency-report validation findings (effreport.py V1–V10) -----------
-    (re.compile(r"^Sheet 'MASTER KOL LIST' not found — using first sheet "
-                r"(.+)\.$"),
-     r"未找到「MASTER KOL LIST」工作表——改用第一个工作表 \1。"),
-    (re.compile(r"^Unclassified TYPE value (.+) on (\d+) row\(s\) — excluded "
-                r"from groups, counted in totals\.$"),
-     r"无法识别的 TYPE 值 \1，共 \2 行——不计入分组，仍计入总量。"),
-    (re.compile(r"^Unclassified LEVEL value (.+) on (\d+) row\(s\) — excluded "
-                r"from groups, counted in totals\.$"),
-     r"无法识别的 LEVEL 值 \1，共 \2 行——不计入分组，仍计入总量。"),
-    (re.compile(r"^(\d+) row\(s\) missing IMPRESSION/LIKE/COLLECTION/COMMENT/"
-                r"TTL ENGAGEMENT/PRICE values \(missing_row_policy=block\)\.$"),
-     r"\1 行缺少 IMPRESSION/LIKE/COLLECTION/COMMENT/TTL ENGAGEMENT/PRICE 值"
-     r"（missing_row_policy=block）。"),
-    (re.compile(r"^(\d+) row\(s\) missing metric values — excluded from all "
-                r"metrics \(missing_row_policy=exclude_warn\)\.$"),
-     r"\1 行缺少指标值——已从所有指标中排除（missing_row_policy=exclude_warn）。"),
-    (re.compile(r"^(\d+) row\(s\) with IMPRESSION=0 — excluded from CPM "
-                r"ratios only\.$"),
-     r"\1 行 IMPRESSION=0——仅从 CPM 计算中排除。"),
-    (re.compile(r"^(\d+) row\(s\) with TTL ENGAGEMENT=0 — excluded from CPE "
-                r"ratios only\.$"),
-     r"\1 行 TTL ENGAGEMENT=0——仅从 CPE 计算中排除。"),
-    (re.compile(r"^TTL ENGAGEMENT ≠ LIKE\+COLLECTION\+COMMENT on (\d+) "
-                r"row\(s\)\.$"),
-     r"共 \1 行 TTL ENGAGEMENT ≠ LIKE+COLLECTION+COMMENT。"),
-    (re.compile(r"^Source CPM/CPE drift from recomputation on (\d+) row\(s\)\. "
-                r"Note the source CPM column is PRICE÷IMPRESSION — cost per "
-                r"SINGLE impression, ×1000 off the industry-standard per-mille "
-                r"CPM; this report never reuses it\.$"),
-     r"共 \1 行源文件的 CPM/CPE 与重新计算的结果有偏差。注意：源文件的 CPM 列是 "
-     r"PRICE÷IMPRESSION——单次曝光的成本，与行业标准的每千次 CPM 差 1000 倍；"
-     r"本报告从不复用该列。"),
-    (re.compile(r"^Duplicate POST LINK shared by (\d+) rows \((.+)\): …(.+) — "
-                r"likely a copy-paste error in the source; metrics keep both "
-                r"rows, but verify\.$", re.S),
-     r"\2 这 \1 行共用同一个 POST LINK：…\3——疑似源数据里的复制粘贴错误；"
-     r"指标保留所有行，但请人工核实。"),
-    (re.compile(r"^Both 尾部 \((\d+) rows, fans (.+)K\) and 底部 \((\d+) rows, "
-                r"fans (.+)K\) labels coexist — merged into BOT \(documented "
-                r"judgment call\)\. (\d+) of the (\d+) 底部 accounts have "
-                r"<(\d+)K fans \(KOC-sized\)\. Set tier_mode=fanbase to "
-                r"re-tier by thresholds instead\.$"),
-     r"「尾部」（\1 行，粉丝 \2K）与「底部」（\3 行，粉丝 \4K）两种标签并存——"
-     r"已合并为 BOT（既定的判断规则）。\6 个「底部」账号中有 \5 个粉丝不足 \7K"
-     r"（KOC 量级）。如需按粉丝量阈值重新分层，层级判定可改选 FAN BASE 阈值。"),
-    (re.compile(r"^(.+): n=(\d+) — below min_group_n=(\d+); on-slide caveat "
-                r"added \(not a benchmark\)\.$"),
-     r"\1：n=\2，低于最小样本量 min_group_n=\3；已在幻灯片上加注（不可作为基准）。"),
-    (re.compile(r"^(.+): top (\d+) post\(s\) hold (\d+)% of group impressions "
-                r"— pooled CPM is dragged by outliers; plan on per-post "
-                r"≈(\d+), not pooled (\d+)\. On-slide caveat added\.$"),
-     r"\1：曝光最高的 \2 篇帖子占了组内 \3% 的曝光——合并口径 CPM 被极值拉低；"
-     r"实际规划请按单篇平均 ≈\4，而不是合并口径的 \5。已在幻灯片上加注。"),
-    # efficiency-report insight bullets / footnote (effreport.py) -----------
-    (re.compile(r"^PAID CARRIES A PREMIUM IN EVERY TIER — (.+) VS SOFT$"),
-     r"PAID 在每个层级都有溢价——\1（相对 SOFT）"),
-    (re.compile(r"^PAID PREMIUM: (.+) VS SOFT$"),
-     r"PAID 溢价：\1（相对 SOFT）"),
-    (re.compile(r"^PRICE INVERSION — SOFT PRICED ABOVE PAID: (.+)$"),
-     r"价格倒挂——SOFT 报价高于 PAID：\1"),
-    (re.compile(r"^CPM WINNER — (.+)$"), r"CPM 更优——\1"),
-    (re.compile(r"^CPE WINNER — (.+)$"), r"CPE 更优——\1"),
-    (re.compile(r"^(.+) = (\d+|\?) POST\(S\) ONLY — NOT A BENCHMARK$"),
-     r"\1 仅 \2 篇——样本过小，不可作为基准"),
-    (re.compile(r"^CAUTION: (.+) CARRIED BY (\d+) VIRAL POSTS \((\d+)% OF "
-                r"GROUP IMPRESSIONS\) — PLAN ON ~¥(\d+) CPM, NOT ¥(\d+)$"),
-     r"注意：\1 的数据主要由 \2 篇爆款撑起（占组内曝光 \3%）——规划请按 CPM "
-     r"约 ¥\4，而非 ¥\5"),
-    (re.compile(r"^(.+): PER-POST CPM ¥(\d+) IS >3× POOLED ¥(\d+) — RESULTS "
-                r"CONCENTRATED IN OUTLIERS$"),
-     r"\1：单篇平均 CPM ¥\2 超过合并口径 ¥\3 的 3 倍——效果集中在少数极值帖"),
-    (re.compile(r"^Basis: pooled — group total spend ÷ total impressions "
-                r"\(CPM, ¥ per 1,000\) / total engagements \(CPE\)\. "
-                r"n = (\d+) posts: (.+)$"),
-     r"口径：合并——组内总花费 ÷ 总曝光（CPM，¥/千次）、÷ 总互动（CPE）。"
-     r"n = \1 篇：\2"),
-    (re.compile(r"^Basis: per-post average — mean of PRICE÷IMPRESSION×1000 "
-                r"\(CPM, ¥ per 1,000\) / PRICE÷ENGAGEMENT \(CPE\) across "
-                r"posts\. n = (\d+) posts: (.+)$"),
-     r"口径：单篇平均——各帖 PRICE÷IMPRESSION×1000（CPM，¥/千次）、"
-     r"PRICE÷ENGAGEMENT（CPE）的平均。n = \1 篇：\2"),
+
 ]
-
-
-def get_lang(request: Request) -> str:
-    lang = request.cookies.get(COOKIE, "en")
-    return lang if lang in SUPPORTED else "en"
-
-
-def make_t(lang: str) -> Callable[..., str]:
-    def t(text: str, **kw) -> str:
-        s = ZH.get(text, text) if lang == "zh" else text
-        return s.format(**kw) if kw else s
-    return t
-
-
-def make_td(lang: str) -> Callable[[str], str]:
-    def td(text: str) -> str:
-        if lang != "zh" or not text:
-            return text
-        hit = ZH.get(text)
-        if hit is not None:
-            return hit
-        for pat, repl in ZH_PATTERNS:
-            if pat.match(text):
-                return pat.sub(repl, text)
-        return text
-    return td
-
-
-def context(request: Request) -> dict:
-    """Jinja context processor — every template gets lang / t / td."""
-    lang = get_lang(request)
-    return {"lang": lang, "t": make_t(lang), "td": make_td(lang)}
