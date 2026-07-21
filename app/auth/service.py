@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 import time
 from typing import Optional
 
@@ -22,6 +23,35 @@ PBKDF2_ITERATIONS = 200_000
 SESSION_TTL = 7 * 24 * 3600
 
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
+
+_SECRET_LOCK = threading.Lock()
+_secret_cache: dict[str, str] = {}  # keyed by file path (tests repoint DATA_DIR)
+
+
+def signing_secret() -> str:
+    """The session-cookie signing key.
+
+    ``APP_SECRET`` when configured; otherwise a random secret generated once
+    and persisted under ``DATA_DIR`` so sessions survive restarts. Never
+    derived from ``APP_PASSWORD``: the setup code is shared with every
+    teammate, and holding it must not allow forging session cookies.
+    """
+    if config.APP_SECRET:
+        return config.APP_SECRET
+    path = config.DATA_DIR / "session_secret"
+    key = str(path)
+    with _SECRET_LOCK:
+        secret = _secret_cache.get(key)
+        if secret:
+            return secret
+        config.ensure_dirs()
+        secret = path.read_text().strip() if path.exists() else ""
+        if not secret:
+            secret = secrets.token_hex(32)
+            path.write_text(secret)
+            path.chmod(0o600)
+        _secret_cache[key] = secret
+        return secret
 
 
 def normalize_username(username: str) -> str:
@@ -51,7 +81,7 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def _sign(payload: str) -> str:
-    return hmac.new(config.APP_SECRET.encode(), payload.encode(),
+    return hmac.new(signing_secret().encode(), payload.encode(),
                     hashlib.sha256).hexdigest()
 
 

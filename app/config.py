@@ -45,9 +45,11 @@ ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
 ANTHROPIC_MAX_TOKENS = int(_env("ANTHROPIC_MAX_TOKENS", "2000"))
 
 APP_PASSWORD = _env("APP_PASSWORD")
-# Cookie-signing secret. Falls back to a derivation of APP_PASSWORD so a
-# single secret is enough to configure auth.
-APP_SECRET = _env("APP_SECRET") or ("dmr-" + APP_PASSWORD)
+# Cookie-signing secret. Optional: when unset, a random secret is generated
+# once and persisted under DATA_DIR (auth.service.signing_secret). It is
+# deliberately NOT derived from APP_PASSWORD — the setup code is handed to
+# every teammate and must not let its holders forge session cookies.
+APP_SECRET = _env("APP_SECRET")
 
 # Soft ranking window for Tier-3 candidate dates (days). Evidence: verified
 # same-post matches at Δ=2 and Δ=4 days; a genuine different-post pair at Δ=2.

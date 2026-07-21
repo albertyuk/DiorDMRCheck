@@ -124,3 +124,50 @@ def test_open_mode_without_app_password(client, monkeypatch):
     monkeypatch.setattr(config, "APP_PASSWORD", "")
     r = client.get("/")
     assert r.status_code == 200
+
+
+# ------------------------------------------------- signing-secret derivation
+
+def test_secret_not_derived_from_setup_code(client, monkeypatch):
+    """Regression: with APP_SECRET unset, a cookie signed with the old
+    'dmr-' + APP_PASSWORD derivation must NOT validate — anyone holding the
+    shared setup code could forge any user's session."""
+    import hashlib
+    import hmac as hmac_mod
+    import time as time_mod
+    from app import config
+    from app.auth import service
+
+    _setup_admin(client)
+    monkeypatch.setattr(config, "APP_SECRET", "")
+    service._secret_cache.clear()
+    client.cookies.clear()
+    payload = f"boss|{int(time_mod.time()) + 3600}"
+    forged_sig = hmac_mod.new(("dmr-" + config.APP_PASSWORD).encode(),
+                              payload.encode(), hashlib.sha256).hexdigest()
+    client.cookies.set("dmr_session", f"{payload}|{forged_sig}")
+    r = client.get("/")
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+
+
+def test_generated_secret_is_persisted_and_survives_restart(client, monkeypatch):
+    """With APP_SECRET unset a random secret is generated, written under
+    DATA_DIR, and re-read after a 'restart' (cache cleared) so existing
+    sessions keep validating."""
+    from app import config
+    from app.auth import service
+
+    monkeypatch.setattr(config, "APP_SECRET", "")
+    service._secret_cache.clear()
+    token = service.make_session("boss")
+    secret_file = config.DATA_DIR / "session_secret"
+    assert secret_file.exists() and len(secret_file.read_text().strip()) >= 64
+    service._secret_cache.clear()          # simulate process restart
+    assert service.read_session(token) == "boss"
+    # a genuine login round-trip works end to end
+    _setup_admin(client)
+    client.cookies.clear()
+    r = client.post("/login", data={"username": "boss",
+                                    "password": "password123"})
+    assert r.status_code == 303
+    assert client.get("/").status_code == 200
