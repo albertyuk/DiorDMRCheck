@@ -208,3 +208,73 @@ def test_generated_secret_is_persisted_and_survives_restart(client, monkeypatch)
                                     "password": "password123"})
     assert r.status_code == 303
     assert client.get("/").status_code == 200
+
+
+# ------------------------------------------------------------- throttling
+
+@pytest.fixture(autouse=True)
+def _fresh_throttle():
+    from app.auth import throttle
+    throttle.reset()
+    yield
+    throttle.reset()
+
+
+def test_login_throttles_after_repeated_failures(client):
+    _setup_admin(client)
+    client.get("/logout")
+    for _ in range(5):
+        r = client.post("/login", data={"username": "boss",
+                                        "password": "wrong-password"})
+        assert r.status_code == 401
+    r = client.post("/login", data={"username": "boss",
+                                    "password": "wrong-password"})
+    assert r.status_code == 429
+    assert "wait" in r.text and "seconds" in r.text
+    # even the CORRECT password is refused while blocked — guesses stay cheap
+    r = client.post("/login", data={"username": "boss",
+                                    "password": "password123"})
+    assert r.status_code == 429
+
+
+def test_login_success_resets_the_failure_count(client):
+    _setup_admin(client)
+    client.get("/logout")
+    for _ in range(4):
+        client.post("/login", data={"username": "boss", "password": "nope!"})
+    r = client.post("/login", data={"username": "boss",
+                                    "password": "password123"})
+    assert r.status_code == 303                      # signed in
+    client.get("/logout")
+    for _ in range(4):                               # counter started over
+        r = client.post("/login", data={"username": "boss", "password": "no"})
+        assert r.status_code == 401
+
+
+def test_setup_code_guessing_throttled(client):
+    for _ in range(5):
+        r = client.post("/setup", data={"code": "guess", "username": "x",
+                                        "password": "password123"})
+        assert r.status_code == 401
+    r = client.post("/setup", data={"code": "guess", "username": "x",
+                                    "password": "password123"})
+    assert r.status_code == 429
+    # …and the block applies even when the code is suddenly right
+    r = client.post("/setup", data={"code": "setup-code-9", "username": "x",
+                                    "password": "password123"})
+    assert r.status_code == 429
+
+
+def test_throttle_window_expires(client, monkeypatch):
+    from app.auth import throttle
+    _setup_admin(client)
+    client.get("/logout")
+    for _ in range(5):
+        client.post("/login", data={"username": "boss", "password": "bad"})
+    assert client.post("/login", data={
+        "username": "boss", "password": "password123"}).status_code == 429
+    real_time = throttle.time.time
+    monkeypatch.setattr(throttle.time, "time",
+                        lambda: real_time() + throttle.WINDOW_SECONDS + 1)
+    assert client.post("/login", data={
+        "username": "boss", "password": "password123"}).status_code == 303

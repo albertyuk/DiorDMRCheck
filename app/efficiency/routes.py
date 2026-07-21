@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -239,8 +240,15 @@ async def efficiency_deck(token: str):
         return Response("report expired or deck blocked by validation",
                         status_code=404)
     fname = f"{entry['filename']}_efficiency.pptx"
+    # RFC 6266/5987: response headers are Latin-1, and this product's users
+    # upload Chinese-named workbooks — a raw filename= raised
+    # UnicodeEncodeError (500). Modern browsers take filename*; the ASCII
+    # fallback is for anything ancient.
+    fallback = fname.encode("ascii", "replace").decode("ascii").replace('"', "'")
     return Response(
         entry["pptx"],
         media_type="application/vnd.openxmlformats-officedocument"
                    ".presentationml.presentation",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        headers={"Content-Disposition":
+                 f'attachment; filename="{fallback}"; '
+                 f"filename*=UTF-8''{quote(fname, safe='')}"})

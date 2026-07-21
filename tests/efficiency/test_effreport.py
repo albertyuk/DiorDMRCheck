@@ -241,3 +241,47 @@ def test_golden_real_workbook():
                            "KOC SOFT": 5.8}
     pptx = build_deck(a)
     assert_chart_cache(pptx, a)
+
+
+def test_v8_with_missing_fanbase_does_not_crash():
+    """尾部+底部 coexisting while either set lacks FAN BASE values used to
+    raise min([]) — the range now degrades to '?'."""
+    from datetime import datetime
+    from tests.fixtures import EFF_HEADERS, EFF_PAID
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    for no, level, fan in ((1, "尾部", None), (2, "尾部", None),
+                           (3, "底部", 150), (4, "底部", 180)):
+        ws.append([no, "", "W1", EFF_PAID, level, f"kol{no}", fan,
+                   datetime(2026, 6, no), "", f"http://xhslink.com/v8{no}",
+                   50000, 1000, 100, 50, 1150, 5000, None, None])
+    buf = io.BytesIO()
+    wb.save(buf)
+    a = analyze(io.BytesIO(buf.getvalue()), ReportConfig())
+    v8 = [f for f in a["findings"] if f["code"] == "V8"]
+    assert len(v8) == 1
+    assert "fans ?K" in v8[0]["message"]
+    assert "150–180" in v8[0]["message"]     # the populated side still shows
+
+
+def test_share_tolerance_scales_with_slice_count():
+    """Nine slices rounded to 1 decimal can legitimately drift up to 0.45
+    from 100; the old fixed 0.3 tolerance rejected valid data (e.g. counts
+    22/62/72/25/25/45/25/15/12 → 100.4)."""
+    from app.efficiency.analysis import verify_reconciliation
+    counts = [22, 62, 72, 25, 25, 45, 25, 15, 12]
+    total = sum(counts)
+    groups = {f"G{i}": {"n": c, "spend": 0.0,
+                        "share": round(c / total * 100, 1)}
+              for i, c in enumerate(counts)}
+    metrics = {"groups": groups,
+               "totals": {"rows": total, "spend": 0.0,
+                          "unclassified": 0, "unclassified_share": 0.0}}
+    assert abs(sum(g["share"] for g in groups.values()) - 100.0) > 0.3
+    verify_reconciliation([], metrics)       # must NOT raise
+    # a genuinely broken share table still trips it
+    groups["G0"]["share"] += 2.0
+    with pytest.raises(VerificationError):
+        verify_reconciliation([], metrics)

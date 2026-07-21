@@ -16,6 +16,8 @@ ZH: dict[str, str] = {
 
     # auth / server messages (main.py) --------------------------------------
     "Wrong username or password.": "用户名或密码错误。",
+    "Too many failed attempts — wait {s} seconds and try again.":
+        "失败次数过多——请等待 {s} 秒后再试。",
     "Wrong setup code.": "设置码错误。",
     "APP_PASSWORD is not configured — authentication is disabled.":
         "服务器未配置 APP_PASSWORD——登录功能未启用。",

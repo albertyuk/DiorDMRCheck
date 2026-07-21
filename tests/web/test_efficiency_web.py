@@ -135,3 +135,23 @@ def test_store_cap_evicts_oldest():
     assert tokens[0] not in eff_routes.EFF_REPORTS      # oldest evicted
     assert tokens[-1] in eff_routes.EFF_REPORTS
     eff_routes.EFF_REPORTS.clear()
+
+
+def test_chinese_filename_downloads_cleanly(client):
+    """Report filenames here are usually Chinese; a raw filename= header is
+    Latin-1 and 500'd. RFC 5987 filename* carries the real name."""
+    r = client.post(
+        "/efficiency",
+        files={"report": ("小红书投放.xlsx", build_eff_bytes(),
+                          "application/vnd.openxmlformats-officedocument"
+                          ".spreadsheetml.sheet")},
+        data={}, follow_redirects=True)
+    assert r.status_code == 200
+    token = next(iter(eff_routes.EFF_REPORTS))
+    d = client.get(f"/efficiency/{token}/deck.pptx")
+    assert d.status_code == 200
+    assert d.content[:2] == b"PK"
+    cd = d.headers["content-disposition"]
+    assert "filename*=UTF-8''%E5%B0%8F%E7%BA%A2%E4%B9%A6" in cd
+    assert 'filename="' in cd            # ASCII fallback for old clients
+    assert cd.encode("latin-1")          # must be header-encodable

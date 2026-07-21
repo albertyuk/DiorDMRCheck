@@ -349,11 +349,16 @@ def validate(rows: list[Row], cfg: ReportConfig,
             fb = [r.fanbase_k for r in dibu if r.fanbase_k is not None]
             koc_sized = sum(1 for x in fb if x < cfg.fanbase_bot_k)
             wr = [r.fanbase_k for r in weibu if r.fanbase_k is not None]
+
+            def _range(vals: list[float]) -> str:
+                # either label set can lack FAN BASE entirely — min([]) raises
+                return f"{min(vals):.0f}–{max(vals):.0f}" if vals else "?"
+
             findings.append(Finding(
                 "V8", "WARN",
                 f"Both 尾部 ({len(weibu)} rows, fans "
-                f"{min(wr):.0f}–{max(wr):.0f}K) and 底部 ({len(dibu)} rows, "
-                f"fans {min(fb):.0f}–{max(fb):.0f}K) labels coexist — merged "
+                f"{_range(wr)}K) and 底部 ({len(dibu)} rows, "
+                f"fans {_range(fb)}K) labels coexist — merged "
                 f"into BOT (documented judgment call). {koc_sized} of the "
                 f"{len(dibu)} 底部 accounts have <{cfg.fanbase_bot_k:.0f}K "
                 "fans (KOC-sized). Set tier_mode=fanbase to re-tier by "
@@ -491,7 +496,8 @@ def verify_dual_path(primary: dict, secondary: dict) -> None:
                     f"dual-path mismatch {gname}.{k}: {a} vs {b}")
 
 
-def verify_reconciliation(rows: list[Row], metrics: dict) -> None:
+def verify_reconciliation(rows: list[Row], metrics: dict,
+                          share_decimals: int = 1) -> None:
     groups, totals = metrics["groups"], metrics["totals"]
     n_sum = sum(g["n"] for g in groups.values()) + totals["unclassified"]
     if n_sum != totals["rows"]:
@@ -503,9 +509,15 @@ def verify_reconciliation(rows: list[Row], metrics: dict) -> None:
         raise VerificationError(
             f"Σ group spend ({spend_sum}) != total spend ({totals['spend']})")
     share_sum = sum(g["share"] for g in groups.values()) + totals["unclassified_share"]
-    if abs(share_sum - 100.0) > 0.3:
+    # Each slice is rounded to `share_decimals` BEFORE summing, so legitimate
+    # drift grows with the slice count: up to half an ulp per slice (e.g. 9
+    # slices at 1 decimal → 0.45). A fixed 0.3 rejected valid distributions.
+    n_slices = len(groups) + (1 if totals["unclassified"] else 0)
+    tolerance = n_slices * 0.5 * 10.0 ** -share_decimals + 1e-9
+    if abs(share_sum - 100.0) > tolerance:
         raise VerificationError(
-            f"donut shares sum to {share_sum} at display precision")
+            f"donut shares sum to {share_sum} at display precision "
+            f"(tolerance ±{tolerance:.2f} for {n_slices} slices)")
 
 
 # ----------------------------------------------------------------- insights
@@ -631,7 +643,7 @@ def analyze(path_or_file, cfg: Optional[ReportConfig] = None) -> dict:
     metrics = compute_metrics(rows, cfg)
     if not blocked:
         verify_dual_path(metrics, compute_metrics_pandas(rows, cfg))
-        verify_reconciliation(rows, metrics)
+        verify_reconciliation(rows, metrics, cfg.share_decimals)
     validate_groups(metrics["groups"], metrics["totals"]["rows"], cfg, findings)
     insights = build_insights(metrics, cfg, findings)
     return {

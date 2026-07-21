@@ -11,11 +11,12 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import config
 from ..core import db
 from ..web import current_user, templates, tr as _tr
-from . import service
+from . import service, throttle
 
 router = APIRouter()
 
@@ -57,9 +58,27 @@ async def login_form(request: Request):
 async def login(request: Request, username: str = Form(""),
                 password: str = Form(...)):
     username = service.normalize_username(username)
+    ip = throttle.client_ip(request)
+    wait = max(throttle.retry_after("user", username),
+               throttle.retry_after("ip", ip))
+    if wait:  # checked BEFORE the expensive hash — throttled guesses are cheap
+        return templates.TemplateResponse(
+            request, "auth/login.html",
+            {"error": _tr(request)(
+                "Too many failed attempts — wait {s} seconds and try again.",
+                s=wait),
+             "no_users": db.user_count() == 0},
+            status_code=429)
     user = db.user_get(username) if username else None
-    if user and service.verify_password(password, user["password_hash"]):
+    # PBKDF2 (~16 ms) off the event loop, so a guess burst cannot stall
+    # every other request in this single-process app
+    ok = bool(user) and await run_in_threadpool(
+        service.verify_password, password, user["password_hash"])
+    if ok:
+        throttle.clear("user", username)
         return _session_response(username)
+    throttle.register_failure("user", username)
+    throttle.register_failure("ip", ip)
     return templates.TemplateResponse(
         request, "auth/login.html",
         {"error": _tr(request)("Wrong username or password."),
@@ -95,14 +114,23 @@ async def setup(request: Request, code: str = Form(...),
     tr = _tr(request)
     if not config.APP_PASSWORD:
         return fail(tr("APP_PASSWORD is not configured — authentication is disabled."))
+    ip = throttle.client_ip(request)
+    wait = throttle.retry_after("setup", ip)
+    if wait:  # the setup code is the root secret — guessing it must be slow
+        return fail(tr(
+            "Too many failed attempts — wait {s} seconds and try again.",
+            s=wait), 429)
     if not hmac.compare_digest(code.encode(), config.APP_PASSWORD.encode()):
+        throttle.register_failure("setup", ip)
         return fail(tr("Wrong setup code."), 401)
+    throttle.clear("setup", ip)
     username = service.normalize_username(username)
     if not service.valid_username(username):
         return fail(tr("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)"))
     if len(password) < 8:
         return fail(tr("Password must be at least 8 characters."))
-    db.user_upsert(username, service.hash_password(password),
+    db.user_upsert(username, await run_in_threadpool(service.hash_password,
+                                                     password),
                    display=display.strip(), is_admin=True)
     return _session_response(username)
 
