@@ -1,4 +1,4 @@
-from app.matcher import name_contains, name_ladder
+from app.reconciler.pipeline import name_contains, name_ladder
 from app.normalize import ascii_part, cjk, header_key, is_hex24, norm
 
 

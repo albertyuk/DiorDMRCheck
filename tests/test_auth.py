@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    from app import config, db
+    from app import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
@@ -78,7 +78,7 @@ def test_admin_adds_coworker_who_can_sign_in(client):
     # non-admin cannot add accounts
     r = client.post("/team/add", data={"username": "x1", "password": "xpassword1"})
     assert "Only+admins" in r.headers["location"] or "Only%20admins" in r.headers["location"]
-    from app import db
+    from app.core import db
     assert db.user_get("x1") is None
 
 
@@ -86,7 +86,7 @@ def test_cannot_delete_last_admin_or_self(client):
     _setup_admin(client)
     r = client.post("/team/delete", data={"username": "boss"})
     assert "cannot" in r.headers["location"].lower() or "own" in r.headers["location"].lower()
-    from app import db
+    from app.core import db
     assert db.user_get("boss") is not None
 
 

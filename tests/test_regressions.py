@@ -7,9 +7,9 @@ import httpx
 import pytest
 from openpyxl import Workbook
 
-from app.matcher import name_contains, name_ladder
-from app.parsers import _to_date, _to_int, parse_dmr, parse_plog
-from app.resolver import (_extract_note_fields, _normalize_url,
+from app.reconciler.pipeline import name_contains, name_ladder
+from app.reconciler.parsers import _to_date, _to_int, parse_dmr, parse_plog
+from app.reconciler.links import (_extract_note_fields, _normalize_url,
                           _note_id_from_url, _retry_after_seconds)
 from tests import fixtures
 
@@ -206,7 +206,7 @@ def test_retry_after_http_date_does_not_crash():
 def test_direct_resolve_survives_malformed_location(monkeypatch):
     """A garbage Location header must degrade, never raise (a raise here would
     abort the whole run through pool.map)."""
-    import app.resolver as resolver_mod
+    import app.reconciler.links as resolver_mod
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(302, headers={"location": "http://[::1/broken"})
@@ -224,7 +224,7 @@ def test_direct_resolve_survives_malformed_location(monkeypatch):
 # ------------------------------------------------------ adjudicator findings
 
 def test_parse_batch_accepts_bare_array_and_fences():
-    from app.adjudicator import _parse_batch
+    from app.reconciler.adjudicator import _parse_batch
     item = ('{"row": "C|1|r2", "verdict": "UNSURE", "confidence": 0.5, '
             '"rationale_en": "e", "rationale_zh": "z"}')
     assert _parse_batch(f'{{"items": [{item}]}}') is not None

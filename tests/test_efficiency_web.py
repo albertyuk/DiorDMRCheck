@@ -60,7 +60,7 @@ def test_expired_token_404(client):
 def test_blocked_report_has_no_deck(client):
     # the fixture has a V2 row; block policy turns it into an ERROR… but the
     # form doesn't expose the policy, so exercise the store contract directly
-    from app.effreport import ReportConfig, analyze
+    from app.efficiency.analysis import ReportConfig, analyze
     import io
     a = analyze(io.BytesIO(build_eff_bytes()),
                 ReportConfig(missing_row_policy="block"))

@@ -1,6 +1,6 @@
 from datetime import date
 
-from app.parsers import parse_dmr, parse_plog
+from app.reconciler.parsers import parse_dmr, parse_plog
 from tests import fixtures
 
 

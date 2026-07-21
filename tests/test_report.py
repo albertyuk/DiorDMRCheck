@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from openpyxl import load_workbook
 
-from app.matcher import run_pipeline
-from app.parsers import parse_dmr, parse_plog
-from app.report import write_annotated_xlsx
+from app.reconciler.pipeline import run_pipeline
+from app.reconciler.parsers import parse_dmr, parse_plog
+from app.reconciler.export import write_annotated_xlsx
 from tests import fixtures
 
 
@@ -63,7 +63,7 @@ def test_override_wins_in_export(plog_path, dmr_path, fake_resolver, tmp_path):
 
 def test_match_blank_override_forces_empty_s(plog_path, dmr_path, fake_resolver,
                                              tmp_path):
-    from app.report import OVERRIDE_MATCH_BLANK
+    from app.reconciler.export import OVERRIDE_MATCH_BLANK
     plog = parse_plog(plog_path)
     dmr = parse_dmr(dmr_path)
     verdicts = run_pipeline(plog, dmr)

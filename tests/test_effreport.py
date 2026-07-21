@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.deck import assert_chart_cache, build_deck
-from app.effreport import (ReportConfig, VerificationError, analyze,
+from app.efficiency.deck import assert_chart_cache, build_deck
+from app.efficiency.analysis import (ReportConfig, VerificationError, analyze,
                            build_insights, compute_metrics,
                            compute_metrics_pandas, verify_dual_path)
 from tests.fixtures import build_eff_bytes
@@ -80,7 +80,7 @@ def test_dual_path_and_reconciliation_pass(analysis):
 
 def test_dual_path_catches_divergence():
     rows_bytes = build_eff_bytes()
-    from app.effreport import classify, parse_report, validate
+    from app.efficiency.analysis import classify, parse_report, validate
     cfg = ReportConfig()
     rows, findings, _ = parse_report(io.BytesIO(rows_bytes))
     classify(rows, cfg, findings)
@@ -150,8 +150,8 @@ def test_donut_order_covers_every_group():
     """DONUT_ORDER filters which groups the donut plots — a TIER × COOP combo
     missing from it silently vanishes from the chart (the reference file has
     no TOP PAID, which hid exactly that)."""
-    from app.deck import DONUT_COLORS, DONUT_ORDER
-    from app.effreport import COOPS, TIERS
+    from app.efficiency.deck import DONUT_COLORS, DONUT_ORDER
+    from app.efficiency.analysis import COOPS, TIERS
     every = {f"{t} {c}" for t in TIERS for c in COOPS}
     assert set(DONUT_ORDER) == every
     assert set(DONUT_COLORS) == every

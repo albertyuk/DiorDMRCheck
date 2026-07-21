@@ -15,7 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
-from app import config, schema_map
+from app import config
+from app.remap import mapper as schema_map
 from app import main as main_mod
 from app.normalize import header_key
 
@@ -57,7 +58,7 @@ CN_PLOG_PROPOSAL = {
 
 
 def _clear_mapping_cache():
-    from app import db
+    from app.core import db
     with db.connect() as conn:
         conn.execute("DELETE FROM settings WHERE key LIKE 'schemamap:%'")
         conn.commit()
@@ -125,7 +126,7 @@ def test_apply_mapping_touches_only_header_cells():
     assert ws.cell(row=1, column=1).value == "内部使用 KOL 投放追踪表"
     assert ws.cell(row=3, column=6).value == "博主1"        # data untouched
     assert ws.cell(row=3, column=10).hyperlink is not None  # hyperlink survives
-    from app.parsers import parse_plog
+    from app.reconciler.parsers import parse_plog
     import tempfile, os
     fd, p = tempfile.mkstemp(suffix=".xlsx")
     os.close(fd)

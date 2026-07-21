@@ -50,10 +50,10 @@ def test_route_table_snapshot():
 
 
 def test_golden_export_snapshot(plog_path, dmr_path, fake_resolver, tmp_path):
-    from app.matcher import run_pipeline, status_counts, summary_buckets
-    from app.parsers import parse_dmr, parse_plog
-    from app.report import write_annotated_xlsx
-    from app.reverse_audit import reverse_audit
+    from app.reconciler.pipeline import run_pipeline, status_counts, summary_buckets
+    from app.reconciler.parsers import parse_dmr, parse_plog
+    from app.reconciler.export import write_annotated_xlsx
+    from app.reconciler.reverse_audit import reverse_audit
 
     plog = parse_plog(plog_path)
     dmr = parse_dmr(dmr_path)

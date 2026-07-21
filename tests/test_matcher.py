@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.matcher import (LINK_ERROR, MATCH, NAME_MISLABEL, NO_BLOGGER, NO_POST,
+from app.reconciler.pipeline import (LINK_ERROR, MATCH, NAME_MISLABEL, NO_BLOGGER, NO_POST,
                          REVIEW, run_pipeline)
-from app.parsers import parse_dmr, parse_plog
-from app.reverse_audit import reverse_audit
+from app.reconciler.parsers import parse_dmr, parse_plog
+from app.reconciler.reverse_audit import reverse_audit
 from tests import fixtures
 
 

@@ -31,7 +31,7 @@ def dmr_path(tmp_path_factory) -> str:
 def fake_resolver(monkeypatch):
     """Replace network resolution with the fixture table. Tests never touch
     the network or the SQLite cache."""
-    from app.resolver import Resolution
+    from app.reconciler.links import Resolution
 
     table = fixtures.fake_resolutions()
 
@@ -50,7 +50,7 @@ def fake_resolver(monkeypatch):
     def fake_ensure_author(url, res, run_counter=None, retry_failed=False):
         return res
 
-    import app.matcher as matcher_mod
+    import app.reconciler.pipeline as matcher_mod
     monkeypatch.setattr(matcher_mod, "resolve_link", fake_resolve_link)
     monkeypatch.setattr(matcher_mod, "ensure_author", fake_ensure_author)
     return table

@@ -10,12 +10,12 @@ from datetime import datetime
 import pytest
 from openpyxl import Workbook
 
-from app.matcher import (LINK_ERROR, NO_BLOGGER, NO_BLOGGER_NOT_IN_PERIMETER,
+from app.reconciler.pipeline import (LINK_ERROR, NO_BLOGGER, NO_BLOGGER_NOT_IN_PERIMETER,
                          NO_POST_IN_PERIMETER, run_pipeline)
-from app.parsers import parse_dmr, parse_plog
-from app.perimeter import (PerimeterIndex, file_hash, load_cached,
+from app.reconciler.parsers import parse_dmr, parse_plog
+from app.reconciler.perimeter import (PerimeterIndex, file_hash, load_cached,
                            parse_perimeter, store_parsed)
-from app.resolver import Resolution
+from app.reconciler.links import Resolution
 from tests import fixtures
 
 PERIM_HEADERS = [
@@ -69,7 +69,7 @@ def build_perimeter_bytes(extraction="19/05/2026 10:30:00") -> bytes:
 
 @pytest.fixture
 def perim_index(tmp_path, monkeypatch) -> PerimeterIndex:
-    from app import config, db
+    from app import config
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "perim.sqlite3")
     data = build_perimeter_bytes()
     h = file_hash(data)
@@ -152,7 +152,7 @@ def split_verdicts(tmp_path, monkeypatch, perim_index):
                               source="fixture")
         return Resolution(status="failed", error="dead link")
 
-    import app.matcher as m
+    import app.reconciler.pipeline as m
     monkeypatch.setattr(m, "resolve_link", fake_resolve)
     monkeypatch.setattr(m, "ensure_author",
                         lambda url, res, run_counter=None, retry_failed=False: res)
@@ -213,7 +213,7 @@ def test_without_perimeter_behavior_unchanged(tmp_path, monkeypatch):
                               source="fixture")
         return Resolution(status="failed", error="dead link")
 
-    import app.matcher as m
+    import app.reconciler.pipeline as m
     monkeypatch.setattr(m, "resolve_link", fake_resolve)
     monkeypatch.setattr(m, "ensure_author",
                         lambda url, res, run_counter=None, retry_failed=False: res)
