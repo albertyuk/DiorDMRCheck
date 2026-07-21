@@ -206,6 +206,14 @@ fly deploy -a "$APP"
 (`fly launch` also works but interactively rewrites `fly.toml`; the explicit
 `fly apps create` + `fly deploy` sequence is deterministic.)
 
+**Run exactly one machine and one uvicorn worker.** Pending header-remap
+audits and finished efficiency reports live in process memory
+(`app/core/token_store.py`): a second machine or `--workers N` would 404
+their token URLs, and a restart drops them. This is deliberate for the
+efficiency product — client workbooks are never written to disk, so there
+is nothing to persist; scaling out would require a shared backing for the
+remap store and a conscious decision to weaken that privacy contract.
+
 ## Evaluation harness
 
 `tools/evaluate.py` runs the pipeline on the two real source files and diffs column S

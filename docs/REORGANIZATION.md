@@ -506,33 +506,46 @@ These are real, verified issues, deliberately **excluded** from the move-only pl
    `auth.service.signing_secret()` generates a random secret once and persists it
    under `DATA_DIR` (mode 600). Never derived from the setup code. Existing sessions
    signed with the old derivation invalidate once on upgrade (users sign in again).
-2. **`run_update` SQL column whitelist.** `db.py:192` — whitelist columns and *raise*
-   (the `assert` in `run_bump_counter` at `db.py:219` disappears under `python -O`).
+2. **`run_update` SQL column whitelist** — **FIXED**: column names are validated
+   against the runs table's mutable columns and unknown keys raise; the counter
+   guard is a raise, not a strippable assert.
 3. **`schema_map.signature()` hashes data rows** — **FIXED** on this branch: the
    cache is now keyed by `header_signature` (sheet name, row index, header-row cell
    texts only); `attempt_remap` probes every candidate header row's signature in one
    query. Same layout with different data — or a different DMR metadata date line —
    now auto-applies the approved mapping. Old cache entries (data-keyed signatures)
    no longer match, so each known format is re-approved once.
-4. **Perimeter ingest during preview** (`main.py:398`, `perimeter.py:252`) mutates
-   global state before user confirmation and returns a hollow parse on cache hit.
-   Separate parse/cache from promote-to-current; tie promotion to run confirmation.
-5. **Run concurrency cap + registry** (`runs.py`): bound the worker pool; consider Fly
-   `auto_stop` interaction (a run in flight should hold the machine or persist enough
-   state to resume).
-6. **Token stores under multi-worker deployment:** give `TokenStore` an optional
-   SQLite backing so `/remap/{token}` and `/efficiency/{token}` survive restarts and
-   worker counts >1 — or document the single-process constraint in `fly.toml` and
-   `Dockerfile` explicitly.
-7. **Unify the name-ladder policy** (C6): one policy module for rungs + thresholds
-   consumed by both `pipeline.py` and `perimeter.py` (behavioral only if the copies
-   have already drifted — verify with characterization tests first).
-8. **i18n message-ID migration** (C12): long-term, emit message IDs instead of keying
-   on exact English text; short-term, add a lint that flags catalog rows with
-   identical Chinese values (wording-drift detector).
-9. **`Verdict` decomposition** (A7): compose from evidence sub-records and emit
-   `ENGAGEMENT_CAVEAT` once per document instead of per row (changes audit JSON shape —
-   coordinate with any consumers).
+4. **Perimeter ingest during preview** — **FIXED**: `ingest` split into
+   `parse_and_cache` (no global mutation; replays stored warnings on cache hits via
+   the new `perimeter_cache.warnings_json` column) and `promote_cached`, called only
+   from `POST /runs/{id}/start` — promotion now happens at explicit run confirmation.
+5. **Run concurrency cap + registry** — **FIXED**: runs draw from a bounded pool
+   (`RUN_MAX_CONCURRENT`, default 2) with a registry (idempotent per run id) and a
+   FIFO queue; deferred runs show a waiting message. Threads stay daemonized, so the
+   Fly `auto_stop` interaction is unchanged (restart kills in-flight runs and
+   `recover_orphans` marks them) — holding the machine during a run remains a
+   deployment decision.
+6. **Token stores under multi-worker deployment** — **RESOLVED (documented, not
+   persisted — deliberately)**: the efficiency store holds client workbook/PPTX bytes
+   whose documented privacy contract is that they never touch disk, so a SQLite
+   backing would be a regression, not a fix. The single-process/single-machine
+   constraint is now declared prominently in `fly.toml` and the README deployment
+   section, with the rationale.
+7. **Unify the name-ladder policy** — **FIXED**: `reconciler/name_match.py` owns the
+   ladder, `FUZZY_CUTOFF`/`MIN_COMPARE_LEN`, and the rung-name constants; both the
+   pipeline and the perimeter batch scan consume it. Existing tests characterized both
+   implementations and pass unchanged (no drift had occurred yet).
+8. **i18n message-ID migration** (C12) — **short-term lint LANDED**: a test flags any
+   new English keys translating to identical Chinese unless explicitly allowlisted
+   (seven existing groups recorded as deliberate). The long-term message-ID migration
+   remains future work.
+9. **`Verdict` decomposition** (A7) — **PARTIALLY FIXED, remainder deliberately
+   declined**: the caveat is now emitted once per result/audit document instead of
+   per row, and `load_verdicts` filters to the dataclass's fields so historical runs
+   and future derived keys rehydrate cleanly. The full nested sub-record composition
+   is consciously NOT done: it would change the exported audit-JSON shape and break
+   rehydration of runs already stored in production SQLite, for organizational gain
+   that property-grouping comments already provide at this codebase size.
 
 ---
 
