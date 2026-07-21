@@ -93,9 +93,22 @@ def run_create(run_id: str, **fields: Any) -> None:
         conn.commit()
 
 
+# The mutable columns of the runs table. run_update interpolates column
+# names into SQL, so anything outside this set must raise — a future caller
+# passing user-influenced keys must never become SQL injection.
+_RUN_UPDATE_COLUMNS = frozenset({
+    "status", "phase", "progress_done", "progress_total", "message",
+    "options_json", "preview_json", "result_json", "summary_json",
+    "tikhub_calls", "llm_calls", "error", "perimeter_hash",
+})
+
+
 def run_update(run_id: str, **fields: Any) -> None:
     if not fields:
         return
+    unknown = set(fields) - _RUN_UPDATE_COLUMNS
+    if unknown:
+        raise ValueError(f"run_update: unknown column(s) {sorted(unknown)}")
     sets = ", ".join(f"{k} = ?" for k in fields)
     with connect() as conn:
         conn.execute(f"UPDATE runs SET {sets} WHERE id = ?", [*fields.values(), run_id])
@@ -123,7 +136,9 @@ def run_progress(run_id: str, phase: str, done: int, total: int, message: str) -
 
 
 def run_bump_counter(run_id: str, column: str, amount: int = 1) -> None:
-    assert column in ("tikhub_calls", "llm_calls")
+    if column not in ("tikhub_calls", "llm_calls"):
+        # a raise, not an assert — asserts vanish under `python -O`
+        raise ValueError(f"run_bump_counter: unknown counter {column!r}")
     with connect() as conn:
         conn.execute(
             f"UPDATE runs SET {column} = COALESCE({column}, 0) + ? WHERE id = ?",
