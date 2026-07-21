@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-import sys
+import os
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 # Keep test SQLite state away from any real /data volume.
-import os  # noqa: E402
-
 os.environ.setdefault("DATA_DIR", str(ROOT / ".test_data"))
 
 from tests import fixtures  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def safe_test_runtime(monkeypatch):
+    """Tests opting into passwordless mode do so explicitly and use HTTP."""
+    from app import config
+    monkeypatch.setattr(config, "ALLOW_OPEN_ACCESS", True)
+    monkeypatch.setattr(config, "SESSION_COOKIE_SECURE", False)
 
 
 @pytest.fixture(scope="session")
@@ -34,7 +39,7 @@ def dmr_path(tmp_path_factory) -> str:
 def fake_resolver(monkeypatch):
     """Replace network resolution with the fixture table. Tests never touch
     the network or the SQLite cache."""
-    from app.resolver import Resolution
+    from app.reconciler.links import Resolution
 
     table = fixtures.fake_resolutions()
 
@@ -53,7 +58,7 @@ def fake_resolver(monkeypatch):
     def fake_ensure_author(url, res, run_counter=None, retry_failed=False):
         return res
 
-    import app.matcher as matcher_mod
+    import app.reconciler.pipeline as matcher_mod
     monkeypatch.setattr(matcher_mod, "resolve_link", fake_resolve_link)
     monkeypatch.setattr(matcher_mod, "ensure_author", fake_ensure_author)
     return table

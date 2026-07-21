@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>{{ t("New reconciliation run") }}</h1>
+  <p class="muted">{{ t("Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
+  {% if not tikhub_configured %}
+    <div class="warn">{{ t("TIKHUB_API_KEY is not configured — link resolution will rely on the free direct-redirect path only, which is usually blocked from datacenter IPs. Expect most rows to fall back to Check链接错误 with name-based candidates.") }}</div>
+  {% endif %}
+  {% if not anthropic_configured %}
+    <div class="warn">{{ t("ANTHROPIC_API_KEY is not configured — Tier-4 adjudication and the bilingual summary are skipped; ambiguous rows stay 人工复核.") }}</div>
+  {% else %}
+    <p class="muted">{{ t("Adjudicator model:") }} <code>{{ model }}</code></p>
+  {% endif %}
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <p><label>{{ t("PLOG file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
+      <input type="file" name="plog" accept=".xlsx" required></label></p>
+    <p><label>{{ t("DMR file (e.g.") }} <code>YTD_DMR_MICRO_0720.xlsx</code>{{ t(")") }}<br>
+      <input type="file" name="dmr" accept=".xlsx" required></label></p>
+    <p><label>{{ t("Perimeter (Micro) — optional") }}
+      {% if perimeter %}<span class="muted">{{ t("(replaces the current one below)") }}</span>{% endif %}<br>
+      <input type="file" name="perimeter" accept=".xlsx"></label></p>
+    <button type="submit">{{ t("Upload & preview") }}</button>
+  </form>
+
+  {% if perimeter %}
+    <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
+      <b>{{ t("Perimeter in use:") }}</b>
+      {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.",
+           filename=perimeter.filename,
+           date=perimeter.extraction_date or t("unknown date"),
+           rows="{:,}".format(perimeter.rows),
+           redbook="{:,}".format(perimeter.redbook_count)) }}
+      {{ t("无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.") }}
+      <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
+            onsubmit="return confirm('{{ t("Remove the perimeter? Runs revert to plain 无博主.") }}')">
+        <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
+      </form>
+    </div>
+  {% else %}
+    <p class="muted" style="font-size:.78rem">{{ t("No perimeter uploaded — 无博主 rows are not split by perimeter membership.") }}</p>
+  {% endif %}
+</div>
+
+{% include "efficiency/_promo_card.html" %}
+
+<div class="card">
+  <h2>{{ t("Past runs") }}</h2>
+  {% if runs %}
+  <table>
+    <tr><th>{{ t("Run") }}</th><th>{{ t("Files") }}</th><th>{{ t("Status") }}</th><th>{{ t("Message") }}</th></tr>
+    {% for r in runs %}
+    <tr>
+      <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+      <td>{{ r.plog_name }} ↔ {{ r.dmr_name }}</td>
+      <td>{{ td(r.status) }}</td>
+      <td class="muted">{{ td(r.message or "") }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">{{ t("No runs yet.") }}</p>{% endif %}
+</div>
+{% endblock %}

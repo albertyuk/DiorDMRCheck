@@ -14,6 +14,23 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _positive_int_env(name: str, default: str) -> int:
+    """Read a positive integer setting, failing fast on unsafe values."""
+    value = int(_env(name, default))
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1 (got {value})")
+    return value
+
+
+def _bool_env(name: str, default: str = "0") -> bool:
+    value = _env(name, default).casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean (got {value!r})")
+
+
 DATA_DIR = Path(_env("DATA_DIR", "/data" if Path("/data").is_dir() else "./data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "dmr_reconciler.sqlite3"
@@ -45,17 +62,62 @@ ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
 ANTHROPIC_MAX_TOKENS = int(_env("ANTHROPIC_MAX_TOKENS", "2000"))
 
 APP_PASSWORD = _env("APP_PASSWORD")
-# Cookie-signing secret. Falls back to a derivation of APP_PASSWORD so a
-# single secret is enough to configure auth.
-APP_SECRET = _env("APP_SECRET") or ("dmr-" + APP_PASSWORD)
+# Authentication is secure-by-default. Local open mode requires an explicit
+# opt-out so a missing deployment secret cannot expose client workbooks.
+ALLOW_OPEN_ACCESS = _bool_env("ALLOW_OPEN_ACCESS")
+SESSION_COOKIE_SECURE = _bool_env("SESSION_COOKIE_SECURE", "1")
+# Cookie-signing secret. Optional: when unset, a random secret is generated
+# once and persisted under DATA_DIR (auth.service.signing_secret). It is
+# deliberately NOT derived from APP_PASSWORD — the setup code is handed to
+# every teammate and must not let its holders forge session cookies.
+APP_SECRET = _env("APP_SECRET")
 
 # Soft ranking window for Tier-3 candidate dates (days). Evidence: verified
 # same-post matches at Δ=2 and Δ=4 days; a genuine different-post pair at Δ=2.
 CANDIDATE_DATE_WINDOW_DAYS = int(_env("CANDIDATE_DATE_WINDOW_DAYS", "7"))
 
+# At most this many reconciliation runs execute at once; excess run starts
+# stay 'queued' and begin as slots free up (each run is CPU- and API-heavy).
+RUN_MAX_CONCURRENT = _positive_int_env("RUN_MAX_CONCURRENT", "2")
+
+# Compressed request, expanded XLSX, archive-entry, and on-disk retention
+# budgets. These protect the 512 MB process and 1 GB Fly volume.
+MAX_UPLOAD_MB = _positive_int_env("MAX_UPLOAD_MB", "25")
+MAX_XLSX_UNCOMPRESSED_MB = _positive_int_env(
+    "MAX_XLSX_UNCOMPRESSED_MB", "50"
+)
+MAX_XLSX_ENTRIES = _positive_int_env("MAX_XLSX_ENTRIES", "2000")
+# Normal-mode openpyxl materializes every populated cell. An expanded-byte
+# limit stops ZIP bombs; this independent count also bounds object growth for
+# highly repetitive, cell-dense worksheet XML.
+MAX_XLSX_CELLS = _positive_int_env("MAX_XLSX_CELLS", "600000")
+UPLOAD_REQUEST_CONCURRENCY = _positive_int_env(
+    "UPLOAD_REQUEST_CONCURRENCY", "2"
+)
+UPLOAD_PARSE_CONCURRENCY = _positive_int_env("UPLOAD_PARSE_CONCURRENCY", "1")
+EXPORT_STREAM_CONCURRENCY = _positive_int_env(
+    "EXPORT_STREAM_CONCURRENCY", "4"
+)
+UPLOAD_RETENTION_HOURS = _positive_int_env("UPLOAD_RETENTION_HOURS", "720")
+UPLOAD_MAX_TOTAL_MB = _positive_int_env("UPLOAD_MAX_TOTAL_MB", "900")
+MAINTENANCE_INTERVAL_SECONDS = _positive_int_env(
+    "MAINTENANCE_INTERVAL_SECONDS", "60"
+)
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_XLSX_UNCOMPRESSED_BYTES = MAX_XLSX_UNCOMPRESSED_MB * 1024 * 1024
+UPLOAD_MAX_TOTAL_BYTES = UPLOAD_MAX_TOTAL_MB * 1024 * 1024
+
 # Failed link resolutions are cached; retry them only after this many hours
 # (or when a run explicitly requests it). Successes are cached permanently.
 FAILED_CACHE_TTL_HOURS = int(_env("FAILED_CACHE_TTL_HOURS", "24"))
+
+
+def validate_runtime() -> None:
+    if not APP_PASSWORD and not ALLOW_OPEN_ACCESS:
+        raise RuntimeError(
+            "APP_PASSWORD is required. For intentional local open mode, "
+            "set ALLOW_OPEN_ACCESS=1."
+        )
 
 
 def ensure_dirs() -> None:

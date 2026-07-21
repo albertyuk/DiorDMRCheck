@@ -7,6 +7,16 @@
 app = "dmr-reconciler"
 primary_region = "sin"
 
+# SINGLE PROCESS, SINGLE MACHINE — a hard constraint, not a tuning choice.
+# Pending header-remap audits and finished efficiency reports live in
+# process memory (app.core.token_store.TokenStore): a second machine or
+# uvicorn worker would 404 the /remap/{token} and /efficiency/{token}
+# redirects, and a restart drops them (by design for the efficiency product:
+# client workbooks are never written to disk, so there is nothing to
+# restore). Do not raise machine counts or add --workers without moving
+# those stores to a shared backing first — which for the efficiency store
+# would break its documented never-touches-disk privacy contract.
+
 [build]
 
 [http_service]
