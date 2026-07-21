@@ -19,6 +19,19 @@ from .parsers import parse_dmr, parse_plog
 from .reverse_audit import reverse_audit
 
 
+def recover_orphans() -> None:
+    """Mark runs orphaned by a restart as errors. A deploy/restart (or Fly
+    auto-stop) kills in-flight daemon threads; their runs would otherwise
+    stay 'running' forever with no restart path. Called at app startup."""
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET status='error', phase='error', "
+            "message='Run interrupted by a restart — use Retry.' "
+            "WHERE status='running' OR status='queued'"
+        )
+        conn.commit()
+
+
 def start_run(run_id: str) -> None:
     t = threading.Thread(target=_run, args=(run_id,), daemon=True)
     t.start()

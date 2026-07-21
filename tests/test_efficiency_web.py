@@ -10,16 +10,17 @@ from fastapi.testclient import TestClient
 
 from app import config
 from app import main as main_mod
+from app.efficiency import routes as eff_routes
 from tests.fixtures import build_eff_bytes
 
 
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(config, "APP_PASSWORD", "")   # open mode — no login
-    main_mod.EFF_REPORTS.clear()
+    eff_routes.EFF_REPORTS.clear()
     with TestClient(main_mod.app) as c:
         yield c
-    main_mod.EFF_REPORTS.clear()
+    eff_routes.EFF_REPORTS.clear()
 
 
 def _upload(client, **form):
@@ -42,7 +43,7 @@ def test_full_flow(client, tmp_path, monkeypatch):
     # nothing was written to disk — client campaign data stays in memory
     assert not (tmp_path / "uploads").exists()
 
-    token = next(iter(main_mod.EFF_REPORTS))
+    token = next(iter(eff_routes.EFF_REPORTS))
     d = client.get(f"/efficiency/{token}/deck.pptx")
     assert d.status_code == 200
     assert d.content[:2] == b"PK"
@@ -51,8 +52,8 @@ def test_full_flow(client, tmp_path, monkeypatch):
 
 def test_expired_token_404(client):
     _upload(client)
-    token = next(iter(main_mod.EFF_REPORTS))
-    main_mod.EFF_REPORTS[token]["created"] -= main_mod.EFF_REPORTS.ttl_seconds + 1
+    token = next(iter(eff_routes.EFF_REPORTS))
+    eff_routes.EFF_REPORTS[token]["created"] -= eff_routes.EFF_REPORTS.ttl_seconds + 1
     assert client.get(f"/efficiency/{token}").status_code == 404
     assert client.get(f"/efficiency/{token}/deck.pptx").status_code == 404
 
@@ -64,7 +65,7 @@ def test_blocked_report_has_no_deck(client):
     import io
     a = analyze(io.BytesIO(build_eff_bytes()),
                 ReportConfig(missing_row_policy="block"))
-    token = main_mod.EFF_REPORTS.put({"analysis": a, "pptx": None, "filename": "x"})
+    token = eff_routes.EFF_REPORTS.put({"analysis": a, "pptx": None, "filename": "x"})
     page = client.get(f"/efficiency/{token}")
     assert page.status_code == 200
     assert "Deck not generated" in page.text
@@ -99,11 +100,11 @@ def test_demo_image_shipped_and_shown_per_language(client):
 
 
 def test_store_cap_evicts_oldest():
-    main_mod.EFF_REPORTS.clear()
-    tokens = [main_mod.EFF_REPORTS.put({"analysis": {}, "pptx": None,
+    eff_routes.EFF_REPORTS.clear()
+    tokens = [eff_routes.EFF_REPORTS.put({"analysis": {}, "pptx": None,
                                    "filename": str(i)})
-              for i in range(main_mod.EFF_REPORTS.max_entries + 3)]
-    assert len(main_mod.EFF_REPORTS) <= main_mod.EFF_REPORTS.max_entries
-    assert tokens[0] not in main_mod.EFF_REPORTS      # oldest evicted
-    assert tokens[-1] in main_mod.EFF_REPORTS
-    main_mod.EFF_REPORTS.clear()
+              for i in range(eff_routes.EFF_REPORTS.max_entries + 3)]
+    assert len(eff_routes.EFF_REPORTS) <= eff_routes.EFF_REPORTS.max_entries
+    assert tokens[0] not in eff_routes.EFF_REPORTS      # oldest evicted
+    assert tokens[-1] in eff_routes.EFF_REPORTS
+    eff_routes.EFF_REPORTS.clear()

@@ -37,6 +37,20 @@ def _check(name: str, produced: dict) -> None:
         f"intentional, regenerate with UPDATE_SNAPSHOTS=1 and review the diff.")
 
 
+def _flatten(routes):
+    """Expand path-less router wrappers (include_router containers) so the
+    snapshot captures the real endpoints regardless of mounting structure."""
+    for r in routes:
+        if not hasattr(r, "path"):
+            sub = (getattr(r, "routes", None)
+                   or getattr(getattr(r, "original_router", None),
+                              "routes", None))
+            if sub is not None:
+                yield from _flatten(sub)
+                continue
+        yield r
+
+
 def test_route_table_snapshot():
     from app.main import app
 
@@ -44,7 +58,7 @@ def test_route_table_snapshot():
         [getattr(r, "path", getattr(r, "path_format", "?")),
          sorted(getattr(r, "methods", None) or []),
          type(r).__name__]
-        for r in app.routes
+        for r in _flatten(app.routes)
     )
     _check("route_table.json", {"routes": routes})
 

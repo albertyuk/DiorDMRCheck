@@ -10,7 +10,7 @@
     <div hx-get="/runs/{{ run_id }}/results" hx-trigger="load" hx-target="#run-body"></div>
   {% elif run.status == "error" %}
     {% with options = (run.options_json | fromjson if run.options_json else {}) %}
-      {% include "_error_panel.html" %}
+      {% include "reconciler/_error_panel.html" %}
     {% endwith %}
   {% elif run.status == "pending" and not run.options_json %}
     <div class="card"><p>{{ t("This run has not been started.") }}

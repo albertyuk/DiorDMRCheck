@@ -18,6 +18,7 @@ from openpyxl import Workbook, load_workbook
 from app import config
 from app.remap import mapper as schema_map
 from app import main as main_mod
+from app.remap import service as remap_service
 from app.normalize import header_key
 
 # ------------------------------------------------------------------ fixtures
@@ -72,11 +73,11 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(
         schema_map, "_call_llm",
         lambda system, user: json.dumps(CN_PLOG_PROPOSAL, ensure_ascii=False))
-    main_mod.PENDING_MAPS.clear()
+    remap_service.PENDING_MAPS.clear()
     _clear_mapping_cache()      # tests share one SQLite settings table
     with TestClient(main_mod.app) as c:
         yield c
-    main_mod.PENDING_MAPS.clear()
+    remap_service.PENDING_MAPS.clear()
     _clear_mapping_cache()
 
 
@@ -197,7 +198,7 @@ def test_run_flow_required_field_missing_bounces_back(client):
     r2 = client.post(f"/remap/{token}/apply", data=form)
     assert r2.status_code == 422
     assert "POST LINK" in r2.text                  # names the missing field
-    assert token in main_mod.PENDING_MAPS         # still pending, fixable
+    assert token in remap_service.PENDING_MAPS         # still pending, fixable
 
 
 def test_run_flow_reject_discards(client):
@@ -205,7 +206,7 @@ def test_run_flow_reject_discards(client):
     token = r.headers["location"].rsplit("/", 1)[1]
     r2 = client.post(f"/remap/{token}/reject", follow_redirects=False)
     assert r2.status_code == 303 and r2.headers["location"] == "/"
-    assert token not in main_mod.PENDING_MAPS
+    assert token not in remap_service.PENDING_MAPS
 
 
 def test_approved_mapping_is_cached_and_auto_applied(client):
@@ -271,6 +272,6 @@ def test_efficiency_flow_audit_then_approve_stays_in_memory(client, tmp_path,
 def test_expired_mapping_token_404s(client):
     r = _upload_run(client, build_cn_plog_bytes())
     token = r.headers["location"].rsplit("/", 1)[1]
-    main_mod.PENDING_MAPS[token]["created"] -= main_mod.PENDING_MAPS.ttl_seconds + 1
+    remap_service.PENDING_MAPS[token]["created"] -= remap_service.PENDING_MAPS.ttl_seconds + 1
     assert client.get(f"/remap/{token}").status_code == 404
     assert client.post(f"/remap/{token}/apply", data={}).status_code == 404

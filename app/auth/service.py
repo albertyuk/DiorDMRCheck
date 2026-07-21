@@ -16,7 +16,7 @@ import secrets
 import time
 from typing import Optional
 
-from . import config
+from .. import config
 
 PBKDF2_ITERATIONS = 200_000
 SESSION_TTL = 7 * 24 * 3600
