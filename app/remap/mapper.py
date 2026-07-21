@@ -11,7 +11,8 @@ Applying a mapping rewrites ONLY the text of the identified header cells to
 the canonical names; every data cell (and hyperlink) is byte-identical, so
 the deterministic parsers — and all their guarantees — run unchanged.
 
-Approved mappings are cached by a signature of the header region, so a given
+Approved mappings are cached by a signature of the header row's LAYOUT
+(sheet name, row index, header cell texts — never the data rows), so a given
 format needs one LLM call and one human approval ever; later uploads of the
 same format apply it automatically (the preview still shows what was mapped
 and who approved it).
@@ -75,11 +76,54 @@ def build_sample(data: bytes) -> dict:
         wb.close()
 
 
-def signature(sample: dict) -> str:
-    """Cache key: hash of the header region. Same layout → same signature."""
-    return hashlib.sha256(
-        json.dumps(sample, ensure_ascii=False, sort_keys=True).encode()
-    ).hexdigest()[:32]
+def _layout_sig(sheet: str, row: int, cells: list[str]) -> str:
+    return hashlib.sha256(json.dumps(
+        {"sheet": sheet, "row": row, "cells": cells},
+        ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:32]
+
+
+def _trim(cells: list[str]) -> list[str]:
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
+
+
+def header_signature(data: bytes, sheet: str, header_row: int) -> str:
+    """Cache key for one candidate header row: sheet name, row index, and the
+    row's cell texts (trailing blanks trimmed). Layout only — the data rows
+    below and the metadata rows above do NOT participate, so re-uploads of a
+    known format hit the approved cache even though their content differs.
+    (The previous whole-sample hash covered data rows and the DMR metadata
+    dates, which change on every export — the cache could effectively never
+    hit twice.)"""
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        cells: list[str] = []
+        for row in wb[sheet].iter_rows(min_row=header_row, max_row=header_row,
+                                       max_col=SAMPLE_COLS):
+            cells = _trim([_cell_str(c.value) for c in row])
+    finally:
+        wb.close()
+    return _layout_sig(sheet, header_row, cells)
+
+
+def candidate_signatures(data: bytes) -> list[tuple[str, int, str]]:
+    """(sheet, row, signature) for every non-empty row in the header-scan
+    region of the first MAX_SHEETS sheets — the lookup keys probed against
+    the approved-mapping cache before any LLM call."""
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    out = []
+    try:
+        for ws in wb.worksheets[:MAX_SHEETS]:
+            for i, row in enumerate(
+                    ws.iter_rows(min_row=1, max_row=SAMPLE_ROWS,
+                                 max_col=SAMPLE_COLS), start=1):
+                cells = _trim([_cell_str(c.value) for c in row])
+                if cells:
+                    out.append((ws.title, i, _layout_sig(ws.title, i, cells)))
+    finally:
+        wb.close()
+    return out
 
 
 # ----------------------------------------------------------------- proposal
@@ -230,6 +274,14 @@ def _cache_key(kind: str, sig: str) -> str:
 def cache_get(kind: str, sig: str) -> Optional[dict]:
     raw = db.setting_get(_cache_key(kind, sig))
     return json.loads(raw) if raw else None
+
+
+def cache_get_many(kind: str, sigs: list[str]) -> dict[str, dict]:
+    """sig → approved mapping for every candidate signature that has one
+    (single settings query)."""
+    hits = db.settings_get_many([_cache_key(kind, s) for s in sigs])
+    return {s: json.loads(hits[_cache_key(kind, s)])
+            for s in sigs if _cache_key(kind, s) in hits}
 
 
 def cache_put(kind: str, sig: str, sheet: str, header_row: int,

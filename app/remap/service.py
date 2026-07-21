@@ -34,18 +34,25 @@ def attempt_remap(kind: str, data: bytes) -> RemapOutcome:
     """After a fingerprint failure: an already-approved mapping that fits
     this format, an LLM proposal awaiting human approval, or failure."""
     try:
+        # Approved-mapping cache first, keyed by header-row LAYOUT: probe
+        # every candidate header row so a re-upload of a known format skips
+        # both the LLM and the human, regardless of its data content.
+        candidates = mapper.candidate_signatures(data)
+        hits = mapper.cache_get_many(kind, [sig for _, _, sig in candidates])
+        for sheet, row, sig in candidates:
+            cached = hits.get(sig)
+            if (cached and cached["sheet"] == sheet
+                    and int(cached["header_row"]) == row):
+                return RemapOutcome("cached", mapping=cached)
         sample = mapper.build_sample(data)
     except Exception:
         return RemapOutcome("fail")
-    sig = mapper.signature(sample)
-    cached = mapper.cache_get(kind, sig)
-    if cached:
-        return RemapOutcome("cached", mapping=cached)
     if not config.ANTHROPIC_API_KEY:
         return RemapOutcome("fail")
     try:
         prop = mapper.propose(sample, kind)
         choices = mapper.column_choices(data, prop.sheet, prop.header_row)
+        sig = mapper.header_signature(data, prop.sheet, prop.header_row)
         return RemapOutcome("audit", proposal=prop, choices=choices, sig=sig)
     except mapper.SchemaMapError as e:
         return RemapOutcome("fail", error=str(e))

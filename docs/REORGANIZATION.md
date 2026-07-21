@@ -501,16 +501,19 @@ clean; `docker build` succeeds and the container boots to `/healthz`.
 
 These are real, verified issues, deliberately **excluded** from the move-only playbook:
 
-1. **`APP_SECRET` derivation (security).** `config.py:50` falls back to
-   `"dmr-" + APP_PASSWORD` — the cookie-signing key is derivable from the setup code
-   admins hand to coworkers; anyone who ever saw the setup code can forge a session
-   cookie for any username (and with both unset the key is the constant `"dmr-"`).
-   Require an independent secret or generate-and-persist one.
+1. **`APP_SECRET` derivation (security).** ~~`config.py:50` falls back to
+   `"dmr-" + APP_PASSWORD`~~ — **FIXED** on this branch: when `APP_SECRET` is unset,
+   `auth.service.signing_secret()` generates a random secret once and persists it
+   under `DATA_DIR` (mode 600). Never derived from the setup code. Existing sessions
+   signed with the old derivation invalidate once on upgrade (users sign in again).
 2. **`run_update` SQL column whitelist.** `db.py:192` — whitelist columns and *raise*
    (the `assert` in `run_bump_counter` at `db.py:219` disappears under `python -O`).
-3. **`schema_map.signature()` hashes data rows** (`schema_map.py:113–135`), so the
-   same layout with different data misses the approved-mapping cache and re-audits the
-   human — defeating the module's core promise. Key the signature on layout only.
+3. **`schema_map.signature()` hashes data rows** — **FIXED** on this branch: the
+   cache is now keyed by `header_signature` (sheet name, row index, header-row cell
+   texts only); `attempt_remap` probes every candidate header row's signature in one
+   query. Same layout with different data — or a different DMR metadata date line —
+   now auto-applies the approved mapping. Old cache entries (data-keyed signatures)
+   no longer match, so each known format is re-approved once.
 4. **Perimeter ingest during preview** (`main.py:398`, `perimeter.py:252`) mutates
    global state before user confirmation and returns a hollow parse on cache hit.
    Separate parse/cache from promote-to-current; tie promotion to run confirmation.

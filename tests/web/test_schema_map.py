@@ -28,16 +28,18 @@ CN_PLOG_HEADERS = ["序号", "机构", "项目", "形式", "级别", "博主昵�
                    "点赞", "收藏", "评论", "互动总量", "价格"]
 
 
-def build_cn_plog_bytes() -> bytes:
+def build_cn_plog_bytes(metadata="内部使用 KOL 投放追踪表",
+                        wave="WAVE #1", n_rows=3) -> bytes:
     """A PLOG-equivalent tracker with Chinese headers — the fingerprint
-    (NAME + POST LINK) cannot bind."""
+    (NAME + POST LINK) cannot bind. Parameters vary the metadata line and
+    the data rows WITHOUT touching the header layout (cache-key tests)."""
     wb = Workbook()
     ws = wb.active
     ws.title = "达人列表"
-    ws.append(["内部使用 KOL 投放追踪表"])          # metadata row above header
+    ws.append([metadata])                           # metadata row above header
     ws.append(CN_PLOG_HEADERS)
-    for no in (1, 2, 3):
-        ws.append([no, "MCN", "WAVE #1", "报备图文", "KOC", f"博主{no}",
+    for no in range(1, n_rows + 1):
+        ws.append([no, "MCN", wave, "报备图文", "KOC", f"博主{no}",
                    88, datetime(2026, 6, no), "", f"http://xhslink.com/cn{no}",
                    10000 * no, 500, 40, 10, 550, 2000])
     link_cell = ws.cell(row=3, column=10)           # hyperlink must survive
@@ -275,3 +277,51 @@ def test_expired_mapping_token_404s(client):
     remap_service.PENDING_MAPS[token]["created"] -= remap_service.PENDING_MAPS.ttl_seconds + 1
     assert client.get(f"/remap/{token}").status_code == 404
     assert client.post(f"/remap/{token}/apply", data={}).status_code == 404
+
+
+# ------------------------------------------------- layout-keyed cache
+
+def test_header_signature_ignores_data_and_metadata():
+    """Regression: the cache key must depend only on the header row's layout.
+    The old whole-sample hash covered data rows and the metadata line (which
+    carries per-export dates in real DMR files), so the approved cache could
+    effectively never hit twice."""
+    v1 = build_cn_plog_bytes()
+    v2 = build_cn_plog_bytes(metadata="From 2026-07-01 To 2026-07-20 export",
+                             wave="WAVE #2", n_rows=7)
+    assert (schema_map.header_signature(v1, "达人列表", 2)
+            == schema_map.header_signature(v2, "达人列表", 2))
+    # a changed header cell IS a different layout
+    wb = load_workbook(io.BytesIO(v1))
+    wb["达人列表"].cell(row=2, column=6).value = "昵称"
+    buf = io.BytesIO()
+    wb.save(buf)
+    assert (schema_map.header_signature(buf.getvalue(), "达人列表", 2)
+            != schema_map.header_signature(v1, "达人列表", 2))
+    # candidate enumeration includes the header row's signature
+    sigs = {(sheet, row): sig
+            for sheet, row, sig in schema_map.candidate_signatures(v2)}
+    assert sigs[("达人列表", 2)] == schema_map.header_signature(v1, "达人列表", 2)
+
+
+def test_cache_hits_for_same_layout_with_different_data(client, monkeypatch):
+    """Approve a format once; a later upload of the SAME layout with
+    different data and a different metadata line must auto-apply from the
+    cache — no audit page and no LLM call."""
+    r = _upload_run(client, build_cn_plog_bytes())
+    token = r.headers["location"].rsplit("/", 1)[1]
+    form = {f"plog:{k}": str(v)
+            for k, v in CN_PLOG_PROPOSAL["columns"].items()}
+    client.post(f"/remap/{token}/apply", data=form)
+
+    def _no_llm(system, user):
+        raise AssertionError("cache miss: LLM was called for a known layout")
+    monkeypatch.setattr(schema_map, "_call_llm", _no_llm)
+
+    r2 = _upload_run(client, build_cn_plog_bytes(
+        metadata="From 2026-07-01 To 2026-07-20 export",
+        wave="WAVE #2", n_rows=9))
+    assert r2.status_code == 200
+    assert "Parse preview" in r2.text
+    assert "Applied automatically" in r2.text
+    assert "WAVE #2" in r2.text                    # the new data parsed

@@ -226,6 +226,19 @@ def perimeter_cache_put(file_hash: str, **fields: Any) -> None:
         conn.commit()
 
 
+def settings_get_many(keys: list[str]) -> dict[str, str]:
+    """Values for the given settings keys (absent keys omitted) — one query,
+    for callers probing many candidate keys at once."""
+    if not keys:
+        return {}
+    with connect() as conn:
+        placeholders = ",".join("?" for _ in keys)
+        rows = conn.execute(
+            f"SELECT key, value FROM settings WHERE key IN ({placeholders})",
+            keys).fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
 def setting_get(key: str) -> Optional[str]:
     with connect() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = ?",
