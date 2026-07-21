@@ -8,15 +8,28 @@ are cached by header signature and auto-applied (visibly) afterwards.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from .. import config
 from ..core.token_store import TokenStore
+from ..core.uploads import remove_tree
 from . import mapper
 from .registry import FIELDS, KIND_LABELS
 
+def cleanup_pending_entry(entry: dict) -> None:
+    """Remove on-disk staging owned by an abandoned reconciliation audit."""
+    run_dir = entry.get("run_dir")
+    if entry.get("flow") == "run" and run_dir:
+        remove_tree(Path(run_dir))
+
+
 # Pending audits awaiting human approval (token handed to the browser).
-PENDING_MAPS = TokenStore(ttl_seconds=30 * 60, max_entries=10)
+PENDING_MAPS = TokenStore(
+    ttl_seconds=30 * 60,
+    max_entries=5,
+    on_discard=cleanup_pending_entry,
+)
 
 
 @dataclass

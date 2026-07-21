@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS runs (
     tikhub_calls  INTEGER DEFAULT 0,
     llm_calls     INTEGER DEFAULT 0,
     error         TEXT,
-    perimeter_hash TEXT
+    perimeter_hash TEXT,
+    perimeter_uploaded INTEGER DEFAULT 0,
+    perimeter_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS overrides (
@@ -97,6 +99,12 @@ def apply(conn: sqlite3.Connection) -> None:
         "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
         "ALTER TABLE overrides ADD COLUMN updated_by TEXT",
         "ALTER TABLE runs ADD COLUMN perimeter_hash TEXT",
+        # Existing rows cannot distinguish an explicit perimeter upload from
+        # an inherited default. Preserve that as NULL/unknown so first-start
+        # handling can retain the previous release's promotion behavior;
+        # newly created runs always store an explicit 0 or 1.
+        "ALTER TABLE runs ADD COLUMN perimeter_uploaded INTEGER",
+        "ALTER TABLE runs ADD COLUMN perimeter_name TEXT",
         "ALTER TABLE perimeter_cache ADD COLUMN warnings_json TEXT",
     ):
         try:

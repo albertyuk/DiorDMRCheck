@@ -13,6 +13,14 @@ os.environ.setdefault("DATA_DIR", str(ROOT / ".test_data"))
 from tests import fixtures  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def safe_test_runtime(monkeypatch):
+    """Tests opting into passwordless mode do so explicitly and use HTTP."""
+    from app import config
+    monkeypatch.setattr(config, "ALLOW_OPEN_ACCESS", True)
+    monkeypatch.setattr(config, "SESSION_COOKIE_SECURE", False)
+
+
 @pytest.fixture(scope="session")
 def plog_path(tmp_path_factory) -> str:
     p = tmp_path_factory.mktemp("xlsx") / "PLOG_DMR_CHECK.xlsx"

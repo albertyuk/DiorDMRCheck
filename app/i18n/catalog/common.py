@@ -113,6 +113,8 @@ ZH: dict[str, str] = {
     "Only header names were rewritten; data cells are untouched.":
         "只改写了表头名称；数据单元格未做任何改动。",
     "Header mapping also failed: {e}": "表头映射也失败了：{e}",
+    "Too many mapping audits are active. Try again shortly.":
+        "当前正在处理的表头映射审核过多，请稍后重试。",
     "This mapping session has expired — upload the file again.":
         "该映射会话已过期——请重新上传文件。",
     "Required field {field} has no column selected.":
@@ -362,7 +364,6 @@ ZH: dict[str, str] = {
     "running": "进行中",
     "secret. The account created here becomes an administrator":
         "密钥。在这里创建的账号将成为管理员",
-    "sheet": "工作表",
     "sheet). The analyzer classifies every post into TIER × 报备/软植 groups, validates the data (duplicate links, engagement identities, missing values, small samples, viral-post concentration), and produces a chart-based one-slide presentation — as an editable":
         "工作表）。分析器会把每篇帖子归入 TIER × 报备/软植 分组，先做数据校验（重复链接、互动量勾稽、缺失值、样本量过小、爆款帖集中度），再生成一页式图表汇报——提供可编辑的",
     "spend": "总花费",

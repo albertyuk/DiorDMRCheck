@@ -1,7 +1,6 @@
 """Account system: setup bootstrap, login, team management, session security."""
 from __future__ import annotations
 
-import importlib
 
 import pytest
 
@@ -45,6 +44,13 @@ def test_setup_creates_admin_and_signs_in(client):
     assert "dmr_session" in r.cookies
     r = client.get("/")
     assert r.status_code == 200  # session accepted
+
+
+def test_session_cookie_is_secure_in_deployment(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "SESSION_COOKIE_SECURE", True)
+    r = _setup_admin(client)
+    assert "Secure" in r.headers["set-cookie"]
 
 
 def test_login_flow(client):
@@ -108,6 +114,19 @@ def test_password_change_and_reset(client):
                                        "password": "password123"}).status_code == 303
 
 
+def test_password_change_revokes_existing_session(client):
+    _setup_admin(client)
+    stolen = client.cookies.get("dmr_session")
+    assert stolen
+
+    client.post("/team/password", data={"username": "boss",
+                                        "password": "newpassword9"})
+    client.cookies.clear()
+    client.cookies.set("dmr_session", stolen)
+    r = client.get("/")
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+
+
 def test_setup_recovers_admin_password(client):
     _setup_admin(client)
     client.cookies.clear()
@@ -124,6 +143,24 @@ def test_open_mode_without_app_password(client, monkeypatch):
     monkeypatch.setattr(config, "APP_PASSWORD", "")
     r = client.get("/")
     assert r.status_code == 200
+
+
+def test_missing_password_fails_closed(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "APP_PASSWORD", "")
+    monkeypatch.setattr(config, "ALLOW_OPEN_ACCESS", False)
+    r = client.get("/")
+    assert r.status_code == 503
+
+
+def test_runtime_requires_explicit_open_mode(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "APP_PASSWORD", "")
+    monkeypatch.setattr(config, "ALLOW_OPEN_ACCESS", False)
+    with pytest.raises(RuntimeError, match="APP_PASSWORD is required"):
+        config.validate_runtime()
+    monkeypatch.setattr(config, "ALLOW_OPEN_ACCESS", True)
+    config.validate_runtime()
 
 
 # ------------------------------------------------- signing-secret derivation
@@ -159,13 +196,13 @@ def test_generated_secret_is_persisted_and_survives_restart(client, monkeypatch)
 
     monkeypatch.setattr(config, "APP_SECRET", "")
     service._secret_cache.clear()
+    _setup_admin(client)
     token = service.make_session("boss")
     secret_file = config.DATA_DIR / "session_secret"
     assert secret_file.exists() and len(secret_file.read_text().strip()) >= 64
     service._secret_cache.clear()          # simulate process restart
     assert service.read_session(token) == "boss"
     # a genuine login round-trip works end to end
-    _setup_admin(client)
     client.cookies.clear()
     r = client.post("/login", data={"username": "boss",
                                     "password": "password123"})

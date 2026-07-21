@@ -167,13 +167,19 @@ def store_parsed(parsed: PerimeterParse) -> None:
     )
 
 
-def load_cached(file_hash: str) -> Optional["PerimeterIndex"]:
+def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"]:
+    """Load a cached index, retaining a run-specific upload name when given.
+
+    The cache is content-addressed, so identical bytes uploaded under a new
+    filename still share parsed rows without losing the name shown for that
+    particular run.
+    """
     row = db.perimeter_cache_get(file_hash)
     if not row:
         return None
     rows = json.loads(row["parsed_json"])
     return PerimeterIndex(rows, extraction_date=row["extraction_date"] or "",
-                          filename=row["filename"] or "",
+                          filename=filename or row["filename"] or "",
                           file_hash=file_hash)
 
 

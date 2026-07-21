@@ -77,8 +77,9 @@ def run_create(run_id: str, **fields: Any) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO runs (id, created_at, status, plog_path, dmr_path, "
-            "plog_name, dmr_name, options_json, preview_json, perimeter_hash) "
-            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
+            "plog_name, dmr_name, options_json, preview_json, perimeter_hash, "
+            "perimeter_uploaded, perimeter_name) "
+            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id, time.time(),
                 fields.get("plog_path"), fields.get("dmr_path"),
@@ -88,6 +89,8 @@ def run_create(run_id: str, **fields: Any) -> None:
                 json.dumps(fields["options"]) if fields.get("options") is not None else None,
                 json.dumps(fields.get("preview") or {}, ensure_ascii=False, default=str),
                 fields.get("perimeter_hash"),
+                int(bool(fields.get("perimeter_uploaded"))),
+                fields.get("perimeter_name"),
             ),
         )
         conn.commit()
@@ -128,6 +131,14 @@ def run_list(limit: int = 30) -> list[dict]:
             "FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def run_delete(run_id: str) -> None:
+    """Delete an expired run and its dependent human overrides."""
+    with connect() as conn:
+        conn.execute("DELETE FROM overrides WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        conn.commit()
 
 
 def run_progress(run_id: str, phase: str, done: int, total: int, message: str) -> None:

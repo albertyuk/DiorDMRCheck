@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 from app import config, i18n
 from app import main as main_mod
 
-TEMPLATES = Path(__file__).resolve().parents[1] / "app" / "templates"
+ROOT = Path(__file__).resolve().parents[2]
+TEMPLATES = ROOT / "app" / "templates"
 
 
 @pytest.fixture
@@ -85,15 +86,17 @@ _CALL = re.compile(r"""\bt\(\s*(?:"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)')""")
 
 def _template_keys() -> dict[str, list[str]]:
     used: dict[str, list[str]] = {}
-    for f in sorted(TEMPLATES.glob("*.html")):
+    for f in sorted(TEMPLATES.rglob("*.html")):
         for m in _CALL.finditer(f.read_text()):
             key = (m.group(1) or m.group(2)).replace('\\"', '"').replace("\\'", "'")
-            used.setdefault(key, []).append(f.name)
+            used.setdefault(key, []).append(str(f.relative_to(TEMPLATES)))
     return used
 
 
 def test_every_template_key_has_a_chinese_translation():
-    missing = {k: v for k, v in _template_keys().items() if k not in i18n.ZH}
+    used = _template_keys()
+    assert used, f"no t() keys found under template root {TEMPLATES}"
+    missing = {k: v for k, v in used.items() if k not in i18n.ZH}
     assert not missing, f"t() keys missing from i18n.ZH: {missing}"
 
 
@@ -117,6 +120,7 @@ def test_placeholder_parity_between_english_and_chinese():
 def test_td_translates_known_runtime_messages():
     td = i18n.make_td("zh")
     assert td("Run complete.") == "核对完成。"
+    assert td("Waiting for a free run slot…") == "正在排队，等待可用的核对名额…"
     assert td("Resolving links 37/101…") == "正在解析链接 37/101…"
     assert "核对失败：boom" == td("Run failed: boom")
     got = td("PLOG row 17: POST DATE 'soon' could not be parsed — "

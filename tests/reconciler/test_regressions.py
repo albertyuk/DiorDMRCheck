@@ -1,17 +1,16 @@
 """Regression tests for adversarially-verified review findings."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 
 import httpx
-import pytest
 from openpyxl import Workbook
 
 from app.reconciler.name_match import name_contains, name_ladder
 from app.core.xlsx import to_date as _to_date, to_int as _to_int
 from app.reconciler.parsers import parse_dmr, parse_plog
 from app.reconciler.links import (_extract_note_fields, _normalize_url,
-                          _note_id_from_url, _retry_after_seconds)
+                                  _note_id_from_url, _retry_after_seconds)
 from tests import fixtures
 
 
@@ -164,6 +163,12 @@ def test_note_id_only_from_note_urls():
     assert _note_id_from_url(f"https://www.xiaohongshu.com/user/profile/{uid}") is None
     assert _note_id_from_url(f"https://www.xiaohongshu.com/discovery/item/{nid}") == nid
     assert _note_id_from_url(f"https://www.xiaohongshu.com/explore/{nid}?xsec=1") == nid
+    assert _note_id_from_url(
+        f"https://evil.example/?next=xiaohongshu.com/explore/{nid}"
+    ) is None
+    assert _note_id_from_url(
+        f"https://xiaohongshu.com.evil.example/explore/{nid}"
+    ) is None
 
 
 def test_normalize_url_schemeless():
@@ -220,6 +225,47 @@ def test_direct_resolve_survives_malformed_location(monkeypatch):
 
     monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
     assert resolver_mod.direct_resolve("http://xhslink.com/o/x") is None
+
+
+def test_direct_resolve_rejects_redirect_to_private_host(monkeypatch):
+    """Every redirect hop is revalidated before any network request."""
+    import app.reconciler.links as resolver_mod
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
+
+    real_client = httpx.Client
+
+    def patched_client(**kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
+    assert resolver_mod.direct_resolve("http://xhslink.com/o/x") is None
+    assert seen == ["http://xhslink.com/o/x"]
+
+
+def test_direct_fetch_rejects_redirect_to_private_host(monkeypatch):
+    import app.reconciler.links as resolver_mod
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://[::1]/secret"})
+
+    real_client = httpx.Client
+
+    def patched_client(**kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
+    assert resolver_mod.direct_fetch_note_detail("https://xhslink.com/o/x") == {}
+    assert seen == ["https://xhslink.com/o/x"]
 
 
 # ------------------------------------------------------ adjudicator findings

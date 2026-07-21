@@ -1,8 +1,8 @@
 """Auth + team routes and the session-gate middleware.
 
 APP_PASSWORD is the *setup code*: /setup (which requires it) creates the
-first admin account; admins add coworkers on /team. Without APP_PASSWORD
-the app runs open (local development).
+first admin account; admins add coworkers on /team. Passwordless local mode
+requires the explicit ALLOW_OPEN_ACCESS opt-out.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import hmac
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from .. import config
 from ..core import db
@@ -23,7 +23,8 @@ router = APIRouter()
 def _session_response(username: str, url: str = "/") -> RedirectResponse:
     resp = RedirectResponse(url, status_code=303)
     resp.set_cookie("dmr_session", service.make_session(username),
-                    httponly=True, max_age=service.SESSION_TTL, samesite="lax")
+                    httponly=True, max_age=service.SESSION_TTL, samesite="lax",
+                    secure=config.SESSION_COOKIE_SECURE)
     return resp
 
 
@@ -33,7 +34,12 @@ async def auth_middleware(request: Request, call_next):
             or path.startswith("/static") or path.startswith("/lang/")):
         return await call_next(request)
     if not config.APP_PASSWORD:
-        return await call_next(request)
+        if config.ALLOW_OPEN_ACCESS:
+            return await call_next(request)
+        # Lifespan validation normally prevents this state. Keep middleware
+        # fail-closed for ASGI harnesses that bypass lifespan startup.
+        return PlainTextResponse("Authentication is not configured.",
+                                 status_code=503)
     if current_user(request):
         return await call_next(request)
     if db.user_count() == 0:

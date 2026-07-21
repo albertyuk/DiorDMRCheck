@@ -15,7 +15,7 @@ from openpyxl import Workbook
 
 from app.efficiency.deck import assert_chart_cache, build_deck
 from app.efficiency.analysis import (ReportConfig, VerificationError, analyze,
-                           build_insights, compute_metrics,
+                           compute_metrics,
                            compute_metrics_pandas, verify_dual_path)
 from tests.fixtures import build_eff_bytes
 
@@ -218,7 +218,7 @@ def test_deck_zh_language():
 
 # ----------------------------------------------------- golden (real file)
 
-REAL = Path(__file__).resolve().parent.parent / "data" / "real" / "PLOG_DMR_CHECK.xlsx"
+REAL = Path(__file__).resolve().parents[2] / "data" / "real" / "PLOG_DMR_CHECK.xlsx"
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="real client workbook not present")

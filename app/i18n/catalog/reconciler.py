@@ -13,6 +13,7 @@ ZH: dict[str, str] = {
     "Drafting run summary…": "正在撰写核对摘要…",
     "Run complete.": "核对完成。",
     "Run interrupted by a restart — use Retry.": "核对因服务重启而中断——请点「重试」。",
+    "Waiting for a free run slot…": "正在排队，等待可用的核对名额…",
     "Working…": "处理中…",
     "starting": "正在启动",
     "parse": "解析文件",

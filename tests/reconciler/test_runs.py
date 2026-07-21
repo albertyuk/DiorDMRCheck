@@ -17,9 +17,11 @@ def pool(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "RUN_MAX_CONCURRENT", 1)
     runs._active.clear()
     runs._pending.clear()
+    runs._restart_pending.clear()
     yield
     runs._active.clear()
     runs._pending.clear()
+    runs._restart_pending.clear()
 
 
 def _wait_for(predicate, timeout=5.0):
@@ -74,3 +76,101 @@ def test_start_run_is_idempotent_per_run(pool, monkeypatch):
     assert started == ["dup"] and not runs._pending
     gate.set()
     assert _wait_for(lambda: not runs._active)
+
+
+def test_retry_requested_during_error_teardown_is_handed_off(pool, monkeypatch):
+    """A retry can arrive after _run persisted ``error`` but before its slot
+    drops the run id from the active registry. It must be queued for handoff,
+    not ignored and left permanently ``queued`` in SQLite."""
+    from app.core import db
+
+    db.run_create("retry", plog_path="p", dmr_path="d")
+    db.run_update("retry", status="queued")
+    first_errored = threading.Event()
+    release_first = threading.Event()
+    attempts: list[str] = []
+
+    def fake_run(run_id):
+        attempts.append(run_id)
+        if len(attempts) == 1:
+            db.run_update(run_id, status="error", phase="error")
+            first_errored.set()
+            release_first.wait(5)
+        else:
+            db.run_update(run_id, status="done", phase="done")
+
+    monkeypatch.setattr(runs, "_run", fake_run)
+    runs.start_run("retry")
+    assert first_errored.wait(2)
+
+    # Mirrors POST /runs/{id}/start: the retry flips status back to queued
+    # while the failing worker still owns the in-process slot.
+    db.run_update("retry", status="queued", error=None)
+    runs.start_run("retry")
+    assert runs._restart_pending == {"retry"}
+
+    release_first.set()
+    assert _wait_for(lambda: attempts == ["retry", "retry"])
+    assert _wait_for(lambda: not runs._active and not runs._pending)
+
+
+def test_retry_waits_for_its_own_generation_with_multiple_slots(pool,
+                                                                monkeypatch):
+    """A different finishing slot must not start an ID whose old worker is
+    still active; otherwise the old teardown can erase the retry's registry
+    entry and let the physical worker count exceed the cap."""
+    from app.core import db
+
+    monkeypatch.setattr(config, "RUN_MAX_CONCURRENT", 2)
+    for run_id in ("retry", "other"):
+        db.run_create(run_id, plog_path="p", dmr_path="d")
+        db.run_update(run_id, status="queued")
+
+    first_errored = threading.Event()
+    release_first = threading.Event()
+    release_other = threading.Event()
+    retry_started = threading.Event()
+    release_retry = threading.Event()
+    attempts = 0
+
+    def fake_run(run_id):
+        nonlocal attempts
+        if run_id == "other":
+            release_other.wait(5)
+            return
+        attempts += 1
+        if attempts == 1:
+            db.run_update(run_id, status="error", phase="error")
+            first_errored.set()
+            release_first.wait(5)
+        else:
+            retry_started.set()
+            release_retry.wait(5)
+
+    monkeypatch.setattr(runs, "_run", fake_run)
+    runs.start_run("retry")
+    runs.start_run("other")
+    assert first_errored.wait(2)
+
+    db.run_update("retry", status="queued", error=None)
+    runs.start_run("retry")
+    assert runs._restart_pending == {"retry"}
+
+    release_other.set()
+    assert _wait_for(lambda: "other" not in runs._active)
+    assert not retry_started.is_set()
+    assert "retry" in runs._active
+
+    release_first.set()
+    assert retry_started.wait(2)
+    assert "retry" in runs._active
+    release_retry.set()
+    assert _wait_for(lambda: not runs._active and not runs._pending
+                     and not runs._restart_pending)
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_run_concurrency_must_be_positive(monkeypatch, value):
+    monkeypatch.setenv("RUN_MAX_CONCURRENT", value)
+    with pytest.raises(ValueError, match=r"RUN_MAX_CONCURRENT must be >= 1"):
+        config._positive_int_env("RUN_MAX_CONCURRENT", "2")

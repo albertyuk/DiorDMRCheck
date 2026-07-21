@@ -25,7 +25,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Emu, Inches, Pt
+from pptx.util import Inches, Pt
 
 from .analysis import COOPS, TIERS, VerificationError
 
@@ -329,8 +329,7 @@ def build_deck(analysis: dict) -> bytes:
 
     # ---- left column (~34%)
     lx, lw = Inches(0.35), Inches(4.35)
-    donut_body = _panel(slide, lx, Inches(0.62), lw, Inches(3.4),
-                        texts["donut_title"])
+    _panel(slide, lx, Inches(0.62), lw, Inches(3.4), texts["donut_title"])
     slices = [(g, groups[g]["share"]) for g in DONUT_ORDER if g in groups]
     if totals["unclassified"]:
         slices.append(("UNCLASSIFIED", totals["unclassified_share"]))
@@ -339,8 +338,7 @@ def build_deck(analysis: dict) -> bytes:
         slices, cfg["share_decimals"])
     _postprocess_donut_xml(donut_gf.chart.part, slices)
 
-    price_body = _panel(slide, lx, Inches(4.14), lw, Inches(3.0),
-                        texts["price_title"])
+    _panel(slide, lx, Inches(4.14), lw, Inches(3.0), texts["price_title"])
     _legend_swatches(slide, lx + Inches(0.12), Inches(4.56))
     _bar_chart(slide, lx + Inches(0.05), Inches(4.74), lw - Inches(0.1),
                Inches(1.62), groups, "avg_price", '0.0,"k"')

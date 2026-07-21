@@ -53,8 +53,8 @@ class SchemaMapError(Exception):
 
 # ------------------------------------------------------------------- sample
 
-def _cell_str(v: Any) -> str:
-    """cell_str truncated for the structural sample sent to the model."""
+def _sample_cell_str(v: Any) -> str:
+    """``cell_str`` truncated only for model samples and audit display."""
     return cell_str(v)[:SAMPLE_CELL_CHARS]
 
 
@@ -67,7 +67,7 @@ def build_sample(data: bytes) -> dict:
             rows = []
             for row in ws.iter_rows(min_row=1, max_row=SAMPLE_ROWS,
                                     max_col=SAMPLE_COLS):
-                rows.append([_cell_str(c.value) for c in row])
+                rows.append([_sample_cell_str(c.value) for c in row])
             while rows and not any(rows[-1]):
                 rows.pop()
             sheets.append({"name": ws.title, "rows": rows})
@@ -101,7 +101,7 @@ def header_signature(data: bytes, sheet: str, header_row: int) -> str:
         cells: list[str] = []
         for row in wb[sheet].iter_rows(min_row=header_row, max_row=header_row,
                                        max_col=SAMPLE_COLS):
-            cells = _trim([_cell_str(c.value) for c in row])
+            cells = _trim([cell_str(c.value) for c in row])
     finally:
         wb.close()
     return _layout_sig(sheet, header_row, cells)
@@ -118,7 +118,7 @@ def candidate_signatures(data: bytes) -> list[tuple[str, int, str]]:
             for i, row in enumerate(
                     ws.iter_rows(min_row=1, max_row=SAMPLE_ROWS,
                                  max_col=SAMPLE_COLS), start=1):
-                cells = _trim([_cell_str(c.value) for c in row])
+                cells = _trim([cell_str(c.value) for c in row])
                 if cells:
                     out.append((ws.title, i, _layout_sig(ws.title, i, cells)))
     finally:
@@ -224,9 +224,11 @@ def column_choices(data: bytes, sheet: str, header_row: int,
         ws = wb[sheet]
         out = []
         for col in range(1, SAMPLE_COLS + 1):
-            header = _cell_str(ws.cell(row=header_row, column=col).value)
+            header = _sample_cell_str(
+                ws.cell(row=header_row, column=col).value)
             samples = [
-                _cell_str(ws.cell(row=header_row + 1 + i, column=col).value)
+                _sample_cell_str(
+                    ws.cell(row=header_row + 1 + i, column=col).value)
                 for i in range(n_samples)]
             if header or any(samples):
                 out.append({"col": col, "letter": get_column_letter(col),
@@ -256,7 +258,7 @@ def apply_mapping(data: bytes, kind: str, sheet: str, header_row: int,
         cell = ws.cell(row=header_row, column=col)
         if cell.value is None:
             continue
-        if header_key(_cell_str(cell.value)) in mapped_keys:
+        if header_key(cell_str(cell.value)) in mapped_keys:
             cell.value = f"(original) {cell.value}"
     for key, col in columns.items():
         ws.cell(row=header_row, column=col).value = canonical[key]

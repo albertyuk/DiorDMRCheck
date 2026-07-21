@@ -6,6 +6,7 @@ continuation for its flow in FLOW_HANDLERS at import time (reconciler:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Request
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..web import current_user, templates, tr as _tr
 from .registry import FIELDS
-from .service import PENDING_MAPS, audit_context
+from .service import PENDING_MAPS, audit_context, cleanup_pending_entry
 
 router = APIRouter()
 
@@ -40,8 +41,16 @@ async def remap_audit(request: Request, token: str):
 
 
 @router.post("/remap/{token}/reject")
-async def remap_reject(token: str):
-    entry = PENDING_MAPS.pop(token)
+async def remap_reject(request: Request, token: str):
+    claim_status, entry = PENDING_MAPS.claim(token)
+    if claim_status == "busy":
+        return templates.TemplateResponse(
+            request, "shared/error.html",
+            {"message": _tr(request)("Working…")}, status_code=409)
+    if claim_status == "claimed":
+        PENDING_MAPS.pop(token)
+        assert entry is not None
+        cleanup_pending_entry(entry)
     dest = FLOW_HOMES.get(entry["flow"] if entry else "run", "/")
     return RedirectResponse(dest, status_code=303)
 
@@ -88,5 +97,36 @@ async def remap_apply(request: Request, token: str):
         }
 
     username = (user or {}).get("username", "") or "open-mode"
-    handler = FLOW_HANDLERS[entry["flow"]]
-    return await handler(request, token, entry, approved, username)
+    claim_status, claimed_entry = PENDING_MAPS.claim(token)
+    if claim_status == "missing":
+        return templates.TemplateResponse(
+            request, "shared/error.html",
+            {"message": tr(
+                "This mapping session has expired — upload the file again.")},
+            status_code=404)
+    if claim_status == "busy":
+        return templates.TemplateResponse(
+            request, "shared/error.html", {"message": tr("Working…")},
+            status_code=409)
+
+    # Claiming happens only after the editable form has passed validation,
+    # so a 422 leaves the token available for correction. A continuation
+    # failure releases it for retry; any normal response consumes it exactly
+    # once (legacy continuations may also pop it, which remains harmless).
+    assert claimed_entry is not None
+    try:
+        handler = FLOW_HANDLERS[claimed_entry["flow"]]
+        response = await handler(
+            request, token, claimed_entry, approved, username)
+    except BaseException:
+        run_dir = claimed_entry.get("run_dir")
+        if (claimed_entry.get("flow") == "run" and run_dir
+                and not Path(run_dir).exists()):
+            # The real continuation cleans staging before propagating fatal
+            # DB/cancellation failures. Such a token can no longer be retried.
+            PENDING_MAPS.pop(token)
+        else:
+            PENDING_MAPS.release(token)
+        raise
+    PENDING_MAPS.pop(token)
+    return response

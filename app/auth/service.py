@@ -85,8 +85,21 @@ def _sign(payload: str) -> str:
                     hashlib.sha256).hexdigest()
 
 
+def _credential_fingerprint(username: str) -> Optional[str]:
+    """Version a session against the user's current password credential."""
+    # Local import avoids coupling database initialization to module import.
+    from ..core import db
+    user = db.user_get(username)
+    if not user:
+        return None
+    return hashlib.sha256(user["password_hash"].encode()).hexdigest()[:16]
+
+
 def make_session(username: str) -> str:
-    payload = f"{username}|{int(time.time()) + SESSION_TTL}"
+    credential = _credential_fingerprint(username)
+    if not credential:
+        raise ValueError("cannot create a session for an unknown user")
+    payload = f"{username}|{int(time.time()) + SESSION_TTL}|{credential}"
     return f"{payload}|{_sign(payload)}"
 
 
@@ -96,14 +109,18 @@ def read_session(token: str) -> Optional[str]:
     if not token:
         return None
     try:
-        username, exp, sig = token.rsplit("|", 2)
+        username, exp, credential, sig = token.rsplit("|", 3)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _sign(f"{username}|{exp}")):
+    payload = f"{username}|{exp}|{credential}"
+    if not hmac.compare_digest(sig, _sign(payload)):
         return None
     try:
         if int(exp) < time.time():
             return None
     except ValueError:
+        return None
+    current = _credential_fingerprint(username)
+    if not current or not hmac.compare_digest(credential, current):
         return None
     return username

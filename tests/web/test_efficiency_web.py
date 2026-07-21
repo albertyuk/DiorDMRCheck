@@ -5,6 +5,9 @@ expired tokens 404.
 """
 from __future__ import annotations
 
+import io
+import zipfile
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -77,6 +80,30 @@ def test_bad_file_is_422_not_500(client):
                     files={"report": ("junk.xlsx", b"not a zip", "application/zip")},
                     data={})
     assert r.status_code == 422
+
+
+def test_malformed_ooxml_metadata_is_422_not_500(client):
+    workbook = io.BytesIO()
+    with zipfile.ZipFile(workbook, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types><Override")
+
+    response = client.post(
+        "/efficiency",
+        files={"report": ("broken.xlsx", workbook.getvalue(),
+                          "application/zip")},
+        data={},
+    )
+
+    assert response.status_code == 422
+
+
+def test_oversize_file_is_413(client, monkeypatch):
+    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 10)
+    r = client.post("/efficiency",
+                    files={"report": ("large.xlsx", b"x" * 11,
+                                      "application/zip")},
+                    data={})
+    assert r.status_code == 413
 
 
 def test_invalid_config_values_fall_back_to_defaults(client):

@@ -12,9 +12,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from starlette.concurrency import run_in_threadpool
 
-from ..core.token_store import TokenStore
+from .. import config
+from ..core.token_store import TokenStore, TokenStoreFull
+from ..core.uploads import (UploadLimitError, read_limited,
+                            run_upload_task, validate_xlsx_archive)
 from ..remap import mapper
 from ..remap.routes import FLOW_HANDLERS
 from ..remap.service import PENDING_MAPS, attempt_remap, remap_note
@@ -69,7 +71,7 @@ async def _efficiency_analyze(request: Request, data: bytes, filename: str,
         return analysis, pptx
 
     try:
-        analysis, pptx = await run_in_threadpool(_analyze_and_build)
+        analysis, pptx = await run_upload_task(request, _analyze_and_build)
     except ValueError as e:  # V1 — wrong sheet shape
         return templates.TemplateResponse(
             request, "shared/error.html", {"message": _td(request)(str(e))},
@@ -102,38 +104,86 @@ async def efficiency_run(request: Request, report: UploadFile,
         "tier_mode": tier_mode if tier_mode in EFF_TIER_MODES else "label",
         "language": language if language in EFF_LANGUAGES else "en",
     }
-    data = await report.read()
+    try:
+        data = await read_limited(report, config.MAX_UPLOAD_BYTES)
+        await run_upload_task(
+            request,
+            validate_xlsx_archive,
+            data,
+            max_uncompressed_bytes=config.MAX_XLSX_UNCOMPRESSED_BYTES,
+            max_entries=config.MAX_XLSX_ENTRIES,
+            max_cells=config.MAX_XLSX_CELLS,
+        )
+    except UploadLimitError as e:
+        return templates.TemplateResponse(
+            request, "shared/error.html", {"message": _tr(request)(str(e))},
+            status_code=413)
+    except Exception as e:
+        return templates.TemplateResponse(
+            request,
+            "shared/error.html",
+            {"message": _tr(request)(
+                "Could not read the uploaded file as .xlsx: {e}", e=e)},
+            status_code=422,
+        )
     filename = Path(report.filename or "report.xlsx").stem
 
     # cheap pre-check: does the header fingerprint bind at all? If not, offer
     # the LLM mapping + human audit instead of a bare V1 error. The workbook
     # stays in memory throughout — client data is never written to disk.
     try:
-        await run_in_threadpool(parse_eff_report, io.BytesIO(data))
+        await run_upload_task(request, parse_eff_report, io.BytesIO(data))
     except ValueError as e:
-        outcome = await run_in_threadpool(attempt_remap, "eff", data)
-        if outcome.status == "cached":
-            mapping = outcome.mapping
-            remapped = mapper.apply_mapping(
-                data, "eff", mapping["sheet"], int(mapping["header_row"]),
-                {k: int(v) for k, v in mapping["columns"].items()})
-            return await _efficiency_analyze(
-                request, remapped, filename, cfg_raw,
-                remap_note(mapping, "eff", auto=True))
-        if outcome.status == "audit":
-            token = PENDING_MAPS.put({
-                "flow": "eff", "data": data, "filename": filename,
-                "cfg": cfg_raw,
-                "audits": {"eff": {"proposal": outcome.proposal.model_dump(),
-                                   "choices": outcome.choices,
-                                   "sig": outcome.sig}},
-            })
-            return RedirectResponse(f"/remap/{token}", status_code=303)
-        msg = _td(request)(str(e))
-        if outcome.error:
-            msg += f" ({_tr(request)('Header mapping also failed: {e}', e=outcome.error)})"
-        return templates.TemplateResponse(
-            request, "shared/error.html", {"message": msg}, status_code=422)
+        try:
+            outcome = await run_upload_task(
+                request, attempt_remap, "eff", data
+            )
+            if outcome.status == "cached":
+                mapping = outcome.mapping
+                remapped = await run_upload_task(
+                    request,
+                    mapper.apply_mapping,
+                    data,
+                    "eff",
+                    mapping["sheet"],
+                    int(mapping["header_row"]),
+                    {key: int(value)
+                     for key, value in mapping["columns"].items()},
+                )
+                return await _efficiency_analyze(
+                    request, remapped, filename, cfg_raw,
+                    remap_note(mapping, "eff", auto=True))
+            if outcome.status == "audit":
+                try:
+                    token = PENDING_MAPS.put({
+                        "flow": "eff", "data": data, "filename": filename,
+                        "cfg": cfg_raw,
+                        "audits": {"eff": {
+                            "proposal": outcome.proposal.model_dump(),
+                            "choices": outcome.choices,
+                            "sig": outcome.sig,
+                        }},
+                    })
+                except TokenStoreFull:
+                    return templates.TemplateResponse(
+                        request, "shared/error.html",
+                        {"message": _tr(request)(
+                            "Too many mapping audits are active. Try again shortly.")},
+                        status_code=503,
+                    )
+                return RedirectResponse(f"/remap/{token}", status_code=303)
+            msg = _td(request)(str(e))
+            if outcome.error:
+                msg += f" ({_tr(request)('Header mapping also failed: {e}', e=outcome.error)})"
+            return templates.TemplateResponse(
+                request, "shared/error.html", {"message": msg},
+                status_code=422)
+        except Exception as mapping_error:
+            message = _td(request)(str(e))
+            message += f" ({_tr(request)('Header mapping also failed: {e}', e=mapping_error)})"
+            return templates.TemplateResponse(
+                request, "shared/error.html", {"message": message},
+                status_code=422)
     except Exception:
         pass  # not a header problem — let the real path produce the error
 
@@ -147,13 +197,19 @@ async def _apply_remap_eff(request: Request, token: str, entry: dict,
     remap = dict(entry.get("remap") or {})
     data = entry["data"]
     for kind, m in approved.items():   # single "eff" entry
-        data = mapper.apply_mapping(
-            data, kind, m["sheet"], m["header_row"], m["columns"])
+        data = await run_upload_task(
+            request,
+            mapper.apply_mapping,
+            data,
+            kind,
+            m["sheet"],
+            m["header_row"],
+            m["columns"],
+        )
         mapper.cache_put(kind, m["sig"], m["sheet"], m["header_row"],
                          m["columns"], username)
         remap[kind] = remap_note(
             {**m, "approved_by": username}, kind, auto=False)
-    PENDING_MAPS.pop(token)
     return await _efficiency_analyze(
         request, data, entry["filename"], entry["cfg"], remap.get("eff"))
 

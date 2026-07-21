@@ -30,7 +30,7 @@ import httpx
 
 from .. import config
 from ..core import db
-from .domain import HEX24, is_hex24
+from .domain import is_hex24
 
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
@@ -81,15 +81,45 @@ def _res_from_cache(row: dict) -> Resolution:
 
 # ---------------------------------------------------------------- fast path
 
+# Only these public Xiaohongshu-owned hosts may be fetched from workbook data.
+# This is deliberately an allowlist rather than a private-IP denylist: the
+# latter is vulnerable to redirects, unusual address spellings, and DNS
+# rebinding.  Ports are restricted as well so a workbook cannot turn the
+# reconciler into a proxy for unrelated services on an otherwise valid host.
+_LINK_HOSTS = ("xhslink.com", "xiaohongshu.com")
+_WEB_PORTS = {None, 80, 443}
+
+
+def _allowed_link_url(url: str) -> bool:
+    try:
+        parsed = httpx.URL(url)
+    except (TypeError, httpx.InvalidURL):
+        return False
+    host = (parsed.host or "").rstrip(".").lower()
+    return (
+        parsed.scheme in ("http", "https")
+        and parsed.port in _WEB_PORTS
+        and any(host == root or host.endswith("." + root)
+                for root in _LINK_HOSTS)
+    )
+
+
 # Only a note URL counts as resolved — profile pages etc. also carry 24-hex
 # ids, and mistaking one for a note id would poison the permanent cache.
-NOTE_URL_RE = re.compile(
-    r"xiaohongshu\.com/(?:discovery/item|explore|items)/([0-9a-fA-F]{24})"
+NOTE_PATH_RE = re.compile(
+    r"^/(?:discovery/item|explore|items)/([0-9a-fA-F]{24})(?:/|$)"
 )
 
 
 def _note_id_from_url(url: str) -> Optional[str]:
-    m = NOTE_URL_RE.search(url or "")
+    try:
+        parsed = httpx.URL(url or "")
+    except (TypeError, httpx.InvalidURL):
+        return None
+    host = (parsed.host or "").rstrip(".").lower()
+    if not (host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com")):
+        return None
+    m = NOTE_PATH_RE.search(parsed.path)
     return m.group(1).lower() if m else None
 
 
@@ -132,10 +162,21 @@ def direct_fetch_note_detail(url: str, expected_note_id: str = "") -> dict:
     XHS serves the full page to this IP — degrade to {} on any failure; the
     TikHub path remains authoritative."""
     try:
-        with httpx.Client(follow_redirects=True,
+        current = url
+        with httpx.Client(follow_redirects=False,
                           timeout=config.DIRECT_HTTP_TIMEOUT * 2,
                           headers={"User-Agent": MOBILE_UA}) as client:
-            resp = client.get(url)
+            for _hop in range(6):
+                if not _allowed_link_url(current):
+                    return {}
+                resp = client.get(current)
+                loc = resp.headers.get("location")
+                if resp.status_code in (301, 302, 303, 307, 308) and loc:
+                    current = str(httpx.URL(current).join(loc))
+                    continue
+                break
+            else:
+                return {}
         if resp.status_code != 200:
             return {}
         final_note = _note_id_from_url(str(resp.url))
@@ -190,6 +231,8 @@ def direct_resolve(url: str) -> Optional[str]:
                 headers={"User-Agent": MOBILE_UA},
             ) as client:
                 for _hop in range(6):
+                    if not _allowed_link_url(current):
+                        return None
                     note = _note_id_from_url(current)
                     if note:
                         return note
@@ -419,8 +462,11 @@ def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
     url = _normalize_url(url)
     if not url:
         return Resolution(status="failed", error="empty link")
-    if not url.lower().startswith(("http://", "https://")):
-        return Resolution(status="failed", error=f"not a URL: {url[:80]}")
+    if not _allowed_link_url(url):
+        return Resolution(
+            status="failed",
+            error=f"unsupported link host (expected Xiaohongshu): {url[:80]}",
+        )
 
     cached = db.cache_get(url)
     if cached:

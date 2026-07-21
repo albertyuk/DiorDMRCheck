@@ -138,7 +138,7 @@ def main() -> int:
     if perim is not None:
         inside = [v for v in verdicts if v.status == NO_POST_IN_PERIMETER]
         outside = [v for v in verdicts if v.status == NO_BLOGGER_NOT_IN_PERIMETER]
-        print(f"\n=== Perimeter split of 无博主 rows ===")
+        print("\n=== Perimeter split of 无博主 rows ===")
         print(f"  in perimeter (→ DMR gap): {len(inside)}")
         for v in inside:
             print(f"    {v.name} — REDBOOK {v.perimeter_redbook_id} "

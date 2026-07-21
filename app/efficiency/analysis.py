@@ -145,7 +145,11 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
     blank = 0
     for excel_row_cells in ws.iter_rows(min_row=header_row + 1):
         r = excel_row_cells[0].row
-        get = lambda k: ws.cell(row=r, column=c[k]).value if c.get(k) else None
+
+        def get(key):
+            column = c.get(key)
+            return ws.cell(row=r, column=column).value if column else None
+
         name = cell_str(get("name"))
         link_cell = ws.cell(row=r, column=c["postlink"]) if c.get("postlink") else None
         link = ""
@@ -550,13 +554,17 @@ def build_insights(metrics: dict, cfg: ReportConfig,
             pass
         else:
             winner = "PAID" if paid[cpm_key] <= soft[cpm_key] else "SOFT"
-            w, l = sorted((paid[cpm_key], soft[cpm_key]))
-            cpm_parts.append(f"{tier}: {winner} ¥{w:.0f} VS ¥{l:.0f}")
+            lower, higher = sorted((paid[cpm_key], soft[cpm_key]))
+            cpm_parts.append(
+                f"{tier}: {winner} ¥{lower:.0f} VS ¥{higher:.0f}"
+            )
         if not (paid and soft) or paid[cpe_key] is None or soft[cpe_key] is None:
             continue
         winner = "PAID" if paid[cpe_key] <= soft[cpe_key] else "SOFT"
-        w, l = sorted((paid[cpe_key], soft[cpe_key]))
-        cpe_parts.append(f"{tier}: {winner} ¥{w:.1f} VS ¥{l:.1f}")
+        lower, higher = sorted((paid[cpe_key], soft[cpe_key]))
+        cpe_parts.append(
+            f"{tier}: {winner} ¥{lower:.1f} VS ¥{higher:.1f}"
+        )
     if cpm_parts:
         eff_bullets.append("CPM WINNER — " + " · ".join(cpm_parts))
     if cpe_parts:

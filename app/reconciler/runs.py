@@ -17,6 +17,7 @@ from collections import deque
 
 from .. import config
 from ..core import db
+from ..core.uploads import run_upload_task_sync
 from . import perimeter as perimeter_mod
 from .adjudicator import adjudicate, summarize_run
 from .domain import ENGAGEMENT_CAVEAT
@@ -44,23 +45,48 @@ def recover_orphans() -> None:
 _pool_lock = threading.Lock()
 _active: set[str] = set()
 _pending: deque[str] = deque()
+# Retries requested during an errored worker's teardown stay attached to that
+# physical slot. Putting them in the shared FIFO lets a different finishing
+# slot start the retry while the old generation is still active.
+_restart_pending: set[str] = set()
+QUEUED_MESSAGE = "Waiting for a free run slot…"
+
+
+def _defer_locked(run_id: str) -> None:
+    """Persist and enqueue a deferred run while ``_pool_lock`` is held.
+
+    Persisting first prevents a finishing slot from starting the run before
+    the waiting message is written (which could otherwise overwrite the new
+    worker's initial "Parsing workbooks…" progress).
+    """
+    db.run_update(run_id, message=QUEUED_MESSAGE)
+    _pending.append(run_id)
 
 
 def start_run(run_id: str) -> None:
     """Start a run, or queue it when the pool is full. Idempotent per run:
-    a run already active or pending is never double-started."""
+    a run already active or pending is never double-started.
+
+    One exception is an explicit retry requested after the active worker has
+    persisted its terminal error but before ``_run_slot`` has removed the run
+    from ``_active``. The web route has already changed that row back to
+    ``queued`` while its phase remains ``error``; enqueue it once so the
+    finishing slot hands off to the retry instead of stranding the DB row.
+    """
     with _pool_lock:
-        if run_id in _active or run_id in _pending:
+        if run_id in _pending or run_id in _restart_pending:
+            return
+        if run_id in _active:
+            run = db.run_get(run_id)
+            if (run and run.get("status") == "queued"
+                    and run.get("phase") == "error"):
+                db.run_update(run_id, message=QUEUED_MESSAGE)
+                _restart_pending.add(run_id)
             return
         if len(_active) >= config.RUN_MAX_CONCURRENT:
-            _pending.append(run_id)
-            deferred = True
-        else:
-            _active.add(run_id)
-            deferred = False
-    if deferred:
-        db.run_update(run_id, message="Waiting for a free run slot…")
-        return
+            _defer_locked(run_id)
+            return
+        _active.add(run_id)
     threading.Thread(target=_run_slot, args=(run_id,), daemon=True).start()
 
 
@@ -71,7 +97,13 @@ def _run_slot(run_id: str) -> None:
         with _pool_lock:
             _active.discard(run_id)
             next_id = None
-            if _pending and len(_active) < config.RUN_MAX_CONCURRENT:
+            if run_id in _restart_pending:
+                # Only the old generation's own teardown may hand this ID to
+                # its retry generation; no other slot can start it early.
+                _restart_pending.discard(run_id)
+                next_id = run_id
+                _active.add(next_id)
+            elif _pending and len(_active) < config.RUN_MAX_CONCURRENT:
                 next_id = _pending.popleft()
                 _active.add(next_id)
         if next_id:
@@ -87,13 +119,14 @@ def _run(run_id: str) -> None:
     try:
         db.run_update(run_id, status="running", phase="parse",
                       message="Parsing workbooks…")
-        plog = parse_plog(run["plog_path"])
-        dmr = parse_dmr(run["dmr_path"])
+        plog = run_upload_task_sync(parse_plog, run["plog_path"])
+        dmr = run_upload_task_sync(parse_dmr, run["dmr_path"])
 
         perim = None
         perim_warning = None
         if run.get("perimeter_hash"):
-            perim = perimeter_mod.load_cached(run["perimeter_hash"])
+            perim = perimeter_mod.load_cached(
+                run["perimeter_hash"], filename=run.get("perimeter_name") or "")
             if perim is None:
                 perim_warning = (
                     "The perimeter file recorded for this run is no longer in "

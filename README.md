@@ -153,7 +153,7 @@ uses (无博主 / 无帖子 / 人工复核 / 报备 / 软植 / Perimeter / CPM) 
 verbatim in both languages. English remains the default and renders exactly
 as before.
 
-Mechanics (`app/i18n.py`): static strings go through `t()` keyed by the
+Mechanics (`app/i18n/`): static strings go through `t()` keyed by the
 English source text (English is the identity, so a missing translation
 degrades to English, never breaks); text that was *stored* in English at run
 time — progress lines, parser warnings, run statuses — is translated at
@@ -166,19 +166,33 @@ form's slide-language default follows the interface language.
 
 ```sh
 pip install -r requirements.txt
-uvicorn app.main:app --port 8080
+ALLOW_OPEN_ACCESS=1 SESSION_COOKIE_SECURE=0 uvicorn app.main:app --port 8080
 # open http://localhost:8080
 ```
 
-Environment (all optional — the app degrades gracefully):
+Authentication is required by default. The command above is the explicit
+passwordless opt-out for local-only use; never use it on a shared host.
+External API integrations remain optional and degrade gracefully.
 
 | Var | Purpose |
 |---|---|
 | `TIKHUB_API_KEY` | XHS link resolution (authoritative path). Without it, only the free direct-redirect path runs — usually blocked from datacenter IPs. |
 | `ANTHROPIC_API_KEY` | Tier-4 adjudication + bilingual run summary. |
 | `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5` (the current Sonnet, verified at build time — the older `claude-sonnet-4-6` works as an override). |
-| `APP_PASSWORD` | The **setup code** that enables the account system. Set it — this handles client campaign data. Visit `/setup`, enter the code, and create the admin account; admins add coworkers on `/team`. Without it the app runs open (local dev only). |
+| `APP_PASSWORD` | The **required-by-default setup code** for the account system. Visit `/setup`, enter the code, and create the admin account; admins add coworkers on `/team`. Startup fails if neither this nor the explicit local opt-out is set. |
+| `ALLOW_OPEN_ACCESS` | Set to `1` only for intentional local passwordless use. Defaults off, so a missing deployment secret fails closed. |
+| `SESSION_COOKIE_SECURE` | Defaults to `1`; set to `0` only for local plain-HTTP development. |
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
+| `MAX_UPLOAD_MB` | Maximum compressed size per workbook; defaults to 25 MB. |
+| `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents; defaults to 50 MB to reject ZIP bombs. |
+| `MAX_XLSX_ENTRIES` | Maximum files inside an XLSX archive; defaults to 2,000. |
+| `MAX_XLSX_CELLS` | Maximum populated worksheet cells; defaults to 600,000 to bound `openpyxl` object growth. |
+| `UPLOAD_REQUEST_CONCURRENCY` | Maximum upload requests admitted before multipart spooling; defaults to 2 to bound aggregate memory and temporary disk. |
+| `UPLOAD_PARSE_CONCURRENCY` | App-wide limit for concurrent workbook parsing/remapping; defaults to 1 to bound memory use. |
+| `EXPORT_STREAM_CONCURRENCY` | Maximum concurrent XLSX response streams; defaults to 4 so slow clients cannot accumulate unbounded temporary exports. |
+| `UPLOAD_RETENTION_HOURS` | Maximum age for eligible staged/run upload directories; defaults to 720 hours (30 days). |
+| `UPLOAD_MAX_TOTAL_MB` | Aggregate upload-directory budget; defaults to 900 MB, with the oldest eligible runs removed first. |
+| `MAINTENANCE_INTERVAL_SECONDS` | Interval for expired-token and upload-retention cleanup; defaults to 60 seconds. |
 
 TikHub endpoints are configurable (`TIKHUB_IMAGE_NOTE_PATH`,
 `TIKHUB_VIDEO_NOTE_PATH`) because TikHub versions its API; the defaults were
@@ -187,6 +201,8 @@ raw `xhslink.com` share URL via `share_text`, so no redirect-following is
 required for the authoritative path. Operational limits: 15 s timeout,
 3 retries with exponential backoff, 429 `Retry-After` respected, global
 concurrency ≤ 4, and a per-run cost counter shown in the UI.
+Workbook URLs are restricted to `xhslink.com` and `xiaohongshu.com` hosts,
+including every direct redirect hop.
 
 ## Deploying on Fly.io
 
@@ -243,8 +259,15 @@ excusing those two**.
   (requires the code) creates or resets an admin account; admins manage
   coworker accounts on `/team` (add, remove, reset passwords), and everyone
   can change their own password there. Passwords are stored as salted PBKDF2
-  hashes; sessions are signed HMAC cookies. Anyone holding the setup code can
-  make themselves admin, so treat it as the root secret.
+  hashes; sessions are signed HMAC cookies, marked Secure in deployment, and
+  invalidated when the account password changes. Anyone holding the setup
+  code can make themselves admin, so treat it as the root secret.
+- **Upload lifecycle**: compressed and expanded workbook sizes are bounded;
+  rejected, invalid, and cancelled staging is deleted immediately. Expired
+  in-memory reports/remap audits and eligible upload directories are reaped
+  at startup and on the configured maintenance interval. Retention enforces
+  both a maximum age and aggregate disk budget while protecting queued,
+  running, and pending-audit runs; removal also clears matching run history.
 - Human overrides are stored per sheet row and win over the pipeline verdict
   in both the UI and the exports; the special choice `已匹配（清空S）` forces a
   blank column S (asserting a match), while clearing the dropdown reverts to

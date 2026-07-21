@@ -92,7 +92,10 @@ def parse_plog(path: str) -> PlogParse:
     consecutive_blank = 0
     for row in ws.iter_rows(min_row=header_row + 1):
         r = row[0].row
-        get = lambda c: ws.cell(row=r, column=c).value if c else None
+
+        def get(column):
+            return ws.cell(row=r, column=column).value if column else None
+
         name = cell_str(get(c_name))
         link_cell = ws.cell(row=r, column=c_link) if c_link else None
         link = ""
@@ -258,7 +261,10 @@ def parse_dmr(path: str) -> DmrParse:
     consecutive_blank = 0
     for row in ws.iter_rows(min_row=header_row + 1):
         r = row[0].row
-        get = lambda c: ws.cell(row=r, column=c).value if c else None
+
+        def get(column):
+            return ws.cell(row=r, column=column).value if column else None
+
         blogger = cell_str(get(c_blogger))
         pid_raw = cell_str(get(c_pid))
         if not blogger and not pid_raw:
