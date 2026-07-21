@@ -318,13 +318,3 @@ def parse_dmr(path: str) -> DmrParse:
     if not result.rows:
         result.warnings.append("DMR sheet parsed but contained no data rows.")
     return result
-
-
-# Transitional aliases — eval.py and older tests still import the underscore
-# names; deleted at the end of the migration (import from app.core.xlsx).
-_cell_str = cell_str
-_find_header_row = find_header_row
-_to_date = to_date
-_to_datetime = to_datetime
-_to_int = to_int
-_extract_link_target = extract_link_target

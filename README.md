@@ -64,7 +64,7 @@ staleness matters). The parsed 58.8k rows are cached in SQLite by content
 hash, so re-runs add under ~2 s. The last uploaded perimeter persists across
 runs until replaced or removed; without one, behavior is exactly as before.
 Dead-link rows keep their verdict — perimeter hits are annotation only.
-`eval.py --perimeter <file>` maps both split statuses back to `无博主` so the
+`tools/evaluate.py --perimeter <file>` maps both split statuses back to `无博主` so the
 reference agreement math is unchanged, and prints the in/out split.
 
 ## KOL efficiency report (`/efficiency`)
@@ -208,11 +208,11 @@ fly deploy -a "$APP"
 
 ## Evaluation harness
 
-`eval.py` runs the pipeline on the two real source files and diffs column S
+`tools/evaluate.py` runs the pipeline on the two real source files and diffs column S
 against the human reference:
 
 ```sh
-python eval.py PLOG_DMR_CHECK.xlsx YTD_DMR_MICRO_0720.xlsx PLOG_DMR_CHECK_1.xlsx
+python tools/evaluate.py PLOG_DMR_CHECK.xlsx YTD_DMR_MICRO_0720.xlsx PLOG_DMR_CHECK_1.xlsx
 ```
 
 It prints a confusion matrix and a per-row disagreement report. Two reference

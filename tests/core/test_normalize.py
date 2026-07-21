@@ -1,5 +1,6 @@
 from app.reconciler.pipeline import name_contains, name_ladder
-from app.normalize import ascii_part, cjk, header_key, is_hex24, norm
+from app.core.textnorm import ascii_part, cjk, header_key, norm
+from app.reconciler.domain import is_hex24
 
 
 def test_norm_strips_emoji():

@@ -9,6 +9,7 @@ assembles.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
@@ -44,7 +45,6 @@ async def set_lang(request: Request, code: str):
     site)."""
     if code not in i18n.SUPPORTED:
         code = "en"
-    from urllib.parse import urlparse
     ref = urlparse(request.headers.get("referer", ""))
     back = ref.path or "/"
     if not back.startswith("/") or back.startswith("//"):

@@ -7,6 +7,7 @@ the app runs open (local development).
 from __future__ import annotations
 
 import hmac
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -113,7 +114,6 @@ async def team_page(request: Request, msg: str = "", error: str = ""):
 
 
 def _team_redirect(msg: str = "", error: str = "") -> RedirectResponse:
-    from urllib.parse import urlencode
     q = urlencode({k: v for k, v in (("msg", msg), ("error", error)) if v})
     return RedirectResponse(f"/team?{q}", status_code=303)
 

@@ -437,6 +437,8 @@ def compute_metrics(rows: list[Row], cfg: ReportConfig) -> dict:
 
 def compute_metrics_pandas(rows: list[Row], cfg: ReportConfig) -> dict:
     """Independent second path (pandas groupby) for the dual-path check."""
+    # pandas is imported lazily on purpose: it is heavy, and only this
+    # verification path needs it.
     import pandas as pd
     active = [r for r in rows if not r.excluded]
     df = pd.DataFrame([{

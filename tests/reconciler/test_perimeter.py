@@ -226,6 +226,6 @@ def test_without_perimeter_behavior_unchanged(tmp_path, monkeypatch):
 
 
 def test_eval_classify_maps_new_statuses_to_no_blogger():
-    import eval as ev
+    from tools import evaluate as ev
     assert ev.classify("无博主但在Perimeter内→无帖子") == "无博主"
     assert ev.classify("无博主（不在Perimeter内）") == "无博主"

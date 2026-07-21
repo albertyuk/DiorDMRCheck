@@ -19,7 +19,7 @@ from app import config
 from app.remap import mapper as schema_map
 from app import main as main_mod
 from app.remap import service as remap_service
-from app.normalize import header_key
+from app.core.textnorm import header_key
 
 # ------------------------------------------------------------------ fixtures
 

@@ -14,21 +14,28 @@ them as *expected* disagreements and excludes them from the acceptance gate
 (≥ 99/101 agreement after excusing the two noisy labels).
 
 Usage:
-    python eval.py PLOG_DMR_CHECK.xlsx YTD_DMR_MICRO_0720.xlsx \
+    python tools/evaluate.py PLOG_DMR_CHECK.xlsx YTD_DMR_MICRO_0720.xlsx \
         PLOG_DMR_CHECK_1.xlsx [--no-llm]
 """
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 import time
 from collections import Counter
 
 from openpyxl import load_workbook
 
-from app.adjudicator import adjudicate
-from app.matcher import run_pipeline
-from app.parsers import PLOG_REQUIRED, _cell_str, _find_header_row, parse_dmr, parse_plog
+from app.core.xlsx import cell_str, find_header_row
+from app.reconciler import perimeter as perimeter_mod
+from app.reconciler.adjudicator import adjudicate
+from app.reconciler.domain import (LINK_ERROR, NAME_MISLABEL, NO_BLOGGER,
+                                   NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
+                                   NO_POST_IN_PERIMETER, REVIEW, S_TEXT)
+from app.reconciler.export import S_COL
+from app.reconciler.parsers import PLOG_REQUIRED, parse_dmr, parse_plog
+from app.reconciler.pipeline import run_pipeline
 
 # (blogger name, PLOG post date ISO) → why it is excused
 KNOWN_LABEL_NOISE = {
@@ -38,26 +45,24 @@ KNOWN_LABEL_NOISE = {
         "human wrote 无博主 but DMR has an exact-date post (PostID 6a421ff9…)",
 }
 
-S_COL = 19
-
 
 def classify(text: str) -> str:
-    """Collapse an annotation string to a comparable class."""
+    """Collapse an annotation string to a comparable class (S_TEXT values)."""
     t = (text or "").strip()
     if not t:
         return "MATCH"
-    if t.startswith("无博主"):
-        return "无博主"
-    if t.startswith("无帖子"):
-        return "无帖子"
+    if t.startswith(S_TEXT[NO_BLOGGER]):
+        return S_TEXT[NO_BLOGGER]
+    if t.startswith(S_TEXT[NO_POST]):
+        return S_TEXT[NO_POST]
     # 人工复核 must be classified before the 链接 check — REVIEW reasons can
     # mention 链接 (e.g. 人工复核（链接已解析但…）).
-    if t.startswith("人工") or "人工复核" in t:
-        return "人工复核"
+    if t.startswith("人工") or S_TEXT[REVIEW] in t:
+        return S_TEXT[REVIEW]
     if t.lower().startswith("check") or "链接" in t:
-        return "Check链接错误"
+        return S_TEXT[LINK_ERROR]
     if "标注错误" in t or "名字" in t:
-        return "有 但是DMR博主名字标注错误"
+        return NAME_MISLABEL
     return t
 
 
@@ -67,13 +72,13 @@ def load_reference(path: str) -> dict[tuple[str, str], str]:
     wb = load_workbook(path, data_only=True)
     ws = None
     for candidate in wb.worksheets:
-        if _find_header_row(candidate, PLOG_REQUIRED):
+        if find_header_row(candidate, PLOG_REQUIRED):
             ws = candidate
             break
     assert ws is not None
     out = {}
     for row in ref.rows:
-        out[row.key] = _cell_str(ws.cell(row=row.excel_row, column=S_COL).value)
+        out[row.key] = cell_str(ws.cell(row=row.excel_row, column=S_COL).value)
     return out
 
 
@@ -99,12 +104,10 @@ def main() -> int:
 
     perim = None
     if args.perimeter:
-        from app import perimeter as perimeter_mod
         data = open(args.perimeter, "rb").read()
         h = perimeter_mod.file_hash(data)
         perim = perimeter_mod.load_cached(h)
         if perim is None:
-            import io
             print("  [perimeter] parsing (first time for this file hash)…",
                   file=sys.stderr)
             parsed = perimeter_mod.parse_perimeter(
@@ -133,8 +136,6 @@ def main() -> int:
     elapsed = time.time() - t0
 
     if perim is not None:
-        from app.matcher import (NO_BLOGGER_NOT_IN_PERIMETER,
-                                 NO_POST_IN_PERIMETER)
         inside = [v for v in verdicts if v.status == NO_POST_IN_PERIMETER]
         outside = [v for v in verdicts if v.status == NO_BLOGGER_NOT_IN_PERIMETER]
         print(f"\n=== Perimeter split of 无博主 rows ===")

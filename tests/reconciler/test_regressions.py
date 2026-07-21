@@ -8,7 +8,8 @@ import pytest
 from openpyxl import Workbook
 
 from app.reconciler.pipeline import name_contains, name_ladder
-from app.reconciler.parsers import _to_date, _to_int, parse_dmr, parse_plog
+from app.core.xlsx import to_date as _to_date, to_int as _to_int
+from app.reconciler.parsers import parse_dmr, parse_plog
 from app.reconciler.links import (_extract_note_fields, _normalize_url,
                           _note_id_from_url, _retry_after_seconds)
 from tests import fixtures
@@ -236,7 +237,7 @@ def test_parse_batch_accepts_bare_array_and_fences():
 # ------------------------------------------------------------ eval findings
 
 def test_eval_classify_review_with_link_mention():
-    import eval as eval_mod
+    from tools import evaluate as eval_mod
     assert eval_mod.classify("人工复核（链接已解析但无法获取作者ID）") == "人工复核"
     assert eval_mod.classify("Check链接错误（同名候选: x 6a…）") == "Check链接错误"
     assert eval_mod.classify("有 但是DMR博主名字标注错误") == "有 但是DMR博主名字标注错误"

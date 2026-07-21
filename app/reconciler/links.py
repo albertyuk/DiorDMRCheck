@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import time
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -305,7 +306,6 @@ def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
             return float(raw)
         except ValueError:
             try:
-                from email.utils import parsedate_to_datetime
                 dt = parsedate_to_datetime(raw)
                 return max(0.0, dt.timestamp() - time.time())
             except (TypeError, ValueError):

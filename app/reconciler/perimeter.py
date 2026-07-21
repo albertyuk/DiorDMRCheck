@@ -13,6 +13,7 @@ lookup. Most perimeter rows have no REDBOOK_ID (other-platform bloggers).
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import time
@@ -236,7 +237,6 @@ class PerimeterIndex:
 
 def ingest(data: bytes, filename: str) -> PerimeterParse:
     """Parse-or-load a perimeter upload, cache it, and make it current."""
-    import io
     h = file_hash(data)
     cached = db.perimeter_cache_get(h)
     if cached:
