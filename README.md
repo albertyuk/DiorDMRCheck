@@ -96,6 +96,17 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
   the database; the finished report is held in an in-process store and
   expires after two hours.
 
+## First-visit guide
+
+A quick-guide popup opens automatically on a user's first visit (suppressed
+on the sign-in/setup pages) and can be reopened any time from the **Guide**
+button in the top-left corner. It covers what the app does, the four steps of
+a reconciliation, how to read the column-S verdicts (including the
+name-mislabel and out-of-window nuances), the never-match-on-engagement rule,
+and the efficiency report. Dismissal is remembered per browser
+(`localStorage`), and the content is fully bilingual via the same `t()`
+dictionary as the rest of the UI.
+
 ## Interface language (中文界面)
 
 The button in the top-left corner of every page toggles the interface between

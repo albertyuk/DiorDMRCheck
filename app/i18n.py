@@ -108,6 +108,41 @@ ZH: dict[str, str] = {
         "在元信息行中找不到「Date of extraction」——无法显示 Perimeter 名单的提取日期。",
     "The perimeter file recorded for this run is no longer in the cache — running without the perimeter split.":
         "这条核对原先记录的 Perimeter 文件已不在缓存中——本次不做 Perimeter 拆分。",
+    # first-visit guide (base.html modal) -----------------------------------
+    "Guide": "使用指南",
+    "Quick guide": "使用指南",
+    "Close guide": "关闭指南",
+    "Got it": "知道了",
+    "What this app does": "这个工具是做什么的",
+    "It reconciles your internal KOL tracker (PLOG) against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.":
+        "把内部 KOL 追踪表（PLOG）与 DMR 社媒监测导出的小红书帖子逐行核对，自动产出原本要靠人工整理的标注版 Excel——S 列判定结果，以及每条判定背后的判定依据。",
+    "Running a reconciliation": "如何发起核对",
+    "Efficiency report": "投放效率报告",
+    "Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership.":
+        "在首页上传 PLOG 和 DMR 文件。Perimeter 名单选填——上传后，「无博主」的行会按名单内外拆分。",
+    "Check the parse preview (sheets, row counts, date window) and confirm — nothing external is called until you do.":
+        "先检查解析预览（工作表、行数、日期窗口）再确认——确认之前不会调用任何外部服务。",
+    "The run resolves every post link, then matches by note ID and author ID; only leftover ambiguous rows go to Claude for annotation, plus one final call that drafts the run summary — Claude never decides a verdict.":
+        "核对会先解析每条帖子链接，再按笔记 ID 和作者 ID 精确匹配；剩余的存疑行才交给 Claude 补充说明，另有最后一次调用起草核对摘要——Claude 从不做判定。",
+    "Review the results — each verdict shows its evidence, any row can be overridden by hand — then download the annotated .xlsx or the JSON audit log.":
+        "查看结果——每条判定都附判定依据，任何一行都可以人工改判——最后下载标注版 .xlsx 或 JSON 审计日志。",
+    "Reading the verdicts": "判定结果怎么读",
+    "The DMR export contains this exact post — column S stays blank. If DMR records the blogger under a wrong name, S reads 有 但是DMR博主名字标注错误 instead.":
+        "DMR 导出里有这条帖子——S 列留空；若 DMR 里博主名字标注有误，S 列会改为「有 但是DMR博主名字标注错误」。",
+    "The blogger is tracked in DMR but this post is missing — a genuine DMR gap (rows marked 超出DMR导出窗口 are expected-missing, not gaps).":
+        "DMR 里有这位博主，但没有这条帖子——真正的 DMR 漏抓（标注「超出DMR导出窗口」的行属预期缺失，不算漏抓）。",
+    "The blogger does not appear in the DMR export at all (with a Perimeter list this row is further split by list membership).":
+        "DMR 导出里完全没有这位博主（传了 Perimeter 名单时会按名单内外进一步拆分）。",
+    "The post link is dead or unresolvable — same-name candidates are listed for review, never auto-matched.":
+        "帖子链接失效或无法解析——列出同名候选供人工查看，绝不自动判定为匹配。",
+    "Signals conflict or the deciding data is unavailable — a human decides; the reason is shown on the row.":
+        "各项信号相互矛盾，或缺少判定所需的数据——需要人工判断；具体原因标注在该行。",
+    "Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to PLOG finals.":
+        "互动数据从不用于判断匹配——DMR 记录的是发帖早期的快照，与 PLOG 的最终数据不可比。",
+    "The Efficiency page turns a PLOG tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.":
+        "「投放效率」页面只需一份 PLOG 追踪表，就能生成一页式 CPM/CPE 图表汇报——可编辑 .pptx 外加网页版——同时列出数据校验发现。全程只在内存中运行，每份报告 2 小时后过期。",
+    "Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.":
+        "界面语言随时可以用左上角的按钮切换——本指南也可以从旁边的按钮再次打开。",
     # template strings (merged from the per-template translation pass) --
     "(an existing username is reset)": "（若该用户名已存在，会重置其账号）",
     " (detected by Blogger + PostID fingerprint)": "（按 Blogger + PostID 指纹识别）",

@@ -34,6 +34,7 @@
                   border:1px solid var(--line); padding:.3rem .7rem;
                   transition:border-color .2s; }
   .langtoggle a:hover { border-color:var(--ink); }
+  .langtoggle a + a { margin-left:.5rem; }
   .tagline { grid-column:1/-1; text-align:center; margin-top:.55rem;
              font-size:.62rem; letter-spacing:.32em; text-transform:uppercase;
              color:var(--muted); text-indent:.32em; }
@@ -126,14 +127,43 @@
   .authcard .wordmark { display:block; margin-bottom:.4rem; font-size:1.2rem; }
   .msg-ok { border-left:2px solid #256b2f; background:var(--wash);
             padding:.7rem 1rem; margin:.6rem 0; font-size:.82rem; }
+
+  /* first-visit guide ---------------------------------------------------- */
+  .guide-overlay { position:fixed; inset:0; background:rgba(17,17,17,.45);
+      display:none; align-items:flex-start; justify-content:center;
+      padding:6vh 1.2rem 4vh; z-index:50; }
+  .guide-overlay.open { display:flex; }
+  .guide { background:var(--paper); border:1px solid var(--ink);
+      max-width:640px; width:100%; max-height:86vh; overflow-y:auto;
+      padding:2rem 2.3rem 1.6rem; position:relative; }
+  .guide h2 { font-family:var(--serif); font-weight:400; font-size:1.15rem;
+      letter-spacing:.2em; text-transform:uppercase; text-align:center;
+      margin:.2rem 0 1.4rem; }
+  .guide-close { position:absolute; top:.65rem; right:.8rem; background:none;
+      border:none; color:var(--muted); font-size:1.25rem; line-height:1;
+      padding:.35rem .5rem; cursor:pointer; letter-spacing:0; }
+  .guide-close:hover { background:none; color:var(--ink); }
+  .guide-k { font-size:.62rem; letter-spacing:.22em; text-transform:uppercase;
+      color:var(--muted); border-top:1px solid var(--hairline);
+      padding-top:1rem; margin:1.3rem 0 .45rem; }
+  .guide-k:first-of-type { border-top:none; padding-top:0; margin-top:0; }
+  .guide p, .guide li { font-size:.84rem; margin:.35rem 0; }
+  .guide ol { margin:.3rem 0 .3rem 1.2rem; padding:0; }
+  .guide dl { margin:.4rem 0; font-size:.84rem;
+      display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; }
+  .guide dt { white-space:nowrap; font-weight:500; }
+  .guide dd { margin:0; }
+  .guide .muted { font-size:.76rem; }
+  .guide-actions { text-align:center; margin-top:1.5rem; }
 </style>
 </head>
-<body>
+<body data-guide-auto="{% block guide_auto %}1{% endblock %}">
 <header>
   <nav class="langtoggle">
     {# not a translated string — each label is written in the language it switches TO #}
     {% if lang == "zh" %}<a href="/lang/en" lang="en">English</a>
     {% else %}<a href="/lang/zh" lang="zh-CN">中文</a>{% endif %}
+    <a href="#" onclick="openGuide(); return false">{{ t("Guide") }}</a>
   </nav>
   <a class="wordmark" href="/">DMR&nbsp;Reconciler</a>
   <nav class="headnav">
@@ -148,11 +178,62 @@
   <div class="tagline">{{ t("PLOG · DMR · Xiaohongshu") }}</div>
 </header>
 <main>{% block content %}{% endblock %}</main>
+
+<div class="guide-overlay" id="guide" role="dialog" aria-modal="true"
+     aria-labelledby="guide-title" onclick="if (event.target === this) closeGuide()">
+  <div class="guide">
+    <button type="button" class="guide-close" onclick="closeGuide()"
+            aria-label="{{ t('Close guide') }}">×</button>
+    <h2 id="guide-title">{{ t("Quick guide") }}</h2>
+
+    <p class="guide-k">{{ t("What this app does") }}</p>
+    <p>{{ t("It reconciles your internal KOL tracker (PLOG) against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.") }}</p>
+
+    <p class="guide-k">{{ t("Running a reconciliation") }}</p>
+    <ol>
+      <li>{{ t("Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership.") }}</li>
+      <li>{{ t("Check the parse preview (sheets, row counts, date window) and confirm — nothing external is called until you do.") }}</li>
+      <li>{{ t("The run resolves every post link, then matches by note ID and author ID; only leftover ambiguous rows go to Claude for annotation, plus one final call that drafts the run summary — Claude never decides a verdict.") }}</li>
+      <li>{{ t("Review the results — each verdict shows its evidence, any row can be overridden by hand — then download the annotated .xlsx or the JSON audit log.") }}</li>
+    </ol>
+
+    <p class="guide-k">{{ t("Reading the verdicts") }}</p>
+    <dl>
+      <dt>MATCH</dt><dd>{{ t("The DMR export contains this exact post — column S stays blank. If DMR records the blogger under a wrong name, S reads 有 但是DMR博主名字标注错误 instead.") }}</dd>
+      <dt>无帖子</dt><dd>{{ t("The blogger is tracked in DMR but this post is missing — a genuine DMR gap (rows marked 超出DMR导出窗口 are expected-missing, not gaps).") }}</dd>
+      <dt>无博主</dt><dd>{{ t("The blogger does not appear in the DMR export at all (with a Perimeter list this row is further split by list membership).") }}</dd>
+      <dt>Check链接错误</dt><dd>{{ t("The post link is dead or unresolvable — same-name candidates are listed for review, never auto-matched.") }}</dd>
+      <dt>人工复核</dt><dd>{{ t("Signals conflict or the deciding data is unavailable — a human decides; the reason is shown on the row.") }}</dd>
+    </dl>
+    <p class="muted">{{ t("Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to PLOG finals.") }}</p>
+
+    <p class="guide-k">{{ t("Efficiency report") }}</p>
+    <p>{{ t("The Efficiency page turns a PLOG tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.") }}</p>
+
+    <p class="muted">{{ t("Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.") }}</p>
+    <div class="guide-actions">
+      <button type="button" onclick="closeGuide()">{{ t("Got it") }}</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function showTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
   document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
 }
+function openGuide() { document.getElementById('guide').classList.add('open'); }
+function closeGuide() {
+  document.getElementById('guide').classList.remove('open');
+  try { localStorage.setItem('dmr_guide_seen', '1'); } catch (e) {}
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGuide(); });
+(function () {
+  var auto = document.body.dataset.guideAuto === '1';
+  var seen = false;
+  try { seen = !!localStorage.getItem('dmr_guide_seen'); } catch (e) { seen = true; }
+  if (auto && !seen) openGuide();
+})();
 </script>
 </body>
 </html>
