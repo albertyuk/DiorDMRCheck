@@ -70,10 +70,12 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
 
     perim_warnings: list[str] = []
     if perim_data:
+        # Parse + cache only. The upload becomes the app-wide current
+        # perimeter when this run is actually STARTED — an abandoned preview
+        # must not swap the perimeter under other users.
         try:
-            parsed = await run_in_threadpool(
-                perimeter_mod.ingest, perim_data, perim_name)
-            perim_warnings = parsed.warnings
+            perim_meta, perim_warnings = await run_in_threadpool(
+                perimeter_mod.parse_and_cache, perim_data, perim_name)
         except ValueError as e:
             return templates.TemplateResponse(
                 request, "shared/error.html", {"message": _td(request)(str(e))},
@@ -84,7 +86,9 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
                 {"message": _tr(request)(
                     "Could not read the perimeter file: {e}", e=e)},
                 status_code=422)
-    perim_meta = perimeter_mod.current_meta()
+    else:
+        # no upload in this request — fall back to the promoted default
+        perim_meta = perimeter_mod.current_meta()
 
     d_from, d_to = p.date_range
     out_of_window = 0
@@ -246,6 +250,10 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                 "retry_failed_links": retry_failed_links == "1",
                 "use_llm": use_llm == "1",
             }), status="queued", error=None)
+            if run.get("perimeter_hash"):
+                # run confirmation is the moment this perimeter becomes the
+                # app-wide default (see perimeter.parse_and_cache)
+                perimeter_mod.promote_cached(run["perimeter_hash"])
             runs.start_run(run_id)
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 

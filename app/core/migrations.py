@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS perimeter_cache (
     row_count       INTEGER,
     redbook_count   INTEGER,
     parsed_json     TEXT NOT NULL,        -- rows with precomputed norm forms
+    warnings_json   TEXT,                 -- parse warnings, replayed on cache hits
     created_at      REAL NOT NULL
 );
 
@@ -96,6 +97,7 @@ def apply(conn: sqlite3.Connection) -> None:
         "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
         "ALTER TABLE overrides ADD COLUMN updated_by TEXT",
         "ALTER TABLE runs ADD COLUMN perimeter_hash TEXT",
+        "ALTER TABLE perimeter_cache ADD COLUMN warnings_json TEXT",
     ):
         try:
             conn.execute(stmt)

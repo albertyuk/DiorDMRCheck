@@ -229,3 +229,38 @@ def test_eval_classify_maps_new_statuses_to_no_blogger():
     from tools import evaluate as ev
     assert ev.classify("无博主但在Perimeter内→无帖子") == "无博主"
     assert ev.classify("无博主（不在Perimeter内）") == "无博主"
+
+
+# ------------------------------------------- promotion & cached warnings
+
+def test_parse_and_cache_does_not_promote(tmp_path, monkeypatch):
+    """Uploading (preview) must not change the app-wide current perimeter;
+    promotion is explicit. Cache hits replay the first parse's warnings."""
+    from app import config
+    from app.reconciler import perimeter as pm
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "p.sqlite3")
+
+    data = build_perimeter_bytes(extraction="")   # no extraction date → warning
+    meta, warnings = pm.parse_and_cache(data, "perim.xlsx")
+    assert meta["hash"] == pm.file_hash(data)
+    assert any("Date of extraction" in w for w in warnings)
+    assert pm.current_meta() is None              # NOT promoted
+
+    meta2, warnings2 = pm.parse_and_cache(data, "perim.xlsx")
+    assert meta2["rows"] == meta["rows"]
+    assert warnings2 == warnings                  # cache hit keeps warnings
+
+    pm.promote_cached(meta["hash"])
+    cur = pm.current_meta()
+    assert cur and cur["hash"] == meta["hash"]
+    assert cur["rows"] == meta["rows"]
+
+
+def test_promote_cached_unknown_hash_is_noop(tmp_path, monkeypatch):
+    from app import config
+    from app.reconciler import perimeter as pm
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "p2.sqlite3")
+    pm.promote_cached("deadbeef" * 8)
+    assert pm.current_meta() is None

@@ -162,6 +162,7 @@ def store_parsed(parsed: PerimeterParse) -> None:
         extraction_date=parsed.extraction_date, row_count=len(parsed.rows),
         redbook_count=parsed.redbook_count,
         parsed_json=json.dumps(parsed.rows, ensure_ascii=False),
+        warnings_json=json.dumps(parsed.warnings, ensure_ascii=False),
     )
 
 
@@ -235,27 +236,50 @@ class PerimeterIndex:
         return [(self.rows[i], m) for i, m in sorted(hits.items())]
 
 
-def ingest(data: bytes, filename: str) -> PerimeterParse:
-    """Parse-or-load a perimeter upload, cache it, and make it current."""
+def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
+    """Parse-or-load an uploaded perimeter and cache it — WITHOUT making it
+    the app-wide current perimeter. Promotion is a separate explicit step
+    (``promote_cached``) tied to actually starting a run, so an abandoned
+    preview can no longer swap the global perimeter under other users.
+
+    Returns (meta, warnings). On a cache hit the warnings recorded at first
+    parse are replayed instead of silently dropped."""
     h = file_hash(data)
     cached = db.perimeter_cache_get(h)
     if cached:
-        parsed = PerimeterParse(
-            file_hash=h, filename=filename, sheet=cached["sheet"] or "",
-            header_row=0, extraction_date=cached["extraction_date"] or "")
-        meta_rows, meta_redbook = cached["row_count"], cached["redbook_count"]
-    else:
-        parsed = parse_perimeter(io.BytesIO(data), filename=filename,
-                                 content_hash=h)
-        store_parsed(parsed)
-        meta_rows, meta_redbook = len(parsed.rows), parsed.redbook_count
-    db.setting_set("current_perimeter", json.dumps({
+        warnings = json.loads(cached.get("warnings_json") or "[]")
+        meta = {
+            "hash": h, "filename": filename,
+            "extraction_date": cached["extraction_date"] or "",
+            "rows": cached["row_count"],
+            "redbook_count": cached["redbook_count"],
+        }
+        return meta, warnings
+    parsed = parse_perimeter(io.BytesIO(data), filename=filename,
+                             content_hash=h)
+    store_parsed(parsed)
+    meta = {
         "hash": h, "filename": filename,
         "extraction_date": parsed.extraction_date,
-        "rows": meta_rows, "redbook_count": meta_redbook,
+        "rows": len(parsed.rows), "redbook_count": parsed.redbook_count,
+    }
+    return meta, parsed.warnings
+
+
+def promote_cached(file_hash_: str, filename: str = "") -> None:
+    """Make a cached perimeter the app-wide default ('current'). Called when
+    a run that uses it is actually started — never during preview. No-op if
+    the hash is no longer cached."""
+    row = db.perimeter_cache_get(file_hash_)
+    if not row:
+        return
+    db.setting_set("current_perimeter", json.dumps({
+        "hash": file_hash_,
+        "filename": filename or row["filename"] or "",
+        "extraction_date": row["extraction_date"] or "",
+        "rows": row["row_count"], "redbook_count": row["redbook_count"],
         "uploaded_at": time.time(),
     }, ensure_ascii=False))
-    return parsed
 
 
 def current_meta() -> Optional[dict]:

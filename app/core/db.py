@@ -231,12 +231,14 @@ def perimeter_cache_put(file_hash: str, **fields: Any) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO perimeter_cache (file_hash, filename, sheet, "
-            "extraction_date, row_count, redbook_count, parsed_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "extraction_date, row_count, redbook_count, parsed_json, "
+            "warnings_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(file_hash) DO UPDATE SET filename=excluded.filename",
             (file_hash, fields.get("filename"), fields.get("sheet"),
              fields.get("extraction_date"), fields.get("row_count"),
-             fields.get("redbook_count"), fields["parsed_json"], time.time()),
+             fields.get("redbook_count"), fields["parsed_json"],
+             fields.get("warnings_json"), time.time()),
         )
         conn.commit()
 
