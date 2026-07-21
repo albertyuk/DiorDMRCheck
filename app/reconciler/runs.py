@@ -1,16 +1,21 @@
 """Background run orchestration.
 
-Each run executes in a daemon thread; progress and results are persisted in
-SQLite so the web layer only ever polls the database. Partial failure is
-normal — a dead link, a TikHub 4xx, a rate limit each become per-row status,
-and the run completes. Only file-level parse failures abort a run.
+Each run executes in a daemon thread drawn from a small bounded pool
+(config.RUN_MAX_CONCURRENT): excess starts stay 'queued' and begin FIFO as
+slots free up, so N users cannot spawn N CPU/API-heavy runs at once.
+Progress and results are persisted in SQLite so the web layer only ever
+polls the database. Partial failure is normal — a dead link, a TikHub 4xx,
+a rate limit each become per-row status, and the run completes. Only
+file-level parse failures abort a run.
 """
 from __future__ import annotations
 
 import json
 import threading
 import traceback
+from collections import deque
 
+from .. import config
 from ..core import db
 from . import perimeter as perimeter_mod
 from .adjudicator import adjudicate, summarize_run
@@ -32,9 +37,45 @@ def recover_orphans() -> None:
         conn.commit()
 
 
+# Bounded worker pool: registry of in-flight runs + FIFO of deferred ones.
+# Daemon threads on purpose — shutdown semantics are unchanged (a restart
+# kills in-flight runs; recover_orphans marks them at next startup).
+_pool_lock = threading.Lock()
+_active: set[str] = set()
+_pending: deque[str] = deque()
+
+
 def start_run(run_id: str) -> None:
-    t = threading.Thread(target=_run, args=(run_id,), daemon=True)
-    t.start()
+    """Start a run, or queue it when the pool is full. Idempotent per run:
+    a run already active or pending is never double-started."""
+    with _pool_lock:
+        if run_id in _active or run_id in _pending:
+            return
+        if len(_active) >= config.RUN_MAX_CONCURRENT:
+            _pending.append(run_id)
+            deferred = True
+        else:
+            _active.add(run_id)
+            deferred = False
+    if deferred:
+        db.run_update(run_id, message="Waiting for a free run slot…")
+        return
+    threading.Thread(target=_run_slot, args=(run_id,), daemon=True).start()
+
+
+def _run_slot(run_id: str) -> None:
+    try:
+        _run(run_id)
+    finally:
+        with _pool_lock:
+            _active.discard(run_id)
+            next_id = None
+            if _pending and len(_active) < config.RUN_MAX_CONCURRENT:
+                next_id = _pending.popleft()
+                _active.add(next_id)
+        if next_id:
+            threading.Thread(target=_run_slot, args=(next_id,),
+                             daemon=True).start()
 
 
 def _run(run_id: str) -> None:

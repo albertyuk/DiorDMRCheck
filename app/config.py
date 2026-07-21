@@ -55,6 +55,10 @@ APP_SECRET = _env("APP_SECRET")
 # same-post matches at Δ=2 and Δ=4 days; a genuine different-post pair at Δ=2.
 CANDIDATE_DATE_WINDOW_DAYS = int(_env("CANDIDATE_DATE_WINDOW_DAYS", "7"))
 
+# At most this many reconciliation runs execute at once; excess run starts
+# stay 'queued' and begin as slots free up (each run is CPU- and API-heavy).
+RUN_MAX_CONCURRENT = int(_env("RUN_MAX_CONCURRENT", "2"))
+
 # Failed link resolutions are cached; retry them only after this many hours
 # (or when a run explicitly requests it). Successes are cached permanently.
 FAILED_CACHE_TTL_HOURS = int(_env("FAILED_CACHE_TTL_HOURS", "24"))
