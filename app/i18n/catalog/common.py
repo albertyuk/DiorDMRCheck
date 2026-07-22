@@ -58,8 +58,11 @@ ZH: dict[str, str] = {
         "把内部 KOL 追踪表（PLOG）与 DMR 社媒监测导出的小红书帖子逐行核对，自动产出原本要靠人工整理的标注版 Excel——S 列判定结果，以及每条判定背后的判定依据。",
     "Running a reconciliation": "如何发起核对",
     "Efficiency report": "投放效率报告",
-    "Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership.":
-        "在首页上传 PLOG 和 DMR 文件。Perimeter 名单选填——上传后，「无博主」的行会按名单内外拆分。",
+    "Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership. Only its China-market rows are used (IN_CHINA_REPORTS=YES, or COUNTRY=Mainland China when that column is absent) — this tool evaluates the Chinese market only.":
+        "在首页上传 PLOG 和 DMR 文件。Perimeter 名单选填——上传后，「无博主」的行会按名单内外拆分。名单只取中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）——本工具只评估中国市场。",
+    "Unfamiliar sheet formats": "表格格式不认识怎么办",
+    "If a workbook's headers don't match the known format (say, a tracker with Chinese headers), Claude proposes which column is which — and you review that mapping on an audit screen before anything runs. Each field shows the original header, example values, and a confidence score; correct or reject anything. Only header names get rewritten, never data, and each format needs approving once.":
+        "如果工作簿的表头不属于已知格式（比如用中文表头的追踪表），Claude 会先给出「哪列对应哪个字段」的映射建议——在任何处理开始之前，由你在审核页面把关。每个字段都显示原表头、示例值和置信度；可以逐项修改或整体拒绝。应用时只改写表头名称，绝不动数据，而且每种格式只需审核一次。",
     "Check the parse preview (sheets, row counts, date window) and confirm — nothing external is called until you do.":
         "先检查解析预览（工作表、行数、日期窗口）再确认——确认之前不会调用任何外部服务。",
     "The run resolves every post link, then matches by note ID and author ID; only leftover ambiguous rows go to Claude for annotation, plus one final call that drafts the run summary — Claude never decides a verdict.":

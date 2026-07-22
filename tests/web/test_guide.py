@@ -25,7 +25,8 @@ def test_guide_modal_and_button_on_index(client):
     # core content: workflow, verdict vocabulary, efficiency, engagement rule
     for probe in ("Running a reconciliation", "无帖子", "Check链接错误",
                   "Engagement numbers never decide a match",
-                  "Efficiency report"):
+                  "Efficiency report", "Unfamiliar sheet formats",
+                  "Chinese market only"):
         assert probe in body, probe
 
 
@@ -40,4 +41,5 @@ def test_guide_translates(client):
     body = client.get("/").text
     assert "使用指南" in body and "如何发起核对" in body
     assert "判定结果怎么读" in body and "真正的 DMR 漏抓" in body
+    assert "表格格式不认识怎么办" in body and "只评估中国市场" in body
     assert "知道了" in body
