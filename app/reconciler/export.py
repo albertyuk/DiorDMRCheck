@@ -1,9 +1,13 @@
 """Exports.
 
-1. Annotated .xlsx — the original PLOG workbook byte-identical in layout
-   (columns A–R untouched, values and formats preserved), column S carrying
-   the human vocabulary with no header (matching PLOG_DMR_CHECK_1), and
-   richer evidence in columns T+ (which the reference leaves free).
+1. Annotated .xlsx — the original KOL tracker workbook byte-identical in
+   layout (columns A–R untouched, values and formats preserved), column S
+   carrying the human vocabulary with no header (matching PLOG_DMR_CHECK_1),
+   and a deliberately small evidence block in columns T+ (which the reference
+   leaves free): STATUS, MATCHED DMR BLOGGER, and the weighted-engagement
+   data of the matched row copied verbatim from the DMR export. The full
+   evidence (candidates, perimeter, Claude rationale, notes) lives in the
+   results UI and the JSON audit log, not in the spreadsheet.
 2. JSON audit log of the full run.
 """
 from __future__ import annotations
@@ -25,54 +29,18 @@ S_COL = 19  # column S
 # override force a blank S cell (asserting MATCH) rather than clearing the
 # override.
 OVERRIDE_MATCH_BLANK = "已匹配（清空S）"
+# STATUS + matched blogger, then the "weighted engagement data" section —
+# the matched DMR row's engagement snapshot, column names as in the DMR file.
 EVIDENCE_HEADERS = [
-    ("T", "STATUS"),
-    ("U", "TIER"),
-    ("V", "MATCHED DMR POSTID"),
-    ("W", "MATCHED DMR BLOGGER"),
-    ("X", "RESOLVED NOTE ID"),
-    ("Y", "RESOLVED AUTHOR ID"),
-    ("Z", "NAME METHOD"),
-    ("AA", "DATE Δ (days)"),
-    ("AB", "PLOG LIKE"),
-    ("AC", "DMR LIKES (early snapshot — NOT comparable)"),
-    ("AD", "CANDIDATES"),
-    ("AE", "CLAUDE VERDICT"),
-    ("AF", "CLAUDE RATIONALE"),
-    ("AG", "PERIMETER"),
-    ("AH", "NOTES"),
+    "STATUS",
+    "MATCHED DMR BLOGGER",
+    "DMR LIKES_RETWEET",
+    "DMR SHARE_FAVORITES",
+    "DMR COMMENTS",
+    "DMR ENGAGEMENT",
+    "DMR WEIGHTED ENG.",
 ]
 EVIDENCE_START_COL = 20  # column T
-
-
-def _perimeter_text(v: Verdict) -> str:
-    parts = []
-    if v.perimeter_method:
-        entry = f"{v.perimeter_method}: {v.perimeter_name or v.perimeter_namebis}"
-        if v.perimeter_namebis and v.perimeter_name:
-            entry += f" / {v.perimeter_namebis}"
-        if v.perimeter_dmrid:
-            entry += f" · DMRID {v.perimeter_dmrid}"
-        if v.perimeter_redbook_id:
-            entry += f" · REDBOOK {v.perimeter_redbook_id}"
-        if v.perimeter_followers is not None:
-            entry += f" · {v.perimeter_followers:,} followers"
-        parts.append(entry)
-    if v.perimeter_note:
-        parts.append(v.perimeter_note)
-    if v.perimeter_candidates:
-        parts.append("candidates: " + " ; ".join(v.perimeter_candidates))
-    if parts and v.perimeter_extraction_date:
-        parts.append(f"extracted {v.perimeter_extraction_date}")
-    return " | ".join(parts)
-
-
-def _candidates_text(v: Verdict) -> str:
-    parts = []
-    for c in v.candidates[:5]:
-        delta = f"Δ{c.date_delta_days:+d}d" if c.date_delta_days is not None else "Δ?"
-        parts.append(f"{c.blogger} [{c.post_id}] {c.post_date or '?'} {delta} ({c.name_method})")
-    return " ; ".join(parts)
 
 
 def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
@@ -116,7 +84,7 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         ev_start += 1
 
     bold = Font(bold=True)
-    for col_idx, (_, title) in enumerate(EVIDENCE_HEADERS, start=ev_start):
+    for col_idx, title in enumerate(EVIDENCE_HEADERS, start=ev_start):
         cell = ws.cell(row=header_row, column=col_idx, value=title)
         cell.font = bold
     # Column S intentionally has no header — the reference file leaves S1 blank.
@@ -134,34 +102,24 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         else:
             s_text = v.column_s()
         status = f"{v.status}{' (override)' if ov else ''}"
-        rationale = " / ".join(x for x in (v.llm_rationale_zh, v.llm_rationale_en) if x)
-        llm = (f"{v.llm_verdict} ({v.llm_confidence:.0%})"
-               if v.llm_verdict and v.llm_confidence is not None else v.llm_verdict)
-        notes = list(v.notes)
         if preserved is not None:
             pipeline_s = v.column_s()
             if preserved.strip() != (pipeline_s or "").strip():
-                notes.append(
-                    f"S already contained {preserved!r} — kept; pipeline "
-                    f"verdict was {pipeline_s or '(blank=matched)'}")
-            status += " (S kept from source)"
+                # NOTES is gone from the trimmed layout — the disagreement is
+                # recorded right in the STATUS cell instead.
+                status += (" (S kept from source; pipeline verdict was "
+                           f"{pipeline_s or '(blank=matched)'})")
+            else:
+                status += " (S kept from source)"
         ws.cell(row=r, column=S_COL, value=s_text or None)
         values = [
             status,
-            v.tier,
-            v.matched_post_id or None,
             v.matched_blogger or None,
-            v.resolved_note_id or None,
-            v.resolved_author_id or None,
-            v.name_method or None,
-            v.date_delta_days,
-            v.plog_like,
             v.dmr_likes_retweet,
-            _candidates_text(v) or None,
-            llm or None,
-            rationale or None,
-            _perimeter_text(v) or None,
-            " | ".join(notes + ([ov["note"]] if ov and ov.get("note") else [])) or None,
+            v.dmr_share_favorites,
+            v.dmr_comments,
+            v.dmr_engagement,
+            v.dmr_weighted_eng,
         ]
         for col_idx, value in enumerate(values, start=ev_start):
             ws.cell(row=r, column=col_idx, value=value)

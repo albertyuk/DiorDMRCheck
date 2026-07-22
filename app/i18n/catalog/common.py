@@ -9,7 +9,7 @@ import re  # noqa: F401  (patterns)
 
 ZH: dict[str, str] = {
     # base chrome -----------------------------------------------------------
-    "PLOG · DMR · Xiaohongshu": "PLOG · DMR · 小红书",
+    "KOL · DMR · Xiaohongshu": "KOL · DMR · 小红书",
     "Efficiency": "投放效率",
     "Team": "团队",
     "Sign out": "退出登录",
@@ -54,12 +54,12 @@ ZH: dict[str, str] = {
     "Close guide": "关闭指南",
     "Got it": "知道了",
     "What this app does": "这个工具是做什么的",
-    "It reconciles your internal KOL tracker (PLOG) against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.":
-        "把内部 KOL 追踪表（PLOG）与 DMR 社媒监测导出的小红书帖子逐行核对，自动产出原本要靠人工整理的标注版 Excel——S 列判定结果，以及每条判定背后的判定依据。",
+    "It reconciles your internal KOL tracker against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.":
+        "把内部 KOL 追踪表与 DMR 社媒监测导出的小红书帖子逐行核对，自动产出原本要靠人工整理的标注版 Excel——S 列判定结果，以及每条判定背后的判定依据。",
     "Running a reconciliation": "如何发起核对",
     "Efficiency report": "投放效率报告",
-    "Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership. Only its China-market rows are used (IN_CHINA_REPORTS=YES, or COUNTRY=Mainland China when that column is absent) — this tool evaluates the Chinese market only.":
-        "在首页上传 PLOG 和 DMR 文件。Perimeter 名单选填——上传后，「无博主」的行会按名单内外拆分。名单只取中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）——本工具只评估中国市场。",
+    "Upload the KOL and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership. Only its China-market rows are used (IN_CHINA_REPORTS=YES, or COUNTRY=Mainland China when that column is absent) — this tool evaluates the Chinese market only.":
+        "在首页上传 KOL 和 DMR 文件。Perimeter 名单选填——上传后，「无博主」的行会按名单内外拆分。名单只取中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）——本工具只评估中国市场。",
     "Unfamiliar sheet formats": "表格格式不认识怎么办",
     "If a workbook's headers don't match the known format (say, a tracker with Chinese headers), Claude proposes which column is which — and you review that mapping on an audit screen before anything runs. Each field shows the original header, example values, and a confidence score; correct or reject anything. Only header names get rewritten, never data, and each format needs approving once.":
         "如果工作簿的表头不属于已知格式（比如用中文表头的追踪表），Claude 会先给出「哪列对应哪个字段」的映射建议——在任何处理开始之前，由你在审核页面把关。每个字段都显示原表头、示例值和置信度；可以逐项修改或整体拒绝。应用时只改写表头名称，绝不动数据，而且每种格式只需审核一次。",
@@ -80,10 +80,10 @@ ZH: dict[str, str] = {
         "帖子链接失效或无法解析——列出同名候选供人工查看，绝不自动判定为匹配。",
     "Signals conflict or the deciding data is unavailable — a human decides; the reason is shown on the row.":
         "各项信号相互矛盾，或缺少判定所需的数据——需要人工判断；具体原因标注在该行。",
-    "Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to PLOG finals.":
-        "互动数据从不用于判断匹配——DMR 记录的是发帖早期的快照，与 PLOG 的最终数据不可比。",
-    "The Efficiency page turns a PLOG tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.":
-        "「投放效率」页面只需一份 PLOG 追踪表，就能生成一页式 CPM/CPE 图表汇报——可编辑 .pptx 外加网页版——同时列出数据校验发现。全程只在内存中运行，每份报告 2 小时后过期。",
+    "Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to KOL-tracker finals.":
+        "互动数据从不用于判断匹配——DMR 记录的是发帖早期的快照，与 KOL 追踪表的最终数据不可比。",
+    "The Efficiency page turns a KOL tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.":
+        "「投放效率」页面只需一份 KOL 追踪表，就能生成一页式 CPM/CPE 图表汇报——可编辑 .pptx 外加网页版——同时列出数据校验发现。全程只在内存中运行，每份报告 2 小时后过期。",
     "Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.":
         "界面语言随时可以用左上角的按钮切换——本指南也可以从旁边的按钮再次打开。",
     # LLM header mapping + human audit -------------------------------------
@@ -168,7 +168,7 @@ ZH: dict[str, str] = {
     "(you)": "（本人）",
     "(": "（",
     ")": "）",
-    "PLOG file (e.g.": "PLOG 文件（例如",
+    "KOL file (e.g.": "KOL 文件（例如",
     "DMR file (e.g.": "DMR 文件（例如",
     "ERROR": "错误",
     "WARN": "警告",
@@ -187,8 +187,8 @@ ZH: dict[str, str] = {
     "Admin": "管理员",
     "Administrator (can manage accounts)": "管理员（可管理账号）",
     "Analyze & generate": "分析并生成",
-    "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
-        "作者 ID 取自同一博主（NAME 相同）的另一条 PLOG 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
+    "Author id established from another KOL row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
+        "作者 ID 取自同一博主（NAME 相同）的另一条 KOL 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
     "Avg price": "平均合作价",
     "Back": "返回",
     "Back to sign in": "返回登录",
@@ -214,8 +214,8 @@ ZH: dict[str, str] = {
         "先设一个初始密码创建账号，私下把密码告诉对方；对方之后可以在这里自行修改。",
     "DMR gaps（无帖子 + Perimeter内无博主）— actionable":
         "DMR 漏抓（无帖子 + Perimeter内无博主）——可跟进",
-    "DMR posts inside the campaign window by bloggers this campaign resolved, whose PostID matched no PLOG row — extra posts DMR captured that PLOG doesn't track.":
-        "本次核对已解析出的博主在投放窗口期内发布、但 PostID 没有对应到任何 PLOG 行的 DMR 帖子——也就是 DMR 抓到了、PLOG 却没在跟踪的额外帖子。",
+    "DMR posts inside the campaign window by bloggers this campaign resolved, whose PostID matched no KOL row — extra posts DMR captured that the KOL tracker doesn't track.":
+        "本次核对已解析出的博主在投放窗口期内发布、但 PostID 没有对应到任何 KOL 行的 DMR 帖子——也就是 DMR 抓到了、KOL 追踪表却没在跟踪的额外帖子。",
     "DMR row": "DMR 行号",
     "DMR sheet row {n}": "DMR 表第 {n} 行",
     "DMR:": "DMR：",
@@ -281,9 +281,12 @@ ZH: dict[str, str] = {
     "Note": "备注",
     "Nothing found.": "没有发现额外帖子。",
     "Outside DMR export window": "超出 DMR 导出窗口",
-    "PLOG LIKE {a} vs DMR Likes_Retweet {b}":
-        "PLOG LIKE {a}，DMR Likes_Retweet {b}",
-    "PLOG:": "PLOG：",
+    "KOL LIKE {a} vs DMR Likes_Retweet {b}":
+        "KOL LIKE {a}，DMR Likes_Retweet {b}",
+    "DMR snapshot: Share_Favorites {c} · Comments {d} · Engagement {e} · WEIGHTED ENG. {f}":
+        "DMR 快照：Share_Favorites {c}·Comments {d}·Engagement {e}·WEIGHTED ENG. {f}",
+    "KOL:": "KOL：",
+    "Total posts": "帖子总数",
     "Parse preview — confirm before running": "解析预览——确认后开始核对",
     "Password": "密码",
     "Password (min 8 characters)": "密码（至少 8 个字符）",
@@ -304,12 +307,12 @@ ZH: dict[str, str] = {
     "Analyzing…": "正在分析…",
     "When": "时间",
     "Retry": "重试",
-    "PLOG rows": "行 PLOG",
+    "KOL rows": "行 KOL",
     "DMR rows": "行 DMR",
     "outside export window": "行在导出窗口外",
     "perimeter REDBOOK_IDs": "个 Perimeter REDBOOK_ID",
-    "{p} PLOG rows ↔ {d} DMR rows — nothing external has been called yet.":
-        "PLOG {p} 行 ↔ DMR {d} 行——目前尚未调用任何外部服务。",
+    "{p} KOL rows ↔ {d} DMR rows — nothing external has been called yet.":
+        "KOL {p} 行 ↔ DMR {d} 行——目前尚未调用任何外部服务。",
     "Export window from": "导出窗口 从",
     "Export window to": "导出窗口 至",
     "Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). Clear either date to disable the window checks.":
@@ -341,8 +344,8 @@ ZH: dict[str, str] = {
         "会读取「Date of extraction」说明行来提示名单新旧。只使用中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）。",
     "Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.":
         "表头或版式不一样（比如中文表头的追踪表）？直接上传即可——Claude 会给出列映射建议，你在审核页批准之前不会开始任何处理。",
-    "Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
-        "Excel .xlsx，最大 25 MB，一张 PLOG 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
+    "Excel .xlsx, up to 25 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
+        "Excel .xlsx，最大 25 MB，一张 KOL 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
     "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
         "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——LEVEL 缺失或看不懂的行会自动按 FAN BASE 粉丝量分层（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP，以 V11 提示）。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
     "Perimeter in use:": "当前使用的 Perimeter：",
@@ -391,14 +394,14 @@ ZH: dict[str, str] = {
     "TikHub calls this run:": "本次核对 TikHub 调用：",
     "TikHub calls:": "TikHub 调用：",
     "Top-2 impression share": "前两篇曝光占比",
-    "Turn a PLOG tracker into a chart-based efficiency presentation (TIER × 报备/软植 CPM & CPE, price premiums, validation caveats) — editable":
-        "把 PLOG 追踪表做成一份图表化的投放效率汇报（TIER × 报备/软植 的 CPM 与 CPE、价格溢价、校验提示）——可编辑的",
+    "Turn a KOL tracker into a chart-based efficiency presentation (TIER × 报备/软植 CPM & CPE, price premiums, validation caveats) — editable":
+        "把 KOL 追踪表做成一份图表化的投放效率汇报（TIER × 报备/软植 的 CPM 与 CPE、价格溢价、校验提示）——可编辑的",
     "Update password": "更新密码",
     "Upload & preview": "上传并预览",
-    "Upload a PLOG-style tracker (": "上传 PLOG 格式的追踪表（需包含 ",
+    "Upload a KOL-style tracker (": "上传 KOL 格式的追踪表（需包含 ",
     "Upload again": "重新上传",
-    "Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.":
-        "上传内部追踪表（PLOG）和 DMR 社媒监测导出文件。开始前会先显示解析预览——在确认之前不会调用 TikHub 或 Claude。",
+    "Upload the internal KOL tracker and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.":
+        "上传内部 KOL 追踪表和 DMR 社媒监测导出文件。开始前会先显示解析预览——在确认之前不会调用 TikHub 或 Claude。",
     "Use Claude for residue adjudication + bilingual summary":
         "用 Claude 复核剩余存疑行并生成双语摘要",
     "Username": "用户名",
@@ -438,8 +441,8 @@ ZH: dict[str, str] = {
         "{filename} · 提取于 {date} · 共 {rows} 行，其中 {redbook} 行有 REDBOOK_ID——「无博主」行将按是否在名单内拆分。",
     "{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.":
         "{filename} · 提取于 {date} · 共 {rows} 行，其中 {redbook} 行有 REDBOOK_ID。",
-    "{n} PLOG row(s) have a POST DATE outside the DMR export window — an absent post there is expected-missing, not a DMR gap. They are flagged in the results.":
-        "有 {n} 行 PLOG 的 POST DATE 在 DMR 导出窗口之外——这些行查不到帖子属于预期缺失，而不是 DMR 漏抓，结果中已相应标记。",
+    "{n} KOL row(s) have a POST DATE outside the DMR export window — an absent post there is expected-missing, not a DMR gap. They are flagged in the results.":
+        "有 {n} 行 KOL 的 POST DATE 在 DMR 导出窗口之外——这些行查不到帖子属于预期缺失，而不是 DMR 漏抓，结果中已相应标记。",
     "{n} candidate(s)": "{n} 个候选",
     "{n} days": "{n} 天",
     "{n} followers": "{n} 粉丝",

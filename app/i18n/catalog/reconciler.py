@@ -25,10 +25,10 @@ ZH: dict[str, str] = {
     "error": "出错",
 
     # fixed evidence / warning sentences stored at run time -----------------
-    "DMR engagement is a first-crawl snapshot (often within hours of posting) and is NOT comparable to PLOG finals — shown as context only, never used for matching.":
-        "DMR 的互动数是首次抓取时的快照（往往在发帖后几小时内），与 PLOG 的最终数据不可比——仅作参考展示，绝不用于匹配判断。",
-    "PLOG sheet parsed but contained no data rows.":
-        "PLOG 工作表解析成功，但没有数据行。",
+    "DMR engagement is a first-crawl snapshot (often within hours of posting) and is NOT comparable to KOL-tracker finals — shown as context only, never used for matching.":
+        "DMR 的互动数是首次抓取时的快照（往往在发帖后几小时内），与 KOL 追踪表的最终数据不可比——仅作参考展示，绝不用于匹配判断。",
+    "KOL sheet parsed but contained no data rows.":
+        "KOL 工作表解析成功，但没有数据行。",
     "DMR sheet parsed but contained no data rows.":
         "DMR 工作表解析成功，但没有数据行。",
     "Perimeter sheet parsed but had no data rows.":
@@ -55,15 +55,15 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^Resolving links (\d+/\d+)…$"), r"正在解析链接 \1…"),
     (re.compile(r"^Matching rows (\d+/\d+)…$"), r"正在逐行匹配 \1…"),
     (re.compile(r"^Run failed: (.*)$", re.S), r"核对失败：\1"),
-    (re.compile(r"^PLOG row (\d+): POST DATE (.+) could not be parsed — "
+    (re.compile(r"^KOL row (\d+): POST DATE (.+) could not be parsed — "
                 r"date-based checks are skipped for this row\.$"),
-     r"PLOG 表第 \1 行：POST DATE \2 无法解析——该行跳过所有基于日期的检查。"),
+     r"KOL 表第 \1 行：POST DATE \2 无法解析——该行跳过所有基于日期的检查。"),
     (re.compile(r"^Duplicate row identity \(CAMPAIGN=(.+), NO=(.+)\) at sheet "
                 r"row (\d+) — each row is still annotated individually \(rows "
                 r"are tracked by sheet row\), but check the source data\.$"),
      r"表第 \3 行的行标识重复（CAMPAIGN=\1，NO=\2）——每行仍按表格行号单独标注，但请核查源数据。"),
-    (re.compile(r"^PLOG: (\d+) rows in total had unparseable POST DATE values\.$"),
-     r"PLOG：共 \1 行的 POST DATE 无法解析。"),
+    (re.compile(r"^KOL: (\d+) rows in total had unparseable POST DATE values\.$"),
+     r"KOL：共 \1 行的 POST DATE 无法解析。"),
     (re.compile(r"^DMR row (\d+): PostID (.+) is not a 24-char hex note id — "
                 r"this row cannot join against resolved links\.$"),
      r"DMR 表第 \1 行：PostID \2 不是 24 位十六进制的笔记 ID——该行无法与解析出的链接做关联。"),
@@ -72,9 +72,9 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
      r"DMR 表第 \1 行：Link 超链接内嵌的 PostID 是 \2，而 PostID 列写的是 \3——关联时以 PostID 列为准。"),
     (re.compile(r"^DMR: (\d+) rows in total had non-hex PostID values\.$"),
      r"DMR：共 \1 行的 PostID 不是十六进制格式。"),
-    (re.compile(r"^PLOG parse failed: no sheet has a header row containing "
+    (re.compile(r"^KOL parse failed: no sheet has a header row containing "
                 r"both 'NAME' and 'POST LINK' within the first (\d+) rows\.$"),
-     r"PLOG 解析失败：所有工作表的前 \1 行里都找不到同时包含「NAME」和「POST LINK」的表头行。"),
+     r"KOL 解析失败：所有工作表的前 \1 行里都找不到同时包含「NAME」和「POST LINK」的表头行。"),
     (re.compile(r"^DMR parse failed: no sheet has a header row containing "
                 r"both 'Blogger' and 'PostID' within the first (\d+) rows\.$"),
      r"DMR 解析失败：所有工作表的前 \1 行里都找不到同时包含「Blogger」和「PostID」的表头行。"),
@@ -86,13 +86,13 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
                 re.S),
      r"Perimeter 解析失败：\2 的前 \1 行里找不到同时包含「NAME」和「REDBOOK_ID」的表头行。"),
     # per-row evidence notes (matcher.py / adjudicator.py) ------------------
-    (re.compile(r"^PLOG POST DATE (.+) is outside the DMR export window "
+    (re.compile(r"^KOL POST DATE (.+) is outside the DMR export window "
                 r"(.+)\.\.(.+) — an absent post is expected-missing, not a "
                 r"DMR gap\.$"),
-     r"PLOG 的 POST DATE \1 在 DMR 导出窗口 \2～\3 之外——查不到帖子属于预期缺失，而不是 DMR 漏抓。"),
+     r"KOL 的 POST DATE \1 在 DMR 导出窗口 \2～\3 之外——查不到帖子属于预期缺失，而不是 DMR 漏抓。"),
     (re.compile(r"^Note-ID join is certain, but DMR records the blogger as "
-                r"(.+) which does not contain PLOG name (.+)\.$"),
-     r"笔记 ID 关联无疑，但 DMR 里登记的博主名是 \1，并不包含 PLOG 的名字 \2。"),
+                r"(.+) which does not contain KOL name (.+)\.$"),
+     r"笔记 ID 关联无疑，但 DMR 里登记的博主名是 \1，并不包含 KOL 的名字 \2。"),
     (re.compile(r"^DMR tracks author (\S+) \((.+), (\d+) post\(s\)\) but this "
                 r"note (\S+) is not among them\.$"),
      r"DMR 在跟踪作者 \1（\2，共 \3 篇），但这条笔记 \4 不在其中。"),

@@ -178,6 +178,10 @@ def _fill_match_evidence(v: Verdict, prow: PlogRow, drow: DmrRow) -> None:
     v.matched_post_date = drow.post_date.strftime("%Y-%m-%d %H:%M") if drow.post_date else None
     v.date_delta_days = _delta_days(prow.post_date, drow)
     v.dmr_likes_retweet = drow.likes_retweet
+    v.dmr_share_favorites = drow.share_favorites
+    v.dmr_comments = drow.comments
+    v.dmr_engagement = drow.engagement
+    v.dmr_weighted_eng = drow.weighted_eng
 
 
 def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
@@ -200,7 +204,7 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
     if prow.post_date and wf and wt and not (wf <= prow.post_date <= wt):
         v.out_of_window = True
         v.notes.append(
-            f"PLOG POST DATE {prow.post_date} is outside the DMR export window "
+            f"KOL POST DATE {prow.post_date} is outside the DMR export window "
             f"{wf}..{wt} — an absent post is expected-missing, not a DMR gap."
         )
 
@@ -223,7 +227,7 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 v.name_mislabel = True
                 v.notes.append(
                     f"Note-ID join is certain, but DMR records the blogger as "
-                    f"{drow.blogger!r} which does not contain PLOG name {prow.name!r}."
+                    f"{drow.blogger!r} which does not contain KOL name {prow.name!r}."
                 )
             return v
 
@@ -238,7 +242,7 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 v.resolved_author_id = res.author_id
                 author_via_sibling = True
                 v.notes.append(
-                    "Author id established from another PLOG row of the same "
+                    "Author id established from another KOL row of the same "
                     "blogger (identical NAME) — this row's note detail is "
                     "dead/blocked, but blogger presence is still decidable."
                 )

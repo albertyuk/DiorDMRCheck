@@ -38,7 +38,7 @@ NAME_MISLABEL = "有 但是DMR博主名字标注错误"
 
 ENGAGEMENT_CAVEAT = (
     "DMR engagement is a first-crawl snapshot (often within hours of posting) "
-    "and is NOT comparable to PLOG finals — shown as context only, never used "
+    "and is NOT comparable to KOL-tracker finals — shown as context only, never used "
     "for matching."
 )
 
@@ -91,6 +91,12 @@ class Verdict:
     name_method: str = ""
     plog_like: Optional[int] = None
     dmr_likes_retweet: Optional[int] = None
+    # DMR engagement snapshot of the matched row (export "weighted engagement
+    # data" section — context only, never a matching signal)
+    dmr_share_favorites: Optional[int] = None
+    dmr_comments: Optional[int] = None
+    dmr_engagement: Optional[int] = None
+    dmr_weighted_eng: Optional[float] = None
     # NOTE: the engagement caveat (ENGAGEMENT_CAVEAT) is document-level
     # context, emitted once per result/audit document — not stored per row.
     out_of_window: bool = False

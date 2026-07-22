@@ -17,7 +17,11 @@ reference (`PLOG_DMR_CHECK_1.xlsx`).
    DMR likes).
 2. **Every verdict carries evidence** — deciding tier, matched DMR row/PostID,
    resolved note/author IDs, name-match method, date delta — visible in the UI
-   popover and exported in columns T+ and the JSON audit log.
+   popover and in the JSON audit log. The annotated Excel stays deliberately
+   small: column S, then `STATUS`, `MATCHED DMR BLOGGER`, and a
+   weighted-engagement-data section copied verbatim from the matched DMR row
+   (`Likes_Retweet` · `Share_Favorites` · `Comments` · `Engagement` ·
+   `WEIGHTED ENG.`).
 3. **Cache everything external.** SQLite table keyed by short-link URL. A
    resolved `(note_id, author_id)` never changes, so successes are cached
    permanently; failures are retried only after a TTL or on request.
@@ -298,7 +302,7 @@ excusing those two**.
   running, and pending-audit runs; removal also clears matching run history.
 - **The export never overwrites populated cells.** An S cell that already
   holds a value in the uploaded file is kept verbatim (when it disagrees
-  with the pipeline the verdict is recorded in the evidence Notes column
+  with the pipeline the verdict is recorded in the evidence STATUS cell
   instead), and the evidence block shifts right past any column that
   already contains data. A UI override — an explicit action in this tool —
   still writes its value.

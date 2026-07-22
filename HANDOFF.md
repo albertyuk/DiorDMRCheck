@@ -102,8 +102,11 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
    price per single impression — ×1000 off standard). **Never generate
    cross-wave comparisons** in insights.
 6. **Export never overwrites populated cells** — pre-filled column-S values
-   are kept (disagreement recorded in evidence Notes), the evidence block
-   shifts right past populated columns, A–R untouched. UI overrides win.
+   are kept (disagreement recorded in the evidence STATUS cell), the evidence
+   block shifts right past populated columns, A–R untouched. UI overrides win.
+   The evidence block is deliberately small since 2026-07: STATUS, MATCHED
+   DMR BLOGGER, and the weighted-engagement-data section copied verbatim from
+   the matched DMR row — full evidence lives in the UI + JSON audit only.
 7. **Header remap**: the LLM proposes column mappings from a structural
    sample only; NOTHING applies without human approval on the audit screen;
    only header cells are rewritten; approved mappings cached by

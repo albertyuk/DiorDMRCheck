@@ -123,7 +123,7 @@ def test_td_translates_known_runtime_messages():
     assert td("Waiting for a free run slot…") == "正在排队，等待可用的核对名额…"
     assert td("Resolving links 37/101…") == "正在解析链接 37/101…"
     assert "核对失败：boom" == td("Run failed: boom")
-    got = td("PLOG row 17: POST DATE 'soon' could not be parsed — "
+    got = td("KOL row 17: POST DATE 'soon' could not be parsed — "
              "date-based checks are skipped for this row.")
     assert "17" in got and "'soon'" in got and "跳过" in got
     got = td("DMR row 9: Link hyperlink embeds PostID aaa but the PostID "

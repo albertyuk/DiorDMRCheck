@@ -4,7 +4,7 @@
   {% set flow_step = "preview" %}{% include "shared/_steps.html" %}
   <h1>{{ t("Parse preview — confirm before running") }}</h1>
   <div class="counts">
-    <span class="stat"><b>{{ preview.plog.rows }}</b> {{ t("PLOG rows") }}</span>
+    <span class="stat"><b>{{ preview.plog.rows }}</b> {{ t("KOL rows") }}</span>
     <span class="stat"><b>{{ preview.dmr.rows }}</b> {{ t("DMR rows") }}</span>
     {% if preview.out_of_window_rows %}
       <span class="stat" style="border-color:#a06a00"><b>{{ preview.out_of_window_rows }}</b> {{ t("outside export window") }}</span>
@@ -16,7 +16,7 @@
   {% if preview.remap %}
     {% for kind, m in preview.remap.items() %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>{{ t("Headers remapped") }}</b> ({{ "PLOG" if kind == "plog" else "DMR" }}) —
+      <b>{{ t("Headers remapped") }}</b> ({{ "KOL" if kind == "plog" else "DMR" }}) —
       {{ t("sheet") }} <code>{{ m.sheet }}</code>, {{ t("header row") }} {{ m.header_row }}:
       {% for field, col in m.columns.items() %}{{ field }} ← {{ t("column {n}", n=col) }}{% if not loop.last %} · {% endif %}{% endfor %}.
       {% if m.auto %}{{ t("Applied automatically — this exact format was approved by") }}
@@ -28,7 +28,7 @@
   {% endif %}
   <div style="display:flex; gap:2rem; flex-wrap:wrap">
     <div>
-      <h2>PLOG</h2>
+      <h2>KOL</h2>
       <table>
         <tr><th>{{ t("Sheet") }}</th><td>{{ preview.plog.sheet }}</td></tr>
         <tr><th>{{ t("Header row") }}</th><td>{{ preview.plog.header_row }}{{ t(" (detected by NAME + POST LINK fingerprint)") }}</td></tr>
@@ -52,7 +52,7 @@
         <tr><th>{{ t("Export window") }}</th><td>{{ preview.dmr.window[0] or "?" }} → {{ preview.dmr.window[1] or "?" }}</td></tr>
       </table>
       {% if preview.out_of_window_rows %}
-        <div class="warn">⚠ {{ t("{n} PLOG row(s) have a POST DATE outside the DMR export window — an absent post there is expected-missing, not a DMR gap. They are flagged in the results.", n=preview.out_of_window_rows) }}</div>
+        <div class="warn">⚠ {{ t("{n} KOL row(s) have a POST DATE outside the DMR export window — an absent post there is expected-missing, not a DMR gap. They are flagged in the results.", n=preview.out_of_window_rows) }}</div>
       {% endif %}
     </div>
   </div>
@@ -76,7 +76,7 @@
     <p class="muted" style="font-size:.78rem">{{ t("No perimeter — 无博主 rows stay unsplit.") }}</p>
   {% endif %}
 
-  {% for w in preview.plog.warnings %}<div class="warn">{{ t("PLOG:") }} {{ td(w) }}</div>{% endfor %}
+  {% for w in preview.plog.warnings %}<div class="warn">{{ t("KOL:") }} {{ td(w) }}</div>{% endfor %}
   {% for w in preview.dmr.warnings %}<div class="warn">{{ t("DMR:") }} {{ td(w) }}</div>{% endfor %}
 
   <form method="post" action="/runs/{{ run_id }}/start" style="margin-top:1rem"
@@ -107,7 +107,7 @@
       <button type="submit"
               data-busy-label="{{ t('Starting…') }}">{{ t("Run reconciliation") }}</button>
       <a class="btn secondary" href="/">{{ t("Cancel") }}</a>
-      <span class="muted">{{ t("{p} PLOG rows ↔ {d} DMR rows — nothing external has been called yet.",
+      <span class="muted">{{ t("{p} KOL rows ↔ {d} DMR rows — nothing external has been called yet.",
                                p=preview.plog.rows, d=preview.dmr.rows) }}</span>
     </div>
   </form>

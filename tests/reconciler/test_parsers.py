@@ -60,3 +60,13 @@ def test_dmr_rows_complete(dmr_path):
     assert len(d.rows) == len(fixtures.dmr_rows())
     early = next(r for r in d.rows if r.post_id == fixtures.N_MOCHI_JUN)
     assert early.likes_retweet == 14  # first-crawl snapshot kept verbatim
+
+
+def test_dmr_weighted_engagement_parsed(dmr_path):
+    """The "WEIGHTED ENG." column is copied verbatim into the export's
+    weighted-engagement-data section, so the parser must pick it up."""
+    d = parse_dmr(dmr_path)
+    early = next(r for r in d.rows if r.post_id == fixtures.N_MOCHI_JUN)
+    assert early.weighted_eng == 14.5  # fixture writes likes + 0.5
+    assert early.share_favorites == 1 and early.engagement == 15
+    assert early.comments == 0

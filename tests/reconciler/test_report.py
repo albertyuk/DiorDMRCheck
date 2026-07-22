@@ -28,13 +28,28 @@ def test_annotated_export(plog_path, dmr_path, fake_resolver, tmp_path):
 
     # S has no header (the reference leaves S1 blank)
     assert ann.cell(row=plog.header_row, column=19).value in (None, "")
-    # evidence headers start at T
-    assert ann.cell(row=plog.header_row, column=20).value == "STATUS"
+    # trimmed evidence block starts at T: status, matched blogger, then the
+    # weighted-engagement-data section copied from the DMR file
+    assert [ann.cell(row=plog.header_row, column=c).value
+            for c in range(20, 20 + len(EVIDENCE_HEADERS))] == EVIDENCE_HEADERS
+    # nothing is written beyond the evidence block
+    assert ann.cell(row=plog.header_row,
+                    column=20 + len(EVIDENCE_HEADERS)).value in (None, "")
 
     by = {(v.campaign, v.no): v for v in verdicts}
-    # matched row → blank S
+    # matched row → blank S + DMR engagement snapshot pulled verbatim
     v = by[("PLOG #001", "1")]
     assert ann.cell(row=v.excel_row, column=19).value in (None, "")
+    assert ann.cell(row=v.excel_row, column=21).value == "墨池墨吟"
+    assert ann.cell(row=v.excel_row, column=22).value == 14   # Likes_Retweet
+    assert ann.cell(row=v.excel_row, column=23).value == 1    # Share_Favorites
+    assert ann.cell(row=v.excel_row, column=24).value == 0    # Comments
+    assert ann.cell(row=v.excel_row, column=25).value == 15   # Engagement
+    assert ann.cell(row=v.excel_row, column=26).value == 14.5  # WEIGHTED ENG.
+    # unmatched row → engagement section stays empty
+    nv = by[("PLOG #002", "2")]
+    assert all(ann.cell(row=nv.excel_row, column=c).value is None
+               for c in range(21, 20 + len(EVIDENCE_HEADERS)))
     # mislabel row → the human's exact vocabulary
     v = by[("PLOG #001", "3")]
     assert ann.cell(row=v.excel_row, column=19).value == "有 但是DMR博主名字标注错误"
@@ -152,15 +167,13 @@ def test_prefilled_s_cells_are_never_overwritten(plog_path, dmr_path,
 
     assert ann.cell(row=matched_row, column=19).value == "人工已确认OK"
     assert ann.cell(row=nopost_row, column=19).value == "无帖子"
-    # disagreement is noted in the evidence Notes column, agreement is not
-    n_cols = len(EVIDENCE_HEADERS)
-    notes_col = 20 + n_cols - 1
-    notes = ann.cell(row=matched_row, column=notes_col).value or ""
-    assert "人工已确认OK" in notes and "kept" in notes
+    # disagreement is recorded in the STATUS cell (the trimmed layout has no
+    # Notes column); agreement gets the plain "kept" marker
     status = ann.cell(row=matched_row, column=20).value or ""
-    assert "(S kept from source)" in status
-    agree_notes = ann.cell(row=nopost_row, column=notes_col).value or ""
-    assert "kept" not in agree_notes
+    assert "S kept from source" in status and "pipeline verdict" in status
+    agree_status = ann.cell(row=nopost_row, column=20).value or ""
+    assert "S kept from source" in agree_status
+    assert "pipeline verdict" not in agree_status
     # untouched rows still get the pipeline verdict as usual
     mislabel_row = by[("PLOG #001", "3")].excel_row
     assert ann.cell(row=mislabel_row, column=19).value == "有 但是DMR博主名字标注错误"

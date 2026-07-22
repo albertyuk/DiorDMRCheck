@@ -243,7 +243,7 @@ def test_no_api_key_keeps_plain_error(client, monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "")
     r = _upload_run(client, build_cn_plog_bytes())
     assert r.status_code == 422
-    assert "PLOG parse failed" in r.text
+    assert "KOL parse failed" in r.text
 
 
 # ----------------------------------------------------------- efficiency flow

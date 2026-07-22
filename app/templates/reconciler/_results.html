@@ -1,5 +1,6 @@
 <div class="card">
   <div class="counts">
+    <span class="stat"><b>{{ verdicts | length }}</b> {{ t("Total posts") }}</span>
     {% for k, v in counts.items() %}<span class="stat"><b>{{ v }}</b> {{ k }}</span>{% endfor %}
     <span class="stat muted">{{ t("TikHub calls:") }} {{ run.tikhub_calls or 0 }}</span>
     <span class="stat muted">{{ t("LLM calls:") }} {{ run.llm_calls or 0 }}</span>
@@ -24,7 +25,7 @@
       <b>摘要</b> {{ summary.zh }}<br><b>Summary</b> {{ summary.en }}
     </div>
   {% endif %}
-  {% for w in plog_meta.warnings %}<div class="warn">PLOG: {{ td(w) }}</div>{% endfor %}
+  {% for w in plog_meta.warnings %}<div class="warn">{{ t("KOL:") }} {{ td(w) }}</div>{% endfor %}
   {% for w in dmr_meta.warnings %}<div class="warn">DMR: {{ td(w) }}</div>{% endfor %}
 </div>
 
@@ -103,9 +104,18 @@
                 · {{ v.matched_post_date or "" }}{% else %}—{% endif %}</dd>
               <dt>{{ t("Date Δ") }}</dt><dd>{{ t("{n} days", n=v.date_delta_days if v.date_delta_days is not none else "—") }}</dd>
               <dt>{{ t("Name method") }}</dt><dd>{{ v.name_method or "—" }}</dd>
-              <dt>{{ t("Engagement") }}</dt><dd>{{ t("PLOG LIKE {a} vs DMR Likes_Retweet {b}",
+              <dt>{{ t("Engagement") }}</dt><dd>{{ t("KOL LIKE {a} vs DMR Likes_Retweet {b}",
                     a=v.plog_like if v.plog_like is not none else "?",
                     b=v.dmr_likes_retweet if v.dmr_likes_retweet is not none else "?") }}
+                {% if v.matched_post_id %}
+                  {# .get(): verdicts stored before these fields existed must
+                     still render #}
+                  {% set sf = v.get("dmr_share_favorites") %}{% set cm = v.get("dmr_comments") %}
+                  {% set en = v.get("dmr_engagement") %}{% set we = v.get("dmr_weighted_eng") %}
+                  <br>{{ t("DMR snapshot: Share_Favorites {c} · Comments {d} · Engagement {e} · WEIGHTED ENG. {f}",
+                        c=sf if sf is not none else "?", d=cm if cm is not none else "?",
+                        e=en if en is not none else "?", f=we if we is not none else "?") }}
+                {% endif %}
                 <div class="caveat">{{ td(engagement_caveat) }}</div></dd>
               {% if v.candidates %}
                 <dt>{{ t("Candidates") }}</dt><dd>
@@ -159,7 +169,7 @@
   </div>
 
   <div id="tab-reverse" class="tab-panel tablewrap">
-    <p class="muted">{{ t("DMR posts inside the campaign window by bloggers this campaign resolved, whose PostID matched no PLOG row — extra posts DMR captured that PLOG doesn't track.") }}</p>
+    <p class="muted">{{ t("DMR posts inside the campaign window by bloggers this campaign resolved, whose PostID matched no KOL row — extra posts DMR captured that the KOL tracker doesn't track.") }}</p>
     <table>
       <tr><th>Blogger</th><th>Username</th><th>PostID</th><th>PostDate</th>
           <th>Likes_Retweet</th><th>Engagement</th><th>{{ t("DMR row") }}</th></tr>

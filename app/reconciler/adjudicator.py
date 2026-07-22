@@ -34,7 +34,7 @@ class AdjudicationBatch(BaseModel):
 
 SYSTEM_PROMPT = (
     "You adjudicate ambiguous rows from a KOL-campaign reconciliation between an "
-    "internal tracker (PLOG) and a DMR social-listening export for Xiaohongshu.\n"
+    "internal KOL tracker and a DMR social-listening export for Xiaohongshu.\n"
     "Rules:\n"
     "- Answer ONLY with JSON matching the given schema. No prose outside JSON.\n"
     "- verdict is SAME_PERSON, SAME_POST, DIFFERENT, or UNSURE.\n"

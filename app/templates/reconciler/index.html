@@ -3,10 +3,10 @@
 <div class="card">
   {% set flow_step = "upload" %}{% include "shared/_steps.html" %}
   <h1>{{ t("New reconciliation run") }}</h1>
-  <p class="muted">{{ t("Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
+  <p class="muted">{{ t("Upload the internal KOL tracker and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
   <form method="post" action="/upload" enctype="multipart/form-data"
         data-busy data-drop-i18n>
-    <p><label>{{ t("PLOG file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
+    <p><label>{{ t("KOL file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
       <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
             data-bad-size="{{ t('over the 25 MB limit') }}">
         <input type="file" name="plog" accept=".xlsx" required></span></label></p>
@@ -36,7 +36,7 @@
     <div style="font-size:.8rem; max-width:760px">
       <p style="margin-top:.7rem"><b>{{ t("All files") }}</b> —
         {{ t("Excel .xlsx only, up to 25 MB each. Sheet names don't matter and metadata rows above the table are fine: the header row is found automatically anywhere in the first 15 rows, and header spelling is forgiving (case, spacing and full-width characters are normalized).") }}</p>
-      <p><b>PLOG</b> —
+      <p><b>KOL</b> —
         {{ t("needs columns") }} <code>NAME</code> {{ t("and") }} <code>POST LINK</code>.
         {{ t("POST LINK can be visible text or a hyperlink cell, as xhslink.com share links or xiaohongshu.com note links. Also used when present:") }}
         <code>CAMPAIGN</code> <code>NO</code> <code>POST DATE</code> <code>LIKE</code>
@@ -47,7 +47,7 @@
         {{ t("(the 24-character Xiaohongshu note id).") }}
         <code>Username</code> {{ t("is strongly recommended — without it 无博主 vs 无帖子 cannot be decided deterministically. Also used when present:") }}
         <code>PostDate</code> <code>Likes_Retweet</code> <code>Share_Favorites</code>
-        <code>Engagement</code> <code>Comments</code> <code>Link</code>{{ t('. A "From … To …" line above the header enables the export-window checks.') }}</p>
+        <code>Engagement</code> <code>WEIGHTED ENG.</code> <code>Comments</code> <code>Link</code>{{ t('. A "From … To …" line above the header enables the export-window checks.') }}</p>
       <p><b>Perimeter</b> —
         {{ t("the LVMH workbook with a") }} <code>List Micro</code>
         {{ t("sheet; needs") }} <code>NAME</code> {{ t("and") }} <code>REDBOOK_ID</code>.

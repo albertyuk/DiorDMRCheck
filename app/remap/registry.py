@@ -57,5 +57,5 @@ FIELDS: dict[str, list[tuple[str, str, bool, str]]] = {
     ],
 }
 
-KIND_LABELS = {"plog": "PLOG tracker", "dmr": "DMR export",
+KIND_LABELS = {"plog": "KOL tracker", "dmr": "DMR export",
                "eff": "KOL efficiency workbook"}
