@@ -80,3 +80,23 @@ def test_existing_runs_table_migrates_perimeter_provenance(tmp_path,
     # run records an explicit 0 or 1.
     assert run["perimeter_uploaded"] is None
     assert run["perimeter_name"] is None
+
+
+# to_date lives in core.xlsx — YY/MM/DD trackers ("24/11/27") must parse
+
+def test_to_date_accepts_two_digit_year_first():
+    from datetime import date
+    from app.core.xlsx import to_date
+    assert to_date("24/11/27") == date(2024, 11, 27)
+    assert to_date("24-11-23") == date(2024, 11, 23)
+    assert to_date("24.11.19") == date(2024, 11, 19)
+
+
+def test_to_date_existing_interpretations_unchanged():
+    from datetime import date
+    from app.core.xlsx import to_date
+    # ambiguous strings keep their historical reading (earlier formats win)
+    assert to_date("05/06/25") == date(2025, 5, 6)      # %m/%d/%y, not y/m/d
+    assert to_date("12/31/2025") == date(2025, 12, 31)  # %m/%d/%Y
+    assert to_date("2025-06-01") == date(2025, 6, 1)
+    assert to_date("garbage") is None

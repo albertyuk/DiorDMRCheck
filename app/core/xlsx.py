@@ -42,8 +42,13 @@ def to_date(v: Any) -> Optional[date]:
         except (OverflowError, ValueError):
             return None
     s = nfkc(str(v)).strip()
+    # %y/%m/%d ("24/11/27" = 2024-11-27, seen in real trackers) sits LAST so
+    # every string the earlier formats already accept keeps its current
+    # interpretation — the two-digit-year forms only catch what would
+    # otherwise be unparseable.
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y", "%d/%m/%Y",
-                "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%m/%d/%y", "%m-%d-%Y"):
+                "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%m/%d/%y", "%m-%d-%Y",
+                "%y/%m/%d", "%y-%m-%d", "%y.%m.%d"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
