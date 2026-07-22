@@ -78,8 +78,9 @@ def run_create(run_id: str, **fields: Any) -> None:
         conn.execute(
             "INSERT INTO runs (id, created_at, status, plog_path, dmr_path, "
             "plog_name, dmr_name, options_json, preview_json, perimeter_hash, "
-            "perimeter_uploaded, perimeter_name) "
-            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "perimeter_uploaded, perimeter_name, perimeter_macro_hash, "
+            "perimeter_macro_uploaded, perimeter_macro_name) "
+            "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id, time.time(),
                 fields.get("plog_path"), fields.get("dmr_path"),
@@ -91,6 +92,9 @@ def run_create(run_id: str, **fields: Any) -> None:
                 fields.get("perimeter_hash"),
                 int(bool(fields.get("perimeter_uploaded"))),
                 fields.get("perimeter_name"),
+                fields.get("perimeter_macro_hash"),
+                int(bool(fields.get("perimeter_macro_uploaded"))),
+                fields.get("perimeter_macro_name"),
             ),
         )
         conn.commit()

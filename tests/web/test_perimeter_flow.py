@@ -164,3 +164,65 @@ def test_preview_offers_editable_export_window(client, tmp_path):
     assert 'name="window_from"' in body and 'name="window_to"' in body
     assert 'value="2026-01-01"' in body and 'value="2026-07-20"' in body
     assert "Clear either date to disable the window checks" in body
+
+
+# --------------------------------------------------------- macro perimeter
+
+def _upload_with_macro(client, tmp_path, *, mode="both"):
+    from tests.reconciler.test_perimeter import build_macro_bytes
+    plog = tmp_path / "p.xlsx"
+    dmr = tmp_path / "d.xlsx"
+    fixtures.build_plog(str(plog))
+    fixtures.build_dmr(str(dmr))
+    macro = build_macro_bytes()
+    r = client.post("/upload", files={
+        "plog": ("p.xlsx", plog.read_bytes(), MIME),
+        "dmr": ("d.xlsx", dmr.read_bytes(), MIME),
+        "perimeter_macro": ("macro.xlsx", macro, MIME),
+    }, data={"perimeter_mode": mode})
+    return r, pm.file_hash(macro, "macro")
+
+
+def test_macro_upload_previews_promotes_and_stores_mode(client, tmp_path,
+                                                        monkeypatch):
+    r, macro_hash = _upload_with_macro(client, tmp_path, mode="macro")
+    assert r.status_code == 200
+    assert "Perimeter (Macro):" in r.text          # preview meta card
+    assert 'value="macro"' in r.text and "checked" in r.text
+    run_id = _run_id(r)
+    assert pm.current_meta("macro") is None        # not promoted at preview
+
+    started = []
+    monkeypatch.setattr(runs, "start_run", lambda rid: started.append(rid))
+    r2 = client.post(f"/runs/{run_id}/start",
+                     data={"perimeter_mode": "macro"}, follow_redirects=False)
+    assert r2.status_code == 303 and started == [run_id]
+
+    cur = pm.current_meta("macro")
+    assert cur and cur["hash"] == macro_hash and cur["kind"] == "macro"
+    assert pm.current_meta() is None               # micro slot untouched
+
+    import json
+    from app.core import db
+    run = db.run_get(run_id)
+    assert run["perimeter_macro_uploaded"] == 1
+    assert run["perimeter_macro_name"] == "macro.xlsx"
+    assert run["perimeter_hash"] is None
+    assert json.loads(run["options_json"])["perimeter_mode"] == "macro"
+
+
+def test_perimeter_remove_is_kind_scoped(client, tmp_path):
+    from tests.reconciler.test_perimeter import build_macro_bytes
+    micro_meta, _ = pm.parse_and_cache(build_perimeter_bytes(), "micro.xlsx")
+    pm.promote_cached(micro_meta["hash"], filename="micro.xlsx")
+    macro_meta, _ = pm.parse_and_cache(build_macro_bytes(), "macro.xlsx",
+                                       "macro")
+    pm.promote_cached(macro_meta["hash"], filename="macro.xlsx", kind="macro")
+    assert pm.current_meta() and pm.current_meta("macro")
+
+    client.post("/perimeter/remove", data={"kind": "macro"})
+    assert pm.current_meta("macro") is None
+    assert pm.current_meta() is not None           # micro survives
+
+    client.post("/perimeter/remove", data={})      # defaults to micro
+    assert pm.current_meta() is None

@@ -71,7 +71,7 @@ def test_flow_stepper_on_upload_page(client):
 
 def test_upload_forms_have_dropzones_and_busy_states(client):
     body = client.get("/").text
-    assert body.count('class="dropzone"') == 3          # plog, dmr, perimeter
+    assert body.count('class="dropzone"') == 4  # plog, dmr, perimeter ×2
     assert "data-busy-label" in body and "Uploading" in body
     eff = client.get("/efficiency").text
     assert 'class="dropzone"' in eff and "data-busy" in eff

@@ -71,12 +71,13 @@ async def index(request: Request):
         "anthropic_configured": bool(config.ANTHROPIC_API_KEY),
         "model": config.ANTHROPIC_MODEL,
         "perimeter": perimeter_mod.current_meta(),
+        "perimeter_macro": perimeter_mod.current_meta("macro"),
     })
 
 
 @router.post("/perimeter/remove")
-async def perimeter_remove():
-    db.setting_delete("current_perimeter")
+async def perimeter_remove(kind: str = Form("micro")):
+    db.setting_delete(perimeter_mod.SETTING_KEY.get(kind, "current_perimeter"))
     return RedirectResponse("/", status_code=303)
 
 
@@ -114,10 +115,12 @@ async def _validate_workbook(request: Request, source) -> None:
 async def _finish_upload(request: Request, run_id: str, run_dir: Path,
                          plog_path: Path, dmr_path: Path,
                          plog_name: str, dmr_name: str,
-                         perim_data: Optional[bytes], perim_name: str,
-                         remap: dict):
+                         perims: dict, perimeter_mode: str, remap: dict):
     """Everything after both workbooks parse: perimeter ingest, preview,
-    run row, preview page. `remap` records any header mappings applied."""
+    run row, preview page. `perims` maps kind ("micro"/"macro") to a
+    (bytes-or-None, filename) pair; `perimeter_mode` is the upload-form
+    toggle (preselects the confirm-screen radio); `remap` records any
+    header mappings applied."""
     try:
         p = await run_upload_task(request, parse_plog, str(plog_path))
         d = await run_upload_task(request, parse_dmr, str(dmr_path))
@@ -137,34 +140,41 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
         remove_tree(run_dir)
         raise
 
-    perim_warnings: list[str] = []
-    perimeter_uploaded = perim_data is not None
-    if perimeter_uploaded:
-        # Parse + cache only. The upload becomes the app-wide current
-        # perimeter when this run is actually STARTED — an abandoned preview
-        # must not swap the perimeter under other users.
-        try:
-            perim_meta, perim_warnings = await run_upload_task(
-                request, perimeter_mod.parse_and_cache,
-                perim_data, perim_name)
-        except ValueError as e:
-            remove_tree(run_dir)
-            return templates.TemplateResponse(
-                request, "shared/error.html", {"message": _td(request)(str(e))},
-                status_code=422)
-        except Exception as e:
-            remove_tree(run_dir)
-            return templates.TemplateResponse(
-                request, "shared/error.html",
-                {"message": _tr(request)(
-                    "Could not read the perimeter file: {e}", e=e)},
-                status_code=422)
-        except BaseException:
-            remove_tree(run_dir)
-            raise
-    else:
-        # no upload in this request — fall back to the promoted default
-        perim_meta = perimeter_mod.current_meta()
+    perim_metas: dict[str, Optional[dict]] = {}
+    perim_warns: dict[str, list[str]] = {}
+    uploaded: dict[str, bool] = {}
+    for kind in ("micro", "macro"):
+        data, name = perims.get(kind) or (None, "")
+        uploaded[kind] = data is not None
+        perim_warns[kind] = []
+        if data is not None:
+            # Parse + cache only. The upload becomes the app-wide current
+            # perimeter (of its kind) when this run is actually STARTED — an
+            # abandoned preview must not swap the perimeter under other users.
+            try:
+                perim_metas[kind], perim_warns[kind] = await run_upload_task(
+                    request, perimeter_mod.parse_and_cache, data, name, kind)
+            except ValueError as e:
+                remove_tree(run_dir)
+                return templates.TemplateResponse(
+                    request, "shared/error.html",
+                    {"message": _td(request)(str(e))},
+                    status_code=422)
+            except Exception as e:
+                remove_tree(run_dir)
+                return templates.TemplateResponse(
+                    request, "shared/error.html",
+                    {"message": _tr(request)(
+                        "Could not read the perimeter file: {e}", e=e)},
+                    status_code=422)
+            except BaseException:
+                remove_tree(run_dir)
+                raise
+        else:
+            # no upload in this request — fall back to the promoted default
+            perim_metas[kind] = perimeter_mod.current_meta(kind)
+    perim_meta = perim_metas["micro"]
+    macro_meta = perim_metas["macro"]
 
     d_from, d_to = p.date_range
     out_of_window = 0
@@ -189,8 +199,13 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
             "warnings": d.warnings,
         },
         "out_of_window_rows": out_of_window,
-        "perimeter": ({**perim_meta, "warnings": perim_warnings}
+        "perimeter": ({**perim_meta, "warnings": perim_warns["micro"]}
                       if perim_meta else None),
+        "perimeter_macro": ({**macro_meta, "warnings": perim_warns["macro"]}
+                            if macro_meta else None),
+        "perimeter_mode": (perimeter_mode
+                           if perimeter_mode in perimeter_mod.MODES
+                           else "both"),
         "remap": remap or None,
     }
     try:
@@ -211,9 +226,14 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
                       plog_name=plog_name, dmr_name=dmr_name,
                       preview=preview,
                       perimeter_hash=perim_meta["hash"] if perim_meta else None,
-                      perimeter_uploaded=perimeter_uploaded,
+                      perimeter_uploaded=uploaded["micro"],
                       perimeter_name=(perim_meta.get("filename")
-                                      if perim_meta else None))
+                                      if perim_meta else None),
+                      perimeter_macro_hash=(macro_meta["hash"]
+                                            if macro_meta else None),
+                      perimeter_macro_uploaded=uploaded["macro"],
+                      perimeter_macro_name=(macro_meta.get("filename")
+                                            if macro_meta else None))
     except BaseException:
         remove_tree(run_dir)
         raise
@@ -222,7 +242,9 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
 
 @router.post("/upload", response_class=HTMLResponse)
 async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
-                 perimeter: Optional[UploadFile] = File(None)):
+                 perimeter: Optional[UploadFile] = File(None),
+                 perimeter_macro: Optional[UploadFile] = File(None),
+                 perimeter_mode: str = Form("both")):
     config.ensure_dirs()
     while True:
         run_id = uuid.uuid4().hex[:12]
@@ -240,28 +262,32 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
         break
     try:
         return await _process_upload(
-            request, plog, dmr, perimeter, run_id, run_dir
+            request, plog, dmr, perimeter, perimeter_macro, perimeter_mode,
+            run_id, run_dir
         )
     finally:
         unregister_active_upload(run_dir)
 
 
 async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
-                          perimeter: Optional[UploadFile], run_id: str,
+                          perimeter: Optional[UploadFile],
+                          perimeter_macro: Optional[UploadFile],
+                          perimeter_mode: str, run_id: str,
                           run_dir: Path):
     plog_path = run_dir / ("plog_" + Path(plog.filename or "plog.xlsx").name)
     dmr_path = run_dir / ("dmr_" + Path(dmr.filename or "dmr.xlsx").name)
-    perim_data = None
-    perim_name = ""
+    perims: dict = {"micro": (None, ""), "macro": (None, "")}
     try:
         await save_limited(plog, plog_path, config.MAX_UPLOAD_BYTES)
         await save_limited(dmr, dmr_path, config.MAX_UPLOAD_BYTES)
         await _validate_workbook(request, str(plog_path))
         await _validate_workbook(request, str(dmr_path))
-        if perimeter is not None and perimeter.filename:
-            perim_data = await read_limited(perimeter, config.MAX_UPLOAD_BYTES)
-            perim_name = Path(perimeter.filename).name
-            await _validate_workbook(request, perim_data)
+        for kind, upload_file in (("micro", perimeter),
+                                  ("macro", perimeter_macro)):
+            if upload_file is not None and upload_file.filename:
+                data = await read_limited(upload_file, config.MAX_UPLOAD_BYTES)
+                await _validate_workbook(request, data)
+                perims[kind] = (data, Path(upload_file.filename).name)
     except UploadLimitError as e:
         remove_tree(run_dir)
         return templates.TemplateResponse(
@@ -354,7 +380,7 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
                 "paths": {k: str(v) for k, v in paths.items()},
                 "names": {"plog": plog.filename or "plog.xlsx",
                           "dmr": dmr.filename or "dmr.xlsx"},
-                "perim_data": perim_data, "perim_name": perim_name,
+                "perims": perims, "perimeter_mode": perimeter_mode,
                 "audits": audits, "remap": remap,
             })
         except TokenStoreFull:
@@ -370,7 +396,7 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
     return await _finish_upload(
         request, run_id, run_dir, paths["plog"], paths["dmr"],
         plog.filename or "plog.xlsx", dmr.filename or "dmr.xlsx",
-        perim_data, perim_name, remap)
+        perims, perimeter_mode, remap)
 
 
 async def _apply_remap_run(request: Request, token: str, entry: dict,
@@ -392,7 +418,8 @@ async def _apply_remap_run(request: Request, token: str, entry: dict,
         request, entry["run_id"], Path(entry["run_dir"]),
         paths["plog"], paths["dmr"],
         entry["names"]["plog"], entry["names"]["dmr"],
-        entry.get("perim_data"), entry.get("perim_name", ""), remap)
+        entry.get("perims") or {}, entry.get("perimeter_mode") or "both",
+        remap)
 
 
 FLOW_HANDLERS["run"] = _apply_remap_run
@@ -403,7 +430,8 @@ FLOW_HANDLERS["run"] = _apply_remap_run
 @router.post("/runs/{run_id}/start")
 async def start(run_id: str, retry_failed_links: str = Form("0"),
                 use_llm: str = Form("0"),
-                window_from: str = Form(""), window_to: str = Form("")):
+                window_from: str = Form(""), window_to: str = Form(""),
+                perimeter_mode: str = Form("both")):
     """Checkbox values arrive as "1" (hidden-input fallback supplies "0" when
     unchecked — a bool Form default can never receive False from a form)."""
     lease_path = config.UPLOAD_DIR / run_id
@@ -419,6 +447,11 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                 db.run_update(run_id, options_json=json.dumps({
                     "retry_failed_links": retry_failed_links == "1",
                     "use_llm": use_llm == "1",
+                    # which perimeter lists to check — the toggle on the
+                    # confirm screen (micro / macro / both)
+                    "perimeter_mode": (perimeter_mode
+                                       if perimeter_mode in perimeter_mod.MODES
+                                       else "both"),
                     # user-editable DMR export window (confirm screen);
                     # runs.apply_window_override validates and applies it
                     "window_from": window_from.strip()[:10],
@@ -432,6 +465,12 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                     perimeter_mod.promote_cached(
                         run["perimeter_hash"],
                         filename=run.get("perimeter_name") or "")
+                if (initial_start and run.get("perimeter_macro_uploaded")
+                        and run.get("perimeter_macro_hash")):
+                    perimeter_mod.promote_cached(
+                        run["perimeter_macro_hash"],
+                        filename=run.get("perimeter_macro_name") or "",
+                        kind="macro")
                 runs.start_run(run_id)
         return RedirectResponse(f"/runs/{run_id}", status_code=303)
     finally:
@@ -490,6 +529,8 @@ async def results_fragment(request: Request, run_id: str):
         "counts": result.get("counts", {}),
         "buckets": result.get("buckets"),
         "perimeter_meta": result.get("perimeter_meta"),
+        "perimeter_macro_meta": result.get("perimeter_macro_meta"),
+        "perimeter_mode": result.get("perimeter_mode"),
         "perimeter_warning": result.get("perimeter_warning"),
         "reverse_rows": result.get("reverse_audit", []),
         "plog_meta": result.get("plog_meta", {}),

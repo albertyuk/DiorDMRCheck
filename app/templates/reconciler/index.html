@@ -19,6 +19,16 @@
       <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
             data-bad-size="{{ t('over the 25 MB limit') }}">
         <input type="file" name="perimeter" accept=".xlsx"></span></label></p>
+    <p><label>{{ t("Perimeter (Macro) — optional") }}
+      {% if perimeter_macro %}<span class="muted">{{ t("(replaces the current one below)") }}</span>{% endif %}<br>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="perimeter_macro" accept=".xlsx"></span></label></p>
+    <p>{{ t("Perimeter check") }}:
+      <label style="margin:0 .9rem 0 .5rem"><input type="radio" name="perimeter_mode" value="micro"> Micro</label>
+      <label style="margin-right:.9rem"><input type="radio" name="perimeter_mode" value="macro"> Macro</label>
+      <label><input type="radio" name="perimeter_mode" value="both" checked> {{ t("Both") }}</label><br>
+      <span class="muted" style="font-size:.72rem">{{ t("Which perimeter list(s) the 无博主 cross-check uses — only lists that are uploaded (or already in use) are actually checked. You can still change this on the confirm screen.") }}</span></p>
     <button type="submit"
             data-busy-label="{{ t('Uploading & parsing…') }}">{{ t("Upload & preview") }}</button>
   </form>
@@ -56,27 +66,31 @@
     </div>
   </details>
 
-  {% if perimeter %}
+  {% for kind, p in [("Micro", perimeter), ("Macro", perimeter_macro)] %}
+    {% if p %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>{{ t("Perimeter in use:") }}</b>
+      <b>{{ t("Perimeter in use ({kind}):", kind=kind) }}</b>
       {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.",
-           filename=perimeter.filename,
-           date=perimeter.extraction_date or t("unknown date"),
-           rows="{:,}".format(perimeter.rows),
-           redbook="{:,}".format(perimeter.redbook_count)) }}
-      {% if perimeter.china_filter %}
+           filename=p.filename,
+           date=p.extraction_date or t("unknown date"),
+           rows="{:,}".format(p.rows),
+           redbook="{:,}".format(p.redbook_count)) }}
+      {% if p.china_filter %}
       {{ t("China market only ({signal}): kept {kept} of {scanned} rows.",
-           signal=perimeter.china_filter,
-           kept="{:,}".format(perimeter.rows),
-           scanned="{:,}".format(perimeter.rows_scanned or 0)) }}
+           signal=p.china_filter,
+           kept="{:,}".format(p.rows),
+           scanned="{:,}".format(p.rows_scanned or 0)) }}
       {% endif %}
       {{ t("无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.") }}
       <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
             onsubmit="return confirm('{{ t("Remove the perimeter? Runs revert to plain 无博主.") }}')">
+        <input type="hidden" name="kind" value="{{ kind | lower }}">
         <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
       </form>
     </div>
-  {% else %}
+    {% endif %}
+  {% endfor %}
+  {% if not perimeter and not perimeter_macro %}
     <p class="muted" style="font-size:.78rem">{{ t("No perimeter uploaded — 无博主 rows are not split by perimeter membership.") }}</p>
   {% endif %}
 </div>

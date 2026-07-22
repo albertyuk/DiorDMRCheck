@@ -1,10 +1,14 @@
-"""LVMH social perimeter (Micro) — offline cross-check for NO_BLOGGER rows.
+"""LVMH social perimeter (Micro + Macro) — offline cross-check for
+NO_BLOGGER rows.
 
-Parses the ``List Micro`` sheet only (~58.8k rows), locating the header by
-fingerprint (a row containing both NAME and REDBOOK_ID) and the extraction
-date from the metadata rows above it. Parsing a file this size is slow, so
-the parsed rows — with all Tier-0 normalized forms precomputed — are cached
-in SQLite keyed by the file's content hash; warm loads take well under 2 s.
+Parses the ``List Micro`` or ``List Macro`` sheet (selected by *kind*),
+locating the header by fingerprint (a row containing both NAME and
+REDBOOK_ID) and the extraction date from the metadata rows above it.
+Parsing a Micro file (~58.8k rows) is slow, so the parsed rows — with all
+Tier-0 normalized forms precomputed — are cached in SQLite keyed by the
+file's content hash salted with the kind (the same workbook uploaded as
+Micro and as Macro parses different sheets, so the two cache entries must
+never collide); warm loads take well under 2 s.
 
 REDBOOK_ID is the XHS user id (same key space as the DMR Username column and
 the resolver's author_id), treated as an opaque string with case-insensitive
@@ -74,7 +78,13 @@ class PerimeterParse:
 # Bumped whenever parsing semantics change: the cache is content-addressed,
 # so without a version salt an already-cached file would keep serving rows
 # parsed under the OLD semantics (e.g. unfiltered, pre-China-market).
+# The micro salt must stay byte-identical while micro parse semantics are
+# unchanged — existing cached Micro perimeters keep working after upgrades.
 _PARSER_VERSION = b"2:china-market\x00"
+_KIND_SALT = {"micro": b"", "macro": b"macro\x00"}
+# Which perimeter lists a run checks (run option, "flick" toggle in the UI).
+MODES = ("micro", "macro", "both")
+SETTING_KEY = {"micro": "current_perimeter", "macro": "current_perimeter_macro"}
 
 # The tool evaluates the Chinese market only. Micro sheets carry no
 # IN_CHINA flag, so COUNTRY is the signal there; Macro sheets (future
@@ -89,31 +99,34 @@ def _is_china_country(value: str) -> bool:
     return value.replace(" ", "").upper() in _CHINA_COUNTRIES
 
 
-def file_hash(data: bytes) -> str:
-    return hashlib.sha256(_PARSER_VERSION + data).hexdigest()
+def file_hash(data: bytes, kind: str = "micro") -> str:
+    return hashlib.sha256(_PARSER_VERSION + _KIND_SALT[kind] + data).hexdigest()
 
 
-def _pick_micro_sheet(wb):
+def _pick_sheet(wb, kind: str):
+    want, other = ("listmicro", "macro") if kind == "micro" else ("listmacro", "micro")
     for name in wb.sheetnames:
-        if header_key(name) == "listmicro":
+        if header_key(name) == want:
             return wb[name]
     for name in wb.sheetnames:
         k = header_key(name)
-        if "micro" in k and "macro" not in k:
+        if kind in k and other not in k:
             return wb[name]
     return None
 
 
 def parse_perimeter(source: Union[str, IO[bytes]], filename: str = "",
-                    content_hash: str = "") -> PerimeterParse:
-    """Parse the Micro perimeter workbook (read-only mode — the file is big)."""
+                    content_hash: str = "",
+                    kind: str = "micro") -> PerimeterParse:
+    """Parse a perimeter workbook (read-only mode — the file is big),
+    reading the ``List Micro`` or ``List Macro`` sheet per *kind*."""
     wb = load_workbook(source, read_only=True, data_only=True)
     try:
-        ws = _pick_micro_sheet(wb)
+        ws = _pick_sheet(wb, kind)
         if ws is None:
             raise ValueError(
-                "Perimeter parse failed: no 'List Micro' sheet found "
-                f"(sheets: {wb.sheetnames})")
+                f"Perimeter parse failed: no 'List {kind.title()}' sheet "
+                f"found (sheets: {wb.sheetnames})")
 
         header_row = None
         cols: dict[str, int] = {}
@@ -299,7 +312,8 @@ class PerimeterIndex:
         return [(self.rows[i], m) for i, m in sorted(hits.items())]
 
 
-def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
+def parse_and_cache(data: bytes, filename: str,
+                    kind: str = "micro") -> tuple[dict, list[str]]:
     """Parse-or-load an uploaded perimeter and cache it — WITHOUT making it
     the app-wide current perimeter. Promotion is a separate explicit step
     (``promote_cached``) tied to actually starting a run, so an abandoned
@@ -307,13 +321,13 @@ def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
 
     Returns (meta, warnings). On a cache hit the warnings recorded at first
     parse are replayed instead of silently dropped."""
-    h = file_hash(data)
+    h = file_hash(data, kind)
     cached = db.perimeter_cache_get(h)
     if cached:
         warnings = json.loads(cached.get("warnings_json") or "[]")
         payload = _payload(cached)
         meta = {
-            "hash": h, "filename": filename,
+            "hash": h, "filename": filename, "kind": kind,
             "extraction_date": cached["extraction_date"] or "",
             "rows": cached["row_count"],
             "redbook_count": cached["redbook_count"],
@@ -322,10 +336,10 @@ def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
         }
         return meta, warnings
     parsed = parse_perimeter(io.BytesIO(data), filename=filename,
-                             content_hash=h)
+                             content_hash=h, kind=kind)
     store_parsed(parsed)
     meta = {
-        "hash": h, "filename": filename,
+        "hash": h, "filename": filename, "kind": kind,
         "extraction_date": parsed.extraction_date,
         "rows": len(parsed.rows), "redbook_count": parsed.redbook_count,
         "rows_scanned": parsed.rows_scanned,
@@ -334,17 +348,19 @@ def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
     return meta, parsed.warnings
 
 
-def promote_cached(file_hash_: str, filename: str = "") -> None:
-    """Make a cached perimeter the app-wide default ('current'). Called when
-    a run that uses it is actually started — never during preview. No-op if
-    the hash is no longer cached."""
+def promote_cached(file_hash_: str, filename: str = "",
+                   kind: str = "micro") -> None:
+    """Make a cached perimeter the app-wide default ('current') for its
+    kind. Called when a run that uses it is actually started — never during
+    preview. No-op if the hash is no longer cached."""
     row = db.perimeter_cache_get(file_hash_)
     if not row:
         return
     payload = _payload(row)
-    db.setting_set("current_perimeter", json.dumps({
+    db.setting_set(SETTING_KEY[kind], json.dumps({
         "hash": file_hash_,
         "filename": filename or row["filename"] or "",
+        "kind": kind,
         "extraction_date": row["extraction_date"] or "",
         "rows": row["row_count"], "redbook_count": row["redbook_count"],
         "rows_scanned": payload["rows_scanned"],
@@ -353,8 +369,8 @@ def promote_cached(file_hash_: str, filename: str = "") -> None:
     }, ensure_ascii=False))
 
 
-def current_meta() -> Optional[dict]:
-    raw = db.setting_get("current_perimeter")
+def current_meta(kind: str = "micro") -> Optional[dict]:
+    raw = db.setting_get(SETTING_KEY[kind])
     if not raw:
         return None
     try:

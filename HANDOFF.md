@@ -186,10 +186,13 @@ run summary, header-map proposals) · `MAX_UPLOAD_MB=25` and zip caps ·
 
 ## Known gaps / likely next features
 
-- **Macro perimeter** ("will be added later" — the user said so): the
-  ingest filter already understands `IN_CHINA_REPORTS`; what's missing is
-  reading the "List Macro" sheet (currently only List Micro is picked) and
-  deciding how Macro membership feeds the pipeline.
+- ~~**Macro perimeter**~~ — DONE (2026-07): second upload box parses the
+  "List Macro" sheet (`perimeter.py` is kind-parameterized; kind-salted
+  cache hashes so the same workbook can be both), a Micro/Macro/Both toggle
+  on upload+confirm becomes the run's `perimeter_mode` option, membership
+  of initially-无博主 rows lands in `Verdict.perimeter_membership` and the
+  export's `PERIMETER (无博主)` column. Micro note strings/verdict vocab
+  unchanged; Macro notes are parallel strings with their own td patterns.
 - Insights on the zh efficiency deck: chart titles are localized but the
   insight bullet lines render in English on the slide (TEXTS covers titles;
   bullets are built in English in analysis.build_insights).

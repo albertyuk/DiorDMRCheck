@@ -5,14 +5,20 @@
     <span class="stat muted">{{ t("TikHub calls:") }} {{ run.tikhub_calls or 0 }}</span>
     <span class="stat muted">{{ t("LLM calls:") }} {{ run.llm_calls or 0 }}</span>
   </div>
-  {% if perimeter_meta %}
+  {% if perimeter_meta or perimeter_macro_meta %}
   <div class="counts">
     <span class="stat" style="border-color:#b04a00"><b>{{ buckets.dmr_gaps }}</b>
       {{ t("DMR gaps（无帖子 + Perimeter内无博主）— actionable") }}</span>
     <span class="stat" style="border-color:#8a8a8a"><b>{{ buckets.outside_perimeter }}</b>
       {{ t("不在Perimeter内 — out of scope") }}</span>
+    {% if perimeter_meta %}
     <span class="stat muted">{{ t("Perimeter:") }} {{ perimeter_meta.filename }} ·
       {{ t("extracted {date}", date=perimeter_meta.extraction_date or "?") }}</span>
+    {% endif %}
+    {% if perimeter_macro_meta %}
+    <span class="stat muted">{{ t("Perimeter (Macro):") }} {{ perimeter_macro_meta.filename }} ·
+      {{ t("extracted {date}", date=perimeter_macro_meta.extraction_date or "?") }}</span>
+    {% endif %}
   </div>
   {% endif %}
   {% if perimeter_warning %}<div class="warn">{{ td(perimeter_warning) }}</div>{% endif %}
@@ -128,8 +134,15 @@
                   <span class="caveat">{{ t("Candidate list is ranked by date proximity only — never auto-matched.") }}</span>
                 </dd>
               {% endif %}
-              {% if v.perimeter_method or v.perimeter_note or v.perimeter_candidates %}
+              {% if v.perimeter_method or v.perimeter_note or v.perimeter_candidates
+                    or v.get("perimeter_membership") %}
                 <dt>Perimeter</dt><dd>
+                  {% set membership = v.get("perimeter_membership") %}
+                  {% if membership %}
+                    {{ t("Membership: {m}", m={"micro": "Micro", "macro": "Macro",
+                                              "both": "Micro + Macro",
+                                              "none": t("none of the checked lists")}[membership]) }}<br>
+                  {% endif %}
                   {% if v.perimeter_method %}{{ t("matched via {method}:", method=v.perimeter_method) }}
                     {{ v.perimeter_name }}{% if v.perimeter_namebis %} / {{ v.perimeter_namebis }}{% endif %}
                     · DMRID {{ v.perimeter_dmrid or "?" }}

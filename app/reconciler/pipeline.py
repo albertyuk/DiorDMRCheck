@@ -97,67 +97,102 @@ def _fill_perimeter_evidence(v: Verdict, row: dict, method: str) -> None:
     v.perimeter_followers = row.get("redbook_followers")
 
 
-def apply_perimeter(v: Verdict, prow: PlogRow, perim) -> None:
-    """Split NO_BLOGGER by Micro-perimeter membership (offline join; no new
-    external calls). Only the REDBOOK_ID join may flip the verdict to
-    'in-perimeter'; name hits are suggestions, recorded as evidence — name
-    collisions are real, so ≥2 hits never auto-classify. LINK_ERROR rows get
-    the name fallback as annotation only; their verdict never changes."""
-    if perim is None:
+def _candidate_lines(hits: list, label: str) -> list[str]:
+    prefix = f"{label}: " if label else ""
+    return [
+        f"{prefix}{r.get('name') or r.get('namebis')} "
+        f"[{r.get('redbook_id') or 'no REDBOOK_ID'}] ({m})"
+        for r, m in hits[:8]
+    ]
+
+
+def _annotate_name_hits(v: Verdict, prow: PlogRow, perim, label: str) -> None:
+    """Name-ladder evidence against one list for a not-in-perimeter row.
+    *label* is "" for the Micro list (whose note strings predate Macro and
+    must stay byte-identical for the zh patterns) and "Macro " otherwise.
+    Never flips the verdict — name collisions are real; ≥2 hits never
+    auto-classify."""
+    hits = perim.scan_name(prow.name)
+    if len(hits) == 1:
+        row, method = hits[0]
+        if not v.perimeter_method:   # first list to produce evidence wins
+            _fill_perimeter_evidence(v, row, method)
+        if row.get("redbook_id"):
+            # same name, different XHS account — never classify by name
+            note = (
+                f"同名{label}Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
+                f"{label.lower()}perimeter entry carries a different REDBOOK_ID "
+                f"({row['redbook_id']} vs resolved {v.resolved_author_id or '?'})"
+            )
+        else:
+            note = (
+                f"在{label}Perimeter名单但未登记REDBOOK_ID — register the ID; DMR "
+                "cannot crawl an unregistered account"
+            )
+        v.perimeter_note = v.perimeter_note or note
+        v.notes.append(note)
+    elif len(hits) >= 2:
+        v.perimeter_candidates.extend(_candidate_lines(hits, label.strip()))
+        note = (
+            f"{len(hits)}个同名{label}Perimeter条目，无法按名字判定 / name matches "
+            f"multiple {label.lower()}perimeter rows — never auto-picked by name"
+        )
+        v.perimeter_note = v.perimeter_note or note
+        v.notes.append(note)
+
+
+def apply_perimeter(v: Verdict, prow: PlogRow, perim, macro=None) -> None:
+    """Split NO_BLOGGER by perimeter membership over the checked list(s)
+    (offline join; no new external calls). *perim* is the Micro list and
+    *macro* the Macro list — either may be None (not loaded, or excluded by
+    the run's perimeter-mode toggle). Only the REDBOOK_ID join may flip the
+    verdict to 'in-perimeter'; name hits are suggestions, recorded as
+    evidence — name collisions are real, so ≥2 hits never auto-classify.
+    LINK_ERROR rows get the name fallback as annotation only; their verdict
+    never changes. Initial-无博主 rows also record perimeter_membership
+    (micro/macro/both/none) for the export."""
+    primary = perim if perim is not None else macro
+    if primary is None:
         return
-    v.perimeter_extraction_date = perim.extraction_date
+    v.perimeter_extraction_date = primary.extraction_date
 
     if v.status == NO_BLOGGER:
-        row = perim.lookup_author(v.resolved_author_id)
-        if row is not None:
+        hit_micro = perim.lookup_author(v.resolved_author_id) if perim else None
+        hit_macro = macro.lookup_author(v.resolved_author_id) if macro else None
+        v.perimeter_membership = (
+            "both" if hit_micro is not None and hit_macro is not None else
+            "micro" if hit_micro is not None else
+            "macro" if hit_macro is not None else "none")
+        if hit_micro is not None or hit_macro is not None:
             v.status = NO_POST_IN_PERIMETER
-            _fill_perimeter_evidence(v, row, "redbook-id")
-            v.notes.append(
-                "Blogger is inside DMR's monitored Micro perimeter "
-                f"(REDBOOK_ID {row['redbook_id']}) yet absent from the export "
-                "— a genuine DMR gap, grouped with 无帖子."
-            )
+            _fill_perimeter_evidence(
+                v, hit_micro if hit_micro is not None else hit_macro,
+                "redbook-id")
+            for kind, hit in (("Micro", hit_micro), ("Macro", hit_macro)):
+                if hit is not None:
+                    v.notes.append(
+                        f"Blogger is inside DMR's monitored {kind} perimeter "
+                        f"(REDBOOK_ID {hit['redbook_id']}) yet absent from the "
+                        "export — a genuine DMR gap, grouped with 无帖子."
+                    )
             return
 
-        hits = perim.scan_name(prow.name)
         v.status = NO_BLOGGER_NOT_IN_PERIMETER
-        if len(hits) == 1:
-            row, method = hits[0]
-            _fill_perimeter_evidence(v, row, method)
-            if row.get("redbook_id"):
-                # same name, different XHS account — never classify by name
-                v.perimeter_note = (
-                    "同名Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
-                    "perimeter entry carries a different REDBOOK_ID "
-                    f"({row['redbook_id']} vs resolved {v.resolved_author_id or '?'})"
-                )
-            else:
-                v.perimeter_note = (
-                    "在Perimeter名单但未登记REDBOOK_ID — register the ID; DMR "
-                    "cannot crawl an unregistered account"
-                )
-            v.notes.append(v.perimeter_note)
-        elif len(hits) >= 2:
-            v.perimeter_candidates = [
-                f"{r.get('name') or r.get('namebis')} "
-                f"[{r.get('redbook_id') or 'no REDBOOK_ID'}] ({m})"
-                for r, m in hits[:8]
-            ]
-            v.perimeter_note = (
-                f"{len(hits)}个同名Perimeter条目，无法按名字判定 / name matches "
-                "multiple perimeter rows — never auto-picked by name"
-            )
-            v.notes.append(v.perimeter_note)
+        if perim is not None:
+            _annotate_name_hits(v, prow, perim, "")
+        if macro is not None:
+            _annotate_name_hits(v, prow, macro, "Macro ")
         return
 
     if v.status == LINK_ERROR:
-        hits = perim.scan_name(prow.name)
-        if hits:
-            v.perimeter_candidates = [
-                f"{r.get('name') or r.get('namebis')} "
-                f"[{r.get('redbook_id') or 'no REDBOOK_ID'}] ({m})"
-                for r, m in hits[:8]
-            ]
+        candidates: list[str] = []
+        if perim is not None:
+            candidates.extend(_candidate_lines(perim.scan_name(prow.name), ""))
+        if macro is not None:
+            candidates.extend(
+                _candidate_lines(macro.scan_name(prow.name), "Macro"))
+        if candidates:
+            v.perimeter_candidates = candidates
             v.perimeter_note = (
                 "链接失效，仅作参考：名字命中Perimeter条目 / dead link — perimeter "
                 "name hits recorded as evidence only, verdict unchanged"
@@ -345,10 +380,11 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
                  progress: Optional[ProgressCb] = None,
                  tikhub_counter: Optional[Callable[[], None]] = None,
                  retry_failed_links: bool = False,
-                 perimeter=None) -> list[Verdict]:
+                 perimeter=None, perimeter_macro=None) -> list[Verdict]:
     """Resolve links (concurrently, bounded) then match every PLOG row.
-    *perimeter* is an optional PerimeterIndex — when present, NO_BLOGGER rows
-    are split by Micro-perimeter membership right after Tier 2."""
+    *perimeter* (Micro) and *perimeter_macro* are optional PerimeterIndexes —
+    when present, NO_BLOGGER rows are split by perimeter membership right
+    after Tier 2, with per-list membership recorded for the export."""
     idx = build_indexes(dmr)
     window = (dmr.window_from, dmr.window_to)
     total = len(plog.rows)
@@ -403,7 +439,7 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
         try:
             v = match_row(prow, idx, resolutions[i], window,
                           sibling_authors=sibling_authors)
-            apply_perimeter(v, prow, perimeter)
+            apply_perimeter(v, prow, perimeter, perimeter_macro)
             verdicts.append(v)
         except Exception as e:
             v = Verdict(

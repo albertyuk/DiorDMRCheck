@@ -12,6 +12,9 @@
     {% if preview.perimeter %}
       <span class="stat"><b>{{ "{:,}".format(preview.perimeter.redbook_count) }}</b> {{ t("perimeter REDBOOK_IDs") }}</span>
     {% endif %}
+    {% if preview.perimeter_macro %}
+      <span class="stat"><b>{{ "{:,}".format(preview.perimeter_macro.redbook_count) }}</b> {{ t("Macro perimeter REDBOOK_IDs") }}</span>
+    {% endif %}
   </div>
   {% if preview.remap %}
     {% for kind, m in preview.remap.items() %}
@@ -57,22 +60,26 @@
     </div>
   </div>
 
-  {% if preview.perimeter %}
+  {% for label, pp in [(t("Perimeter (Micro):"), preview.perimeter),
+                       (t("Perimeter (Macro):"), preview.perimeter_macro)] %}
+    {% if pp %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>{{ t("Perimeter (Micro):") }}</b>
+      <b>{{ label }}</b>
       {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID — 无博主 rows will be split by membership.",
-           filename=preview.perimeter.filename,
-           date=preview.perimeter.extraction_date or t("unknown date"),
-           rows="{:,}".format(preview.perimeter.rows),
-           redbook="{:,}".format(preview.perimeter.redbook_count)) }}
-      {% if preview.perimeter.china_filter %}
+           filename=pp.filename,
+           date=pp.extraction_date or t("unknown date"),
+           rows="{:,}".format(pp.rows),
+           redbook="{:,}".format(pp.redbook_count)) }}
+      {% if pp.china_filter %}
       {{ t("China market only ({signal}): kept {kept} of {scanned} rows.",
-           signal=preview.perimeter.china_filter,
-           kept="{:,}".format(preview.perimeter.rows),
-           scanned="{:,}".format(preview.perimeter.rows_scanned or 0)) }}
+           signal=pp.china_filter,
+           kept="{:,}".format(pp.rows),
+           scanned="{:,}".format(pp.rows_scanned or 0)) }}
       {% endif %}</div>
-    {% for w in preview.perimeter.warnings %}<div class="warn">{{ t("Perimeter:") }} {{ td(w) }}</div>{% endfor %}
-  {% else %}
+    {% for w in pp.warnings %}<div class="warn">{{ label }} {{ td(w) }}</div>{% endfor %}
+    {% endif %}
+  {% endfor %}
+  {% if not preview.perimeter and not preview.perimeter_macro %}
     <p class="muted" style="font-size:.78rem">{{ t("No perimeter — 无博主 rows stay unsplit.") }}</p>
   {% endif %}
 
@@ -92,6 +99,18 @@
         {% if not anthropic_configured %}disabled{% endif %}>
       {{ t("Use Claude for residue adjudication + bilingual summary") }}
       {% if not anthropic_configured %}{{ t("(no API key configured)") }}{% endif %}</label></p>
+    {% if preview.perimeter or preview.perimeter_macro %}
+    <p>{{ t("Perimeter check") }}:
+      {% set pmode = preview.perimeter_mode or "both" %}
+      <label style="margin:0 .9rem 0 .5rem"><input type="radio" name="perimeter_mode" value="micro"
+        {% if pmode == "micro" %}checked{% endif %}> Micro</label>
+      <label style="margin-right:.9rem"><input type="radio" name="perimeter_mode" value="macro"
+        {% if pmode == "macro" %}checked{% endif %}> Macro</label>
+      <label><input type="radio" name="perimeter_mode" value="both"
+        {% if pmode == "both" %}checked{% endif %}> {{ t("Both") }}</label><br>
+      <span class="muted" style="font-size:.72rem">
+        {{ t("Which perimeter list(s) the 无博主 cross-check uses — only lists that are uploaded (or already in use) are actually checked. Membership is written to the PERIMETER (无博主) column of the export.") }}</span></p>
+    {% endif %}
     <p>
       <label style="display:inline-block; margin-right:1.2rem">
         {{ t("Export window from") }}<br>

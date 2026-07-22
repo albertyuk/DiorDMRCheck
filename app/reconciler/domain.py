@@ -108,6 +108,10 @@ class Verdict:
     llm_rationale_en: str = ""
     llm_rationale_zh: str = ""
     # Perimeter cross-check evidence
+    # For rows that were initially 无博主 and had at least one perimeter list
+    # checked: which list(s) the resolved author's REDBOOK_ID was found in —
+    # "micro" | "macro" | "both" | "none". Empty for all other rows.
+    perimeter_membership: str = ""
     perimeter_method: str = ""            # redbook-id | <name-ladder step> | ""
     perimeter_name: str = ""
     perimeter_namebis: str = ""

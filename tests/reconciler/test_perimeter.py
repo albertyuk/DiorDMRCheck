@@ -340,3 +340,157 @@ def test_file_hash_is_parser_version_salted():
     (they would serve unfiltered, non-China rows)."""
     import hashlib
     assert file_hash(b"same-bytes") != hashlib.sha256(b"same-bytes").hexdigest()
+
+
+# --------------------------------------------------------- macro perimeter
+
+U_MACRO = "5f000000000000000000c00a"    # macro-only member
+U_FOREIGN = "5f000000000000000000c00b"  # macro row filtered by IN_CHINA=NO
+
+MACRO_HEADERS = ["NAME", "NAMEBIS", "DMRID", "IN_CHINA_REPORTS",
+                 "REDBOOK_ID", "REDBOOK_FOLLOWERS"]
+
+
+def build_macro_bytes(extraction="21/05/2026 09:00:00") -> bytes:
+    wb = Workbook()
+    micro = wb.active
+    micro.title = "List Micro"           # must be ignored for kind=macro
+    micro.append(["NAME", "REDBOOK_ID"])
+    micro.append(["Micro Person", "5f000000000000000000fffe"])
+    ws = wb.create_sheet("List Macro")
+    ws.append([f"Date of extraction : {extraction}"])
+    ws.append(MACRO_HEADERS)
+    ws.append(["Macro Star", "宏观大V", "M0001", "YES", U_MACRO, 800000])
+    ws.append(["Yi Ke Ji Dan", "一颗鸡蛋", "M0002", "YES", U_IN, 52000])
+    ws.append(["Foreign Macro", "海外大V", "M0003", "NO", U_FOREIGN, 100])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@pytest.fixture
+def macro_index(tmp_path, monkeypatch) -> PerimeterIndex:
+    from app import config
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "perim_macro.sqlite3")
+    data = build_macro_bytes()
+    h = file_hash(data, "macro")
+    parsed = parse_perimeter(io.BytesIO(data), filename="macro.xlsx",
+                             content_hash=h, kind="macro")
+    store_parsed(parsed)
+    idx = load_cached(h)
+    assert idx is not None
+    return idx
+
+
+def test_macro_parse_contract(macro_index):
+    """kind="macro" reads List Macro, honors IN_CHINA_REPORTS, ignores the
+    Micro sheet."""
+    assert macro_index.extraction_date == "21/05/2026 09:00:00"
+    assert U_MACRO in macro_index.by_redbook
+    assert U_IN in macro_index.by_redbook
+    assert U_FOREIGN not in macro_index.by_redbook       # IN_CHINA=NO dropped
+    assert "5f000000000000000000fffe" not in macro_index.by_redbook
+
+
+def test_macro_parse_error_names_macro_sheet(tmp_path):
+    wb = Workbook()
+    wb.active.title = "Only Micro Here"
+    wb.active.append(["NAME", "REDBOOK_ID"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    with pytest.raises(ValueError, match="List Macro"):
+        parse_perimeter(io.BytesIO(buf.getvalue()), kind="macro")
+
+
+def test_file_hash_is_kind_salted():
+    """The same workbook uploaded as Micro and as Macro parses different
+    sheets — the two cache entries must never collide."""
+    assert file_hash(b"same-bytes") != file_hash(b"same-bytes", "macro")
+    assert file_hash(b"same-bytes") == file_hash(b"same-bytes", "micro")
+
+
+@pytest.fixture
+def dual_split_verdicts(tmp_path, monkeypatch, perim_index, macro_index):
+    """Pipeline over BOTH lists. Adds a macro-only blogger to the mini PLOG."""
+    _mini_plog(tmp_path / "p.xlsx")
+    from openpyxl import load_workbook as _lw
+    wb = _lw(str(tmp_path / "p.xlsx"))
+    ws = wb["MASTER KOL LIST"]
+    ws.append([7, "", "C#1", "", "", "宏观大V", 1, datetime(2026, 6, 1), "",
+               "http://xhslink.com/o/macro-only", 1, 1, 1, 1, 3, 1, 1, 1])
+    wb.save(str(tmp_path / "p.xlsx"))
+    _mini_dmr(tmp_path / "d.xlsx")
+
+    table = dict(RESOLUTIONS)
+    table["http://xhslink.com/o/macro-only"] = (U_MACRO,
+                                                "6a1a0000000000000000e006")
+
+    def fake_resolve(url, run_counter=None, retry_failed=False):
+        if url in table:
+            author, note = table[url]
+            return Resolution(status="ok", note_id=note, author_id=author,
+                              source="fixture")
+        return Resolution(status="failed", error="dead link")
+
+    import app.reconciler.pipeline as m
+    monkeypatch.setattr(m, "resolve_link", fake_resolve)
+    monkeypatch.setattr(m, "ensure_author",
+                        lambda url, res, run_counter=None, retry_failed=False: res)
+    plog = parse_plog(str(tmp_path / "p.xlsx"))
+    dmr = parse_dmr(str(tmp_path / "d.xlsx"))
+    vs = run_pipeline(plog, dmr, perimeter=perim_index,
+                      perimeter_macro=macro_index)
+    return {v.name: v for v in vs}
+
+
+def test_membership_both(dual_split_verdicts):
+    v = dual_split_verdicts["一颗鸡蛋🥚"]      # U_IN is in Micro AND Macro
+    assert v.status == NO_POST_IN_PERIMETER
+    assert v.perimeter_membership == "both"
+    assert v.column_s() == "无博主但在Perimeter内→无帖子"
+    assert any("Micro perimeter" in n for n in v.notes)
+    assert any("Macro perimeter" in n for n in v.notes)
+
+
+def test_membership_macro_only(dual_split_verdicts):
+    v = dual_split_verdicts["宏观大V"]
+    assert v.status == NO_POST_IN_PERIMETER
+    assert v.perimeter_membership == "macro"
+    assert v.perimeter_redbook_id == U_MACRO
+    assert any("Macro perimeter" in n for n in v.notes)
+    assert not any("Micro perimeter" in n for n in v.notes)
+
+
+def test_membership_none_keeps_name_evidence(dual_split_verdicts):
+    v = dual_split_verdicts["小小测试"]        # micro near-miss, not a member
+    assert v.status == NO_BLOGGER_NOT_IN_PERIMETER
+    assert v.perimeter_membership == "none"
+    assert "REDBOOK_ID不同" in v.perimeter_note
+    v2 = dual_split_verdicts["查无此人"]
+    assert v2.perimeter_membership == "none"
+
+
+def test_membership_micro_only_single_list(split_verdicts):
+    """A micro-only run records membership against the one checked list."""
+    v = split_verdicts["一颗鸡蛋🥚"]
+    assert v.perimeter_membership == "micro"
+    assert split_verdicts["查无此人"].perimeter_membership == "none"
+    # rows that were never 无博主 stay blank
+    assert split_verdicts["断链博主"].perimeter_membership == ""
+
+
+def test_membership_column_in_export(dual_split_verdicts, tmp_path):
+    from app.reconciler.export import (EVIDENCE_HEADERS, write_annotated_xlsx)
+    from openpyxl import load_workbook as _lw
+    verdicts = list(dual_split_verdicts.values())
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(str(tmp_path / "p.xlsx"), str(out), verdicts,
+                         header_row=1, sheet_name="MASTER KOL LIST")
+    ws = _lw(str(out))["MASTER KOL LIST"]
+    assert ws.cell(row=1, column=22).value == "PERIMETER (无博主)"
+    col = {v.name: ws.cell(row=v.excel_row, column=22).value
+           for v in verdicts}
+    assert col["一颗鸡蛋🥚"] == "Micro + Macro"
+    assert col["宏观大V"] == "Macro"
+    assert col["查无此人"] == "None"
+    assert col["断链博主"] is None                 # never 无博主 → blank

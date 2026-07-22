@@ -145,15 +145,29 @@ def _run(run_id: str) -> None:
         dmr = run_upload_task_sync(parse_dmr, run["dmr_path"])
         apply_window_override(dmr, options)
 
+        # Which perimeter lists this run checks — the "flick" toggle on the
+        # confirm screen. Legacy runs without the option check Micro only.
+        mode = options.get("perimeter_mode") or "micro"
+        if mode not in perimeter_mod.MODES:
+            mode = "micro"
         perim = None
+        perim_macro = None
         perim_warning = None
-        if run.get("perimeter_hash"):
+        if mode in ("micro", "both") and run.get("perimeter_hash"):
             perim = perimeter_mod.load_cached(
                 run["perimeter_hash"], filename=run.get("perimeter_name") or "")
             if perim is None:
                 perim_warning = (
                     "The perimeter file recorded for this run is no longer in "
                     "the cache — running without the perimeter split.")
+        if mode in ("macro", "both") and run.get("perimeter_macro_hash"):
+            perim_macro = perimeter_mod.load_cached(
+                run["perimeter_macro_hash"],
+                filename=run.get("perimeter_macro_name") or "")
+            if perim_macro is None:
+                perim_warning = (
+                    "The Macro perimeter file recorded for this run is no "
+                    "longer in the cache — running without the Macro check.")
 
         def progress(phase: str, done: int, total: int, msg: str) -> None:
             db.run_progress(run_id, phase, done, total, msg)
@@ -167,7 +181,7 @@ def _run(run_id: str) -> None:
         verdicts = run_pipeline(
             plog, dmr, progress=progress, tikhub_counter=tikhub_counter,
             retry_failed_links=bool(options.get("retry_failed_links")),
-            perimeter=perim,
+            perimeter=perim, perimeter_macro=perim_macro,
         )
 
         if options.get("use_llm", True):
@@ -199,6 +213,13 @@ def _run(run_id: str) -> None:
                 "rows": len(perim.rows),
                 "redbook_count": len(perim.by_redbook),
             } if perim else None),
+            "perimeter_macro_meta": ({
+                "filename": perim_macro.filename,
+                "extraction_date": perim_macro.extraction_date,
+                "rows": len(perim_macro.rows),
+                "redbook_count": len(perim_macro.by_redbook),
+            } if perim_macro else None),
+            "perimeter_mode": mode,
             "perimeter_warning": perim_warning,
             "reverse_audit": reverse_rows,
             "plog_meta": {

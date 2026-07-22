@@ -29,17 +29,22 @@ S_COL = 19  # column S
 # override force a blank S cell (asserting MATCH) rather than clearing the
 # override.
 OVERRIDE_MATCH_BLANK = "已匹配（清空S）"
-# STATUS + matched blogger, then the "weighted engagement data" section —
-# the matched DMR row's engagement snapshot, column names as in the DMR file.
+# STATUS + matched blogger, the perimeter-membership verdict for
+# initially-无博主 rows, then the "weighted engagement data" section — the
+# matched DMR row's engagement snapshot, column names as in the DMR file.
 EVIDENCE_HEADERS = [
     "STATUS",
     "MATCHED DMR BLOGGER",
+    "PERIMETER (无博主)",
     "DMR LIKES_RETWEET",
     "DMR SHARE_FAVORITES",
     "DMR COMMENTS",
     "DMR ENGAGEMENT",
     "DMR WEIGHTED ENG.",
 ]
+# Human-readable membership tokens for the PERIMETER (无博主) column.
+MEMBERSHIP_TEXT = {"micro": "Micro", "macro": "Macro",
+                   "both": "Micro + Macro", "none": "None"}
 EVIDENCE_START_COL = 20  # column T
 
 
@@ -115,6 +120,7 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         values = [
             status,
             v.matched_blogger or None,
+            MEMBERSHIP_TEXT.get(v.perimeter_membership),
             v.dmr_likes_retweet,
             v.dmr_share_favorites,
             v.dmr_comments,

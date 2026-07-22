@@ -41,12 +41,14 @@ def test_annotated_export(plog_path, dmr_path, fake_resolver, tmp_path):
     v = by[("PLOG #001", "1")]
     assert ann.cell(row=v.excel_row, column=19).value in (None, "")
     assert ann.cell(row=v.excel_row, column=21).value == "墨池墨吟"
-    assert ann.cell(row=v.excel_row, column=22).value == 14   # Likes_Retweet
-    assert ann.cell(row=v.excel_row, column=23).value == 1    # Share_Favorites
-    assert ann.cell(row=v.excel_row, column=24).value == 0    # Comments
-    assert ann.cell(row=v.excel_row, column=25).value == 15   # Engagement
-    assert ann.cell(row=v.excel_row, column=26).value == 14.5  # WEIGHTED ENG.
-    # unmatched row → engagement section stays empty
+    assert ann.cell(row=v.excel_row, column=22).value is None  # not 无博主
+    assert ann.cell(row=v.excel_row, column=23).value == 14   # Likes_Retweet
+    assert ann.cell(row=v.excel_row, column=24).value == 1    # Share_Favorites
+    assert ann.cell(row=v.excel_row, column=25).value == 0    # Comments
+    assert ann.cell(row=v.excel_row, column=26).value == 15   # Engagement
+    assert ann.cell(row=v.excel_row, column=27).value == 14.5  # WEIGHTED ENG.
+    # unmatched row → membership + engagement section stay empty (no
+    # perimeter was loaded for this run)
     nv = by[("PLOG #002", "2")]
     assert all(ann.cell(row=nv.excel_row, column=c).value is None
                for c in range(21, 20 + len(EVIDENCE_HEADERS)))

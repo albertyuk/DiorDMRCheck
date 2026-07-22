@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS runs (
     error         TEXT,
     perimeter_hash TEXT,
     perimeter_uploaded INTEGER DEFAULT 0,
-    perimeter_name TEXT
+    perimeter_name TEXT,
+    perimeter_macro_hash TEXT,
+    perimeter_macro_uploaded INTEGER DEFAULT 0,
+    perimeter_macro_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS overrides (
@@ -106,6 +109,9 @@ def apply(conn: sqlite3.Connection) -> None:
         "ALTER TABLE runs ADD COLUMN perimeter_uploaded INTEGER",
         "ALTER TABLE runs ADD COLUMN perimeter_name TEXT",
         "ALTER TABLE perimeter_cache ADD COLUMN warnings_json TEXT",
+        "ALTER TABLE runs ADD COLUMN perimeter_macro_hash TEXT",
+        "ALTER TABLE runs ADD COLUMN perimeter_macro_uploaded INTEGER",
+        "ALTER TABLE runs ADD COLUMN perimeter_macro_name TEXT",
     ):
         try:
             conn.execute(stmt)

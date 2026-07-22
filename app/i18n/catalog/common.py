@@ -146,6 +146,7 @@ ZH: dict[str, str] = {
         "平台作者／用户 ID（判断博主是否在库的关联键）",
     "crawl-recorded post date": "抓取记录的发帖日期",
     "likes at first crawl": "首次抓取时的点赞数",
+    "weighted engagement score at crawl": "首次抓取时的加权互动分",
     "shares/favorites": "分享／收藏",
     "total engagement at crawl": "抓取时的互动总量",
     "comment count at crawl": "抓取时的评论数",
@@ -189,6 +190,10 @@ ZH: dict[str, str] = {
     "Analyze & generate": "分析并生成",
     "Author id established from another KOL row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
         "作者 ID 取自同一博主（NAME 相同）的另一条 KOL 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
+    # legacy wording — runs stored before the PLOG→KOL rename replay their
+    # saved English notes through td(); keep them translating
+    "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
+        "作者 ID 取自同一博主（NAME 相同）的另一条 PLOG 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
     "Avg price": "平均合作价",
     "Back": "返回",
     "Back to sign in": "返回登录",
@@ -294,6 +299,18 @@ ZH: dict[str, str] = {
     "Per-post average — mean of each post's own ratio": "单篇平均——每篇帖子各自比值的平均",
     "Perimeter (Micro) — optional": "Perimeter（Micro）名单——选填",
     "Perimeter (Micro):": "Perimeter（Micro）：",
+    "Perimeter (Macro) — optional": "Perimeter（Macro）名单——选填",
+    "Perimeter (Macro):": "Perimeter（Macro）：",
+    "Perimeter check": "Perimeter 核对名单",
+    "Both": "两个都查",
+    "Which perimeter list(s) the 无博主 cross-check uses — only lists that are uploaded (or already in use) are actually checked. You can still change this on the confirm screen.":
+        "「无博主」交叉核对使用哪个 Perimeter 名单——只会核对已上传（或正在使用中）的名单。确认页上仍可修改。",
+    "Which perimeter list(s) the 无博主 cross-check uses — only lists that are uploaded (or already in use) are actually checked. Membership is written to the PERIMETER (无博主) column of the export.":
+        "「无博主」交叉核对使用哪个 Perimeter 名单——只会核对已上传（或正在使用中）的名单。核对结果会写入导出文件的 PERIMETER（无博主）列。",
+    "Macro perimeter REDBOOK_IDs": "个 Macro Perimeter REDBOOK_ID",
+    "Membership: {m}": "名单覆盖：{m}",
+    "none of the checked lists": "都不在所选名单内",
+    "Perimeter in use ({kind}):": "正在使用的 Perimeter（{kind}）：",
     # flow stepper / streamlined-UI chrome ----------------------------------
     "Upload": "上传",
     "Mapping audit": "映射审核",
@@ -348,7 +365,6 @@ ZH: dict[str, str] = {
         "Excel .xlsx，最大 25 MB，一张 KOL 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
     "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
         "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——LEVEL 缺失或看不懂的行会自动按 FAN BASE 粉丝量分层（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP，以 V11 提示）。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
-    "Perimeter in use:": "当前使用的 Perimeter：",
     "China market only ({signal}): kept {kept} of {scanned} rows.":
         "仅限中国市场（按 {signal} 判定）：{scanned} 行中保留 {kept} 行。",
     "No IN_CHINA_REPORTS or COUNTRY column found — cannot restrict the perimeter to the China market; keeping all rows.":

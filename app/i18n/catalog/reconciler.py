@@ -43,6 +43,13 @@ ZH: dict[str, str] = {
         "在元信息行中找不到「Date of extraction」——无法显示 Perimeter 名单的提取日期。",
     "The perimeter file recorded for this run is no longer in the cache — running without the perimeter split.":
         "这条核对原先记录的 Perimeter 文件已不在缓存中——本次不做 Perimeter 拆分。",
+    "The Macro perimeter file recorded for this run is no longer in the cache — running without the Macro check.":
+        "这条核对原先记录的 Macro Perimeter 文件已不在缓存中——本次不做 Macro 名单核对。",
+
+    # legacy wording — runs stored before the PLOG→KOL rename replay their
+    # saved English notes/warnings through td(); keep them translating -------
+    "PLOG sheet parsed but contained no data rows.":
+        "PLOG 工作表解析成功，但没有数据行。",
 }
 
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -78,9 +85,9 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^DMR parse failed: no sheet has a header row containing "
                 r"both 'Blogger' and 'PostID' within the first (\d+) rows\.$"),
      r"DMR 解析失败：所有工作表的前 \1 行里都找不到同时包含「Blogger」和「PostID」的表头行。"),
-    (re.compile(r"^Perimeter parse failed: no 'List Micro' sheet found "
-                r"\(sheets: (.+)\)$", re.S),
-     r"Perimeter 解析失败：找不到「List Micro」工作表（现有工作表：\1）。"),
+    (re.compile(r"^Perimeter parse failed: no 'List (Micro|Macro)' sheet "
+                r"found \(sheets: (.+)\)$", re.S),
+     r"Perimeter 解析失败：找不到「List \1」工作表（现有工作表：\2）。"),
     (re.compile(r"^Perimeter parse failed: no header row containing both "
                 r"'NAME' and 'REDBOOK_ID' within the first (\d+) rows of (.+)$",
                 re.S),
@@ -100,18 +107,32 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
                 r"Tier 3 only ranks same-name candidates; it never asserts a "
                 r"match\. Best candidate: (.+) \((\S+)\) Δ=(.+) days\.$"),
      r"链接失效或无法解析，笔记 ID 无从核实——Tier 3 只对同名候选排序，绝不断言匹配。最接近的候选：\1（\2），日期差 \3 天。"),
-    (re.compile(r"^Blogger is inside DMR's monitored Micro perimeter "
+    (re.compile(r"^Blogger is inside DMR's monitored (Micro|Macro) perimeter "
                 r"\(REDBOOK_ID (\S+)\) yet absent from the export — a genuine "
                 r"DMR gap, grouped with 无帖子\.$"),
-     r"博主在 DMR 监测的 Micro Perimeter 名单内（REDBOOK_ID \1），导出文件里却没有——属于真正的 DMR 漏抓，与「无帖子」同类处理。"),
-    (re.compile(r"^同名Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
-                r"perimeter entry carries a different REDBOOK_ID "
+     r"博主在 DMR 监测的 \1 Perimeter 名单内（REDBOOK_ID \2），导出文件里却没有——属于真正的 DMR 漏抓，与「无帖子」同类处理。"),
+    (re.compile(r"^同名(Macro )?Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
+                r"(?:macro )?perimeter entry carries a different REDBOOK_ID "
                 r"\((\S+) vs resolved (\S+)\)$"),
-     r"同名Perimeter条目但REDBOOK_ID不同（近似未命中）：名单登记 \1，实际解析出 \2。"),
-    (re.compile(r"^(\d+)个同名Perimeter条目，无法按名字判定 / name matches "
-                r"multiple perimeter rows — never auto-picked by name$"),
-     r"\1个同名Perimeter条目，无法按名字判定——绝不按名字自动选取。"),
+     r"同名\1Perimeter条目但REDBOOK_ID不同（近似未命中）：名单登记 \2，实际解析出 \3。"),
+    (re.compile(r"^(\d+)个同名(Macro )?Perimeter条目，无法按名字判定 / name matches "
+                r"multiple (?:macro )?perimeter rows — never auto-picked by name$"),
+     r"\1个同名\2Perimeter条目，无法按名字判定——绝不按名字自动选取。"),
     (re.compile(r"^match_row failed: (.*)$", re.S), r"该行匹配失败：\1"),
     (re.compile(r"^LLM adjudication unavailable: (.*)$", re.S),
      r"LLM 复核不可用：\1"),
+    # legacy wording — runs stored before the PLOG→KOL rename replay their
+    # saved English notes/warnings through td(); keep them translating ------
+    (re.compile(r"^PLOG row (\d+): POST DATE (.+) could not be parsed — "
+                r"date-based checks are skipped for this row\.$"),
+     r"PLOG 表第 \1 行：POST DATE \2 无法解析——该行跳过所有基于日期的检查。"),
+    (re.compile(r"^PLOG: (\d+) rows in total had unparseable POST DATE values\.$"),
+     r"PLOG：共 \1 行的 POST DATE 无法解析。"),
+    (re.compile(r"^PLOG POST DATE (.+) is outside the DMR export window "
+                r"(.+)\.\.(.+) — an absent post is expected-missing, not a "
+                r"DMR gap\.$"),
+     r"PLOG 的 POST DATE \1 在 DMR 导出窗口 \2～\3 之外——查不到帖子属于预期缺失，而不是 DMR 漏抓。"),
+    (re.compile(r"^Note-ID join is certain, but DMR records the blogger as "
+                r"(.+) which does not contain PLOG name (.+)\.$"),
+     r"笔记 ID 关联无疑，但 DMR 里登记的博主名是 \1，并不包含 PLOG 的名字 \2。"),
 ]
