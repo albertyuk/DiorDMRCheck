@@ -19,6 +19,18 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"),
 templates.env.filters["fromjson"] = json.loads
 
 
+def _ts(epoch) -> str:
+    """Compact UTC timestamp for run lists."""
+    import time as _time
+    try:
+        return _time.strftime("%Y-%m-%d %H:%M", _time.gmtime(float(epoch)))
+    except (TypeError, ValueError):
+        return ""
+
+
+templates.env.filters["ts"] = _ts
+
+
 def current_user(request: Request) -> Optional[dict]:
     username = auth_service.read_session(request.cookies.get("dmr_session", ""))
     if not username:

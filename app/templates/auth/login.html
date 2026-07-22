@@ -6,7 +6,7 @@
   <p class="muted" style="font-size:.72rem; letter-spacing:.2em; text-transform:uppercase">
     {{ t("Sign in") }}</p>
   {% if error %}<div class="warn">{{ error }}</div>{% endif %}
-  <form method="post" action="/login">
+  <form method="post" action="/login" data-busy>
     <label class="field"><span>{{ t("Username") }}</span>
       <input type="text" name="username" autocomplete="username" required
              autofocus autocapitalize="none"></label>

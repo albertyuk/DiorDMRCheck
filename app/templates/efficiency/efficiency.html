@@ -8,9 +8,11 @@
      <code>.pptx</code> {{ t("download and an HTML view. Nothing is stored: the workbook is analyzed in memory and the report expires after two hours.") }}</p>
   <div style="display:flex; gap:2.4rem; flex-wrap:wrap; align-items:flex-start">
   <form method="post" action="/efficiency" enctype="multipart/form-data"
-        style="flex:1 1 330px">
+        style="flex:1 1 330px" data-busy>
     <p><label>{{ t("KOL workbook (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
-      <input type="file" name="report" accept=".xlsx" required></label></p>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="report" accept=".xlsx" required></span></label></p>
     <p><label>{{ t("CPM / CPE basis") }}<br>
       <select name="basis">
         <option value="pooled" selected>{{ t("Pooled — group Σspend ÷ Σimpressions (campaign-level truth)") }}</option>
@@ -27,7 +29,8 @@
         <option value="en" {% if lang != "zh" %}selected{% endif %}>English</option>
         <option value="zh" {% if lang == "zh" %}selected{% endif %}>中文</option>
       </select></label></p>
-    <button type="submit">{{ t("Analyze & generate") }}</button>
+    <button type="submit"
+            data-busy-label="{{ t('Analyzing…') }}">{{ t("Analyze & generate") }}</button>
 
   <details class="evidence" style="margin-top:1.1rem">
     <summary>{{ t("What the workbook must contain") }}</summary>

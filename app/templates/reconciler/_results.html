@@ -34,15 +34,42 @@
     <button data-tab="reverse" onclick="showTab('reverse')">{{ t("Reverse audit ({n})", n=reverse_rows | length) }}</button>
   </nav>
 
+  {% set ns = namespace(attn=0) %}
+  {% for v in verdicts %}
+    {% if badges.get(v.status, ("review", ""))[0] in ("review", "linkerror")
+          or v.name_mislabel %}{% set ns.attn = ns.attn + 1 %}{% endif %}
+  {% endfor %}
+  <div class="filterbar">
+    <button type="button" class="chip active" data-filter="all"
+            onclick="setResultFilter(this)"><b>{{ verdicts | length }}</b>{{ t("All") }}</button>
+    {% if ns.attn %}
+    <button type="button" class="chip" data-filter="attn"
+            onclick="setResultFilter(this)" style="border-color:#28518f"><b>{{ ns.attn }}</b>{{ t("Needs attention") }}</button>
+    {% endif %}
+    {# only real row statuses become chips — synthetic count keys (e.g.
+       MATCH_name_mislabel) match no row and would filter to nothing #}
+    {% for k, v in counts.items() if k in badges %}
+    <button type="button" class="chip" data-filter="{{ k }}"
+            onclick="setResultFilter(this)"><b>{{ v }}</b>{{ badges[k][1] }}</button>
+    {% endfor %}
+    <input type="search" id="result-search" oninput="filterResults()"
+           placeholder="{{ t('Search name / campaign / blogger…') }}">
+    <span class="muted" style="font-size:.7rem">
+      <span id="result-shown">{{ verdicts | length }}</span> {{ t("shown") }}</span>
+  </div>
+
   <div id="tab-results" class="tab-panel active tablewrap">
     <table>
-      <tr>
+      <tr class="header">
         <th>{{ t("Campaign") }}</th><th>NO</th><th>{{ t("Name") }}</th><th>{{ t("Date") }}</th>
         <th>{{ t("Status") }}</th><th>{{ t("Column S") }}</th><th>{{ t("Matched DMR") }}</th>
         <th>{{ t("Evidence") }}</th><th>{{ t("Human override") }}</th>
       </tr>
       {% for v in verdicts %}
-      <tr {% if v.out_of_window %}style="background:#fffcf2"{% endif %}>
+      <tr data-status="{{ v.status }}"
+          data-attn="{{ '1' if badges.get(v.status, ('review', ''))[0] in ('review', 'linkerror') or v.name_mislabel else '0' }}"
+          data-text="{{ (v.name ~ ' ' ~ v.campaign ~ ' ' ~ (v.matched_blogger or '') ~ ' ' ~ (v.column_s or '')) | lower }}"
+          {% if v.out_of_window %}style="background:#fffcf2"{% endif %}>
         <td>{{ v.campaign }}</td>
         <td>{{ v.no }}</td>
         <td>{{ v.name }}</td>
@@ -150,3 +177,14 @@
     </table>
   </div>
 </div>
+<script>
+/* this fragment is htmx-swapped into the run page — flip the stepper to
+   Results without a full reload */
+(function () {
+  document.querySelectorAll('#flow-steps li').forEach(function (li) {
+    var isResults = li.dataset.step === 'results';
+    li.classList.toggle('active', isResults);
+    li.classList.toggle('done', !isResults);
+  });
+})();
+</script>

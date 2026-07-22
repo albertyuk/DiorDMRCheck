@@ -2,6 +2,8 @@
 {% block title %}{{ t("Run {id}", id=run_id) }} — DMR Reconciler{% endblock %}
 {% block content %}
 <div class="card">
+  {% set flow_step = "results" if run.status == "done" else "run" %}
+  {% include "shared/_steps.html" %}
   <h1>{{ t("Run {id}", id=run_id) }}</h1>
   <p class="muted">{{ run.plog_name }} ↔ {{ run.dmr_name }}</p>
 </div>

@@ -1,0 +1,15 @@
+{# Flow stepper for the reconciliation journey. Set `flow_step` to one of
+   upload | audit | preview | run | results before including. The mapping-
+   audit step appears only while it is the active one (most runs skip it). #}
+{% set _order = {"upload": 0, "audit": 1, "preview": 2, "run": 3, "results": 4} %}
+{% set _at = _order.get(flow_step, 0) %}
+<ol class="steps" id="flow-steps">
+  {% for key, label in [("upload", t("Upload")), ("audit", t("Mapping audit")),
+                        ("preview", t("Confirm")), ("run", t("Reconcile")),
+                        ("results", t("Results"))] %}
+    {% if key != "audit" or flow_step == "audit" %}
+      <li data-step="{{ key }}"
+          class="{% if key == flow_step %}active{% elif _order[key] < _at %}done{% endif %}">{{ label }}</li>
+    {% endif %}
+  {% endfor %}
+</ol>

@@ -1,7 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
+  {% set flow_step = "preview" %}{% include "shared/_steps.html" %}
   <h1>{{ t("Parse preview — confirm before running") }}</h1>
+  <div class="counts">
+    <span class="stat"><b>{{ preview.plog.rows }}</b> {{ t("PLOG rows") }}</span>
+    <span class="stat"><b>{{ preview.dmr.rows }}</b> {{ t("DMR rows") }}</span>
+    {% if preview.out_of_window_rows %}
+      <span class="stat" style="border-color:#a06a00"><b>{{ preview.out_of_window_rows }}</b> {{ t("outside export window") }}</span>
+    {% endif %}
+    {% if preview.perimeter %}
+      <span class="stat"><b>{{ "{:,}".format(preview.perimeter.redbook_count) }}</b> {{ t("perimeter REDBOOK_IDs") }}</span>
+    {% endif %}
+  </div>
   {% if preview.remap %}
     {% for kind, m in preview.remap.items() %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
@@ -68,7 +79,8 @@
   {% for w in preview.plog.warnings %}<div class="warn">{{ t("PLOG:") }} {{ td(w) }}</div>{% endfor %}
   {% for w in preview.dmr.warnings %}<div class="warn">{{ t("DMR:") }} {{ td(w) }}</div>{% endfor %}
 
-  <form method="post" action="/runs/{{ run_id }}/start" style="margin-top:1rem">
+  <form method="post" action="/runs/{{ run_id }}/start" style="margin-top:1rem"
+        data-busy>
     {# hidden fallbacks: an unchecked checkbox sends nothing, so the server
        could never see "off" without these #}
     <input type="hidden" name="retry_failed_links" value="0">
@@ -80,8 +92,13 @@
         {% if not anthropic_configured %}disabled{% endif %}>
       {{ t("Use Claude for residue adjudication + bilingual summary") }}
       {% if not anthropic_configured %}{{ t("(no API key configured)") }}{% endif %}</label></p>
-    <button type="submit">{{ t("Run reconciliation") }}</button>
-    <a class="btn secondary" href="/">{{ t("Cancel") }}</a>
+    <div class="confirmbar">
+      <button type="submit"
+              data-busy-label="{{ t('Starting…') }}">{{ t("Run reconciliation") }}</button>
+      <a class="btn secondary" href="/">{{ t("Cancel") }}</a>
+      <span class="muted">{{ t("{p} PLOG rows ↔ {d} DMR rows — nothing external has been called yet.",
+                               p=preview.plog.rows, d=preview.dmr.rows) }}</span>
+    </div>
   </form>
 </div>
 {% endblock %}

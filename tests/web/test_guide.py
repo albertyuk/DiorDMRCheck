@@ -57,3 +57,36 @@ def test_file_requirements_blocks_on_upload_pages(client):
     client.cookies.set("dmr_lang", "zh")
     assert "文件需要满足什么要求" in client.get("/").text
     assert "工作簿需要满足什么要求" in client.get("/efficiency").text
+
+
+# ------------------------------------------------------ streamlined-UI pass
+
+def test_flow_stepper_on_upload_page(client):
+    body = client.get("/").text
+    assert 'id="flow-steps"' in body
+    assert 'data-step="upload"' in body and "class=\"active" in body
+    # the audit step is hidden unless it is the active one
+    assert 'data-step="audit"' not in body
+
+
+def test_upload_forms_have_dropzones_and_busy_states(client):
+    body = client.get("/").text
+    assert body.count('class="dropzone"') == 3          # plog, dmr, perimeter
+    assert "data-busy-label" in body and "Uploading" in body
+    eff = client.get("/efficiency").text
+    assert 'class="dropzone"' in eff and "data-busy" in eff
+
+
+def test_past_runs_show_badges_and_export_links(client):
+    from app.core import db
+    import time as _t
+    db.run_create("uitest0run01", plog_path="x", dmr_path="y",
+                  plog_name="p.xlsx", dmr_name="d.xlsx", preview={},
+                  perimeter_hash=None)
+    db.run_update("uitest0run01", status="done", message="Run complete.")
+    try:
+        body = client.get("/").text
+        assert "/runs/uitest0run01/export.xlsx" in body   # direct export
+        assert 'class="badge match"' in body              # done badge
+    finally:
+        db.run_delete("uitest0run01")

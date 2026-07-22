@@ -15,7 +15,7 @@
       {% if has_users %}{{ t("(an existing username is reset)") }}{% endif %}
       {{ t("— keep the code private.") }}</p>
     {% if error %}<div class="warn">{{ error }}</div>{% endif %}
-    <form method="post" action="/setup">
+    <form method="post" action="/setup" data-busy>
       <label class="field"><span>{{ t("Setup code") }}</span>
         <input type="password" name="code" required autofocus></label>
       <label class="field"><span>{{ t("Username") }}</span>

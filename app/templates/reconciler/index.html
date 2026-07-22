@@ -1,26 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
+  {% set flow_step = "upload" %}{% include "shared/_steps.html" %}
   <h1>{{ t("New reconciliation run") }}</h1>
   <p class="muted">{{ t("Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
-  {% if not tikhub_configured %}
-    <div class="warn">{{ t("TIKHUB_API_KEY is not configured — link resolution will rely on the free direct-redirect path only, which is usually blocked from datacenter IPs. Expect most rows to fall back to Check链接错误 with name-based candidates.") }}</div>
-  {% endif %}
-  {% if not anthropic_configured %}
-    <div class="warn">{{ t("ANTHROPIC_API_KEY is not configured — Tier-4 adjudication and the bilingual summary are skipped; ambiguous rows stay 人工复核.") }}</div>
-  {% else %}
-    <p class="muted">{{ t("Adjudicator model:") }} <code>{{ model }}</code></p>
-  {% endif %}
-  <form method="post" action="/upload" enctype="multipart/form-data">
+  <form method="post" action="/upload" enctype="multipart/form-data"
+        data-busy data-drop-i18n>
     <p><label>{{ t("PLOG file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
-      <input type="file" name="plog" accept=".xlsx" required></label></p>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="plog" accept=".xlsx" required></span></label></p>
     <p><label>{{ t("DMR file (e.g.") }} <code>YTD_DMR_MICRO_0720.xlsx</code>{{ t(")") }}<br>
-      <input type="file" name="dmr" accept=".xlsx" required></label></p>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="dmr" accept=".xlsx" required></span></label></p>
     <p><label>{{ t("Perimeter (Micro) — optional") }}
       {% if perimeter %}<span class="muted">{{ t("(replaces the current one below)") }}</span>{% endif %}<br>
-      <input type="file" name="perimeter" accept=".xlsx"></label></p>
-    <button type="submit">{{ t("Upload & preview") }}</button>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="perimeter" accept=".xlsx"></span></label></p>
+    <button type="submit"
+            data-busy-label="{{ t('Uploading & parsing…') }}">{{ t("Upload & preview") }}</button>
   </form>
+  {% if not tikhub_configured %}
+    <div class="warn" style="font-size:.76rem">{{ t("TIKHUB_API_KEY is not configured — link resolution will rely on the free direct-redirect path only, which is usually blocked from datacenter IPs. Expect most rows to fall back to Check链接错误 with name-based candidates.") }}</div>
+  {% endif %}
+  {% if not anthropic_configured %}
+    <div class="warn" style="font-size:.76rem">{{ t("ANTHROPIC_API_KEY is not configured — Tier-4 adjudication and the bilingual summary are skipped; ambiguous rows stay 人工复核.") }}</div>
+  {% else %}
+    <p class="muted" style="font-size:.72rem">{{ t("Adjudicator model:") }} <code>{{ model }}</code></p>
+  {% endif %}
 
   <details class="evidence" style="margin-top:1.1rem">
     <summary>{{ t("What the files must contain") }}</summary>
@@ -77,14 +86,26 @@
 <div class="card">
   <h2>{{ t("Past runs") }}</h2>
   {% if runs %}
+  {% set run_badge = {"done": "match", "error": "noblogger",
+                      "running": "review", "queued": "review",
+                      "pending": "nopost"} %}
   <table>
-    <tr><th>{{ t("Run") }}</th><th>{{ t("Files") }}</th><th>{{ t("Status") }}</th><th>{{ t("Message") }}</th></tr>
+    <tr><th>{{ t("Run") }}</th><th>{{ t("When") }}</th><th>{{ t("Files") }}</th>
+        <th>{{ t("Status") }}</th><th>{{ t("Message") }}</th><th></th></tr>
     {% for r in runs %}
     <tr>
       <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+      <td class="muted" style="white-space:nowrap">{{ r.created_at | ts }}</td>
       <td>{{ r.plog_name }} ↔ {{ r.dmr_name }}</td>
-      <td>{{ td(r.status) }}</td>
+      <td><span class="badge {{ run_badge.get(r.status, 'review') }}">{{ td(r.status) }}</span></td>
       <td class="muted">{{ td(r.message or "") }}</td>
+      <td style="white-space:nowrap">
+        {% if r.status == "done" %}
+          <a href="/runs/{{ r.id }}/export.xlsx" style="color:var(--ink)">⬇ .xlsx</a>
+        {% elif r.status == "error" %}
+          <a href="/runs/{{ r.id }}" style="color:var(--ink)">{{ t("Retry") }} →</a>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </table>

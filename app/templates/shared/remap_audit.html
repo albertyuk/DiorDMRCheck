@@ -2,13 +2,16 @@
 {% block title %}{{ t("Header mapping — audit") }}{% endblock %}
 {% block content %}
 <div class="card">
+  {% if flow == "run" %}
+    {% set flow_step = "audit" %}{% include "shared/_steps.html" %}
+  {% endif %}
   <h1>{{ t("Unfamiliar headers — review the proposed mapping") }}</h1>
   <p class="muted">{{ t("This file's headers don't match the format the pipeline knows. Claude looked at the sheet names and the first rows only, and proposed the mapping below — it maps columns, it never touches your data.") }}
      <b>{{ t("Nothing runs until you approve.") }}</b>
      {{ t("Applying rewrites only the header cells to the canonical names; every data cell stays byte-identical, and the deterministic pipeline runs unchanged. Approved mappings are remembered, so this format is audited once.") }}</p>
   {% if error %}<div class="warn"><b>{{ error }}</b></div>{% endif %}
 
-  <form method="post" action="/remap/{{ token }}/apply">
+  <form method="post" action="/remap/{{ token }}/apply" data-busy>
     {% for f in files %}
     <h2>{{ f.label }} — <code>{{ f.filename }}</code></h2>
     <p class="muted" style="font-size:.78rem">

@@ -1,4 +1,11 @@
-<h2>{{ td(run.phase or "starting") }}</h2>
+{% set phase = run.phase or "starting" %}
+{% set phase_order = ["parse", "resolve", "match", "adjudicate", "summary"] %}
+{% set at = phase_order.index(phase) if phase in phase_order else -1 %}
+<ol class="phases">
+  {% for p in phase_order %}
+    <li class="{% if p == phase %}active{% elif at > loop.index0 %}done{% endif %}">{{ td(p) }}</li>
+  {% endfor %}
+</ol>
 <p>{{ td(run.message or "Working…") }}</p>
 {% set total = run.progress_total or 0 %}
 {% set done = run.progress_done or 0 %}

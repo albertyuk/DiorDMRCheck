@@ -188,6 +188,10 @@ ALLOWED_ZH_DUPLICATE_GROUPS = {
     frozenset({"date the post went live", "Date"}),
     frozenset({"sheet", "Sheet"}),
     frozenset({"header row", "Header row"}),
+    # flow-stepper labels share Chinese with same-meaning table headers /
+    # buttons — different English contexts, one natural zh term
+    frozenset({"Reconcile", "Run"}),
+    frozenset({"Retry", "Retry run"}),
 }
 
 
