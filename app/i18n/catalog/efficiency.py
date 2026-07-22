@@ -16,6 +16,11 @@ ZH: dict[str, str] = {
 }
 
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^LEVEL value (.+) missing/unclear on (\d+) row\(s\) — "
+                r"tiered by FAN BASE instead \(≤200K KOC · 200–400K BOT · "
+                r"400–1000K MID · 1M\+ TOP\)\. Verify the assignment\.$"),
+     r"LEVEL 值 \1 缺失或无法识别，共 \2 行——已按 FAN BASE 粉丝量自动分层"
+     r"（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP）。请核实分层结果。"),
     # V1 sheet/columns errors (analysis.py parse_report)
     (re.compile(r"^V1: no header row containing NAME and POST LINK found in "
                 r"sheet (.+)\.$"),

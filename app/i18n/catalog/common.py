@@ -236,8 +236,8 @@ ZH: dict[str, str] = {
     "Files": "文件",
     "Finding": "发现",
     "First-time setup": "首次设置",
-    "From FAN BASE thresholds (≥1000K TOP · ≥400K MID · ≥200K BOT · else KOC)":
-        "按 FAN BASE 粉丝量阈值（≥1000K TOP · ≥400K MID · ≥200K BOT · 其余 KOC）",
+    "From FAN BASE thresholds (1M+ TOP · 400–1000K MID · 200–400K BOT · ≤200K KOC)":
+        "按 FAN BASE 粉丝量阈值（1M+ TOP · 400–1000K MID · 200–400K BOT · ≤200K KOC）",
     "From LEVEL labels (头部/腰部/尾部+底部→BOT/KOC)":
         "按 LEVEL 标签（头部/腰部/尾部+底部→BOT/KOC）",
     "Generate →": "生成 →",
@@ -339,8 +339,8 @@ ZH: dict[str, str] = {
         "表头或版式不一样（比如中文表头的追踪表）？直接上传即可——Claude 会给出列映射建议，你在审核页批准之前不会开始任何处理。",
     "Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
         "Excel .xlsx，最大 25 MB，一张 PLOG 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
-    "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — or switch tier assignment to FAN BASE thresholds above. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
-        "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——也可以在上方把层级判定改为按 FAN BASE 阈值。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
+    "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
+        "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——LEVEL 缺失或看不懂的行会自动按 FAN BASE 粉丝量分层（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP，以 V11 提示）。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
     "Perimeter in use:": "当前使用的 Perimeter：",
     "China market only ({signal}): kept {kept} of {scanned} rows.":
         "仅限中国市场（按 {signal} 判定）：{scanned} 行中保留 {kept} 行。",

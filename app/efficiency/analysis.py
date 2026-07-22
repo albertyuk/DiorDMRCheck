@@ -188,14 +188,29 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
 
 # ----------------------------------------------------------- classification
 
+def tier_from_fanbase(fb: float, cfg: ReportConfig) -> str:
+    """Follower-count tier ladder: ≤200K KOC · 200–400K BOT · 400–1000K MID
+    · 1M+ TOP. A value exactly on a boundary belongs to the band below it
+    (200K → KOC), except the top: exactly 1000K is TOP ("1M+")."""
+    if fb >= cfg.fanbase_top_k:
+        return "TOP"
+    if fb > cfg.fanbase_mid_k:
+        return "MID"
+    if fb > cfg.fanbase_bot_k:
+        return "BOT"
+    return "KOC"
+
+
 def classify(rows: list[Row], cfg: ReportConfig,
              findings: list[Finding]) -> None:
     """COOP from TYPE (substring — 报备图文/软植图文/bare 报备 all classify);
     TIER from LEVEL (label mode merges 尾部+底部 into BOT) or from fan base
-    thresholds (fanbase mode). Unknown values go to the warning bucket —
-    never guessed."""
+    thresholds (fanbase mode). In label mode a missing/unclear LEVEL falls
+    back to the FAN BASE ladder (reported as V11); rows with neither stay
+    unclassified — never guessed."""
     bad_types: dict[str, list[int]] = {}
     bad_levels: dict[str, list[int]] = {}
+    fallback_levels: dict[str, list[int]] = {}
     for r in rows:
         t = nfkc(r.type_raw)
         if "报备" in t:
@@ -213,14 +228,8 @@ def classify(rows: list[Row], cfg: ReportConfig,
                 bad_levels.setdefault(
                     f"(no FAN BASE for fanbase tiering; LEVEL={r.level_raw!r})",
                     []).append(r.excel_row)
-            elif fb >= cfg.fanbase_top_k:
-                r.tier = "TOP"
-            elif fb >= cfg.fanbase_mid_k:
-                r.tier = "MID"
-            elif fb >= cfg.fanbase_bot_k:
-                r.tier = "BOT"
             else:
-                r.tier = "KOC"
+                r.tier = tier_from_fanbase(fb, cfg)
         else:
             lvl = nfkc(r.level_raw)
             if "头部" in lvl:
@@ -231,6 +240,11 @@ def classify(rows: list[Row], cfg: ReportConfig,
                 r.tier = "BOT"   # deliberate merge — see V8
             elif "koc" in lvl.casefold():
                 r.tier = "KOC"
+            elif r.fanbase_k is not None:
+                # LEVEL missing/unclear → follower-count fallback (V11)
+                r.tier = tier_from_fanbase(r.fanbase_k, cfg)
+                fallback_levels.setdefault(
+                    r.level_raw or "(blank)", []).append(r.excel_row)
             else:
                 r.tier = ""
                 bad_levels.setdefault(r.level_raw or "(blank)", []).append(r.excel_row)
@@ -245,6 +259,12 @@ def classify(rows: list[Row], cfg: ReportConfig,
             "V7", "WARN",
             f"Unclassified LEVEL value {value!r} on {len(rws)} row(s) — "
             "excluded from groups, counted in totals.", rws))
+    for value, rws in fallback_levels.items():
+        findings.append(Finding(
+            "V11", "WARN",
+            f"LEVEL value {value!r} missing/unclear on {len(rws)} row(s) — "
+            "tiered by FAN BASE instead (≤200K KOC · 200–400K BOT · "
+            "400–1000K MID · 1M+ TOP). Verify the assignment.", rws))
 
 
 # --------------------------------------------------------------- validation

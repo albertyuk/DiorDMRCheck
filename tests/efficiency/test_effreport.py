@@ -285,3 +285,59 @@ def test_share_tolerance_scales_with_slice_count():
     groups["G0"]["share"] += 2.0
     with pytest.raises(VerificationError):
         verify_reconciliation([], metrics)
+
+
+# ------------------------------------------------- LEVEL → FAN BASE fallback
+
+def _level_fallback_wb(rows):
+    from datetime import datetime
+    from tests.fixtures import EFF_HEADERS, EFF_PAID
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    for no, (level, fan) in enumerate(rows, start=1):
+        ws.append([no, "", "W1", EFF_PAID, level, f"kol{no}", fan,
+                   datetime(2026, 6, no), "", f"http://xhslink.com/fb{no}",
+                   50000, 1000, 100, 50, 1150, 5000, None, None])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_missing_level_falls_back_to_fanbase_bands():
+    """User-specified ladder: ≤200K KOC · 200–400K BOT · 400–1000K MID ·
+    1M+ TOP — boundary values belong to the band below, 1000K is TOP."""
+    a = analyze(io.BytesIO(_level_fallback_wb([
+        ("", 150), ("", 200),          # KOC (200 exactly → "200k or less")
+        ("", 201), ("", 400),          # BOT
+        ("待定", 401), ("?", 999),      # MID (unclear labels count too)
+        ("", 1000), ("", 1500),        # TOP
+    ])), ReportConfig())
+    g = a["metrics"]["groups"]
+    assert g["KOC PAID"]["n"] == 2
+    assert g["BOT PAID"]["n"] == 2
+    assert g["MID PAID"]["n"] == 2
+    assert g["TOP PAID"]["n"] == 2
+    assert a["metrics"]["totals"]["unclassified"] == 0
+    v11 = [f for f in a["findings"] if f["code"] == "V11"]
+    assert v11 and sum(len(f["rows"]) for f in v11) == 8
+    # …and the finding translates
+    from app.i18n import make_td
+    zh = make_td("zh")(v11[0]["message"])
+    assert "已按 FAN BASE 粉丝量自动分层" in zh
+
+
+def test_missing_level_and_fanbase_stays_unclassified():
+    a = analyze(io.BytesIO(_level_fallback_wb([("", None), ("头部", 1200)])),
+                ReportConfig())
+    assert a["metrics"]["totals"]["unclassified"] == 1     # no fallback signal
+    assert not [f for f in a["findings"] if f["code"] == "V11"]
+    assert [f for f in a["findings"] if f["code"] == "V7"]
+
+
+def test_explicit_level_wins_over_fanbase():
+    """The fallback NEVER overrides a recognizable label — a 头部 row with
+    tiny fan base stays TOP."""
+    a = analyze(io.BytesIO(_level_fallback_wb([("头部", 50)])), ReportConfig())
+    assert a["metrics"]["groups"]["TOP PAID"]["n"] == 1

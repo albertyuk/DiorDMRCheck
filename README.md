@@ -88,13 +88,16 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
 
 - **Classification** — COOP from `TYPE` (`报备…`→PAID, `软植…`→SOFT), TIER
   from `LEVEL` labels (`尾部`+`底部` merge into BOT — documented judgment
-  call, V8) or, via the form toggle, from `FAN BASE` thresholds. Unknown
-  values land in an UNCLASSIFIED bucket, never guessed.
+  call, V8) or, via the form toggle, from `FAN BASE` thresholds. A row whose
+  LEVEL is missing or unrecognizable falls back to the follower ladder
+  (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP) and is reported as
+  V11; an explicit label always wins over follower count. Rows with neither
+  signal land in an UNCLASSIFIED bucket, never guessed.
 - **Metrics** — pooled basis (group Σspend÷Σimpressions ×1000, Σspend÷Σeng)
   by default, per-post average as the alternative; the basis is printed on
   the slide. The source file's CPM column is price per *single* impression —
   ×1000 off standard CPM — and is never reused, only cross-checked (V5).
-- **Validation V1–V10** — findings (duplicate links, engagement identity
+- **Validation V1–V11** — findings (duplicate links, engagement identity
   breaks, missing values, zero denominators, label conflicts, n<3 groups,
   viral-post concentration >50%) are shown *with* the output and, where they
   bias a number, become on-slide caveats. The source file is never mutated.
