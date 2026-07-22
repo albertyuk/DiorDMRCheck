@@ -296,6 +296,12 @@ excusing those two**.
   at startup and on the configured maintenance interval. Retention enforces
   both a maximum age and aggregate disk budget while protecting queued,
   running, and pending-audit runs; removal also clears matching run history.
+- **The export never overwrites populated cells.** An S cell that already
+  holds a value in the uploaded file is kept verbatim (when it disagrees
+  with the pipeline the verdict is recorded in the evidence Notes column
+  instead), and the evidence block shifts right past any column that
+  already contains data. A UI override — an explicit action in this tool —
+  still writes its value.
 - Human overrides are stored per sheet row and win over the pipeline verdict
   in both the UI and the exports; the special choice `已匹配（清空S）` forces a
   blank column S (asserting a match), while clearing the dropdown reverts to

@@ -78,12 +78,18 @@ def _candidates_text(v: Verdict) -> str:
 def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
                          header_row: int, sheet_name: Optional[str] = None,
                          overrides: Optional[dict] = None) -> None:
-    """Copy the PLOG workbook and add column S (+ evidence T..).
+    """Copy the PLOG workbook and add column S (+ evidence columns).
 
     The workbook is loaded without data_only so formulas and formats in A–R
     survive untouched; we only ever write to columns >= S. The target sheet is
     the one parse_plog actually read (passed by name) — re-detection on the
     formula view could pick a different sheet.
+
+    Pre-existing content is never overwritten: an S cell that already holds a
+    value in the source keeps it (a UI override — an explicit action in this
+    tool — still wins; the pipeline verdict stays visible in the evidence
+    status column, with a note when it disagrees), and the evidence block
+    shifts right past any column that already contains data.
     """
     wb = load_workbook(plog_path)
     ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else None
@@ -96,8 +102,21 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         ws = wb.active
 
     overrides = overrides or {}
+    verdict_rows = [v.excel_row for v in verdicts]
+    check_rows = [header_row] + verdict_rows
+
+    def _populated(col: int) -> bool:
+        return any(ws.cell(row=r, column=col).value not in (None, "")
+                   for r in check_rows)
+
+    # first contiguous fully-empty block wide enough for the evidence columns
+    ev_start = EVIDENCE_START_COL
+    width = len(EVIDENCE_HEADERS)
+    while any(_populated(c) for c in range(ev_start, ev_start + width)):
+        ev_start += 1
+
     bold = Font(bold=True)
-    for col_idx, (_, title) in enumerate(EVIDENCE_HEADERS, start=EVIDENCE_START_COL):
+    for col_idx, (_, title) in enumerate(EVIDENCE_HEADERS, start=ev_start):
         cell = ws.cell(row=header_row, column=col_idx, value=title)
         cell.font = bold
     # Column S intentionally has no header — the reference file leaves S1 blank.
@@ -105,14 +124,27 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
     for v in verdicts:
         r = v.excel_row
         ov = overrides.get(r)
+        existing_s = ws.cell(row=r, column=S_COL).value
+        preserved = None
         if ov:
             s_text = "" if ov["status"] == OVERRIDE_MATCH_BLANK else ov["status"]
+        elif existing_s not in (None, ""):
+            preserved = str(existing_s)
+            s_text = preserved            # keep the human's cell verbatim
         else:
             s_text = v.column_s()
         status = f"{v.status}{' (override)' if ov else ''}"
         rationale = " / ".join(x for x in (v.llm_rationale_zh, v.llm_rationale_en) if x)
         llm = (f"{v.llm_verdict} ({v.llm_confidence:.0%})"
                if v.llm_verdict and v.llm_confidence is not None else v.llm_verdict)
+        notes = list(v.notes)
+        if preserved is not None:
+            pipeline_s = v.column_s()
+            if preserved.strip() != (pipeline_s or "").strip():
+                notes.append(
+                    f"S already contained {preserved!r} — kept; pipeline "
+                    f"verdict was {pipeline_s or '(blank=matched)'}")
+            status += " (S kept from source)"
         ws.cell(row=r, column=S_COL, value=s_text or None)
         values = [
             status,
@@ -129,9 +161,9 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
             llm or None,
             rationale or None,
             _perimeter_text(v) or None,
-            " | ".join(v.notes + ([ov["note"]] if ov and ov.get("note") else [])) or None,
+            " | ".join(notes + ([ov["note"]] if ov and ov.get("note") else [])) or None,
         ]
-        for col_idx, value in enumerate(values, start=EVIDENCE_START_COL):
+        for col_idx, value in enumerate(values, start=ev_start):
             ws.cell(row=r, column=col_idx, value=value)
 
     wb.save(out_path)

@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 
 from app.reconciler.pipeline import run_pipeline
 from app.reconciler.parsers import parse_dmr, parse_plog
-from app.reconciler.export import write_annotated_xlsx
+from app.reconciler.export import EVIDENCE_HEADERS, write_annotated_xlsx
 from tests import fixtures
 
 
@@ -114,3 +114,83 @@ def test_audit_json_has_document_level_caveat(plog_path, dmr_path,
         {"id": "t", "summary_json": None}, verdicts, {}, {}, {}, []))
     assert doc["engagement_caveat"] == ENGAGEMENT_CAVEAT
     assert all("engagement_caveat" not in v for v in doc["verdicts"])
+
+
+# ------------------------------------------- never overwrite populated cells
+
+def _prefilled_copy(plog_path, tmp_path, s_edits=None, col_edits=None):
+    """Copy the fixture PLOG and pre-populate cells like earlier human work."""
+    import shutil
+    p = tmp_path / "prefilled.xlsx"
+    shutil.copy(plog_path, p)
+    wb = load_workbook(str(p))
+    ws = wb["MASTER KOL LIST"]
+    for row, value in (s_edits or {}).items():
+        ws.cell(row=row, column=19, value=value)
+    for (row, col), value in (col_edits or {}).items():
+        ws.cell(row=row, column=col, value=value)
+    wb.save(str(p))
+    return str(p)
+
+
+def test_prefilled_s_cells_are_never_overwritten(plog_path, dmr_path,
+                                                 fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    dmr = parse_dmr(dmr_path)
+    verdicts = run_pipeline(plog, dmr)
+    by = {(v.campaign, v.no): v for v in verdicts}
+    matched_row = by[("PLOG #001", "1")].excel_row      # pipeline wants blank
+    nopost_row = by[("PLOG #002", "1")].excel_row       # pipeline wants 无帖子
+
+    src = _prefilled_copy(plog_path, tmp_path, s_edits={
+        matched_row: "人工已确认OK",
+        nopost_row: "无帖子",                            # human agrees
+    })
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(src, str(out), verdicts, header_row=plog.header_row)
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
+
+    assert ann.cell(row=matched_row, column=19).value == "人工已确认OK"
+    assert ann.cell(row=nopost_row, column=19).value == "无帖子"
+    # disagreement is noted in the evidence Notes column, agreement is not
+    n_cols = len(EVIDENCE_HEADERS)
+    notes_col = 20 + n_cols - 1
+    notes = ann.cell(row=matched_row, column=notes_col).value or ""
+    assert "人工已确认OK" in notes and "kept" in notes
+    status = ann.cell(row=matched_row, column=20).value or ""
+    assert "(S kept from source)" in status
+    agree_notes = ann.cell(row=nopost_row, column=notes_col).value or ""
+    assert "kept" not in agree_notes
+    # untouched rows still get the pipeline verdict as usual
+    mislabel_row = by[("PLOG #001", "3")].excel_row
+    assert ann.cell(row=mislabel_row, column=19).value == "有 但是DMR博主名字标注错误"
+
+
+def test_ui_override_still_wins_over_prefilled_s(plog_path, dmr_path,
+                                                 fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    by = {(v.campaign, v.no): v for v in verdicts}
+    row = by[("PLOG #002", "1")].excel_row
+    src = _prefilled_copy(plog_path, tmp_path, s_edits={row: "旧的人工备注"})
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(src, str(out), verdicts, header_row=plog.header_row,
+                         overrides={row: {"status": "无博主", "note": ""}})
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
+    assert ann.cell(row=row, column=19).value == "无博主"   # explicit action wins
+
+
+def test_evidence_block_shifts_past_populated_columns(plog_path, dmr_path,
+                                                      fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    some_row = verdicts[0].excel_row
+    # column T (20) already used by the human for their own notes
+    src = _prefilled_copy(plog_path, tmp_path,
+                          col_edits={(some_row, 20): "我的备注，别动"})
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(src, str(out), verdicts, header_row=plog.header_row)
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
+    assert ann.cell(row=some_row, column=20).value == "我的备注，别动"
+    assert ann.cell(row=plog.header_row, column=20).value in (None, "")
+    assert ann.cell(row=plog.header_row, column=21).value == "STATUS"
