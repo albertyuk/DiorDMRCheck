@@ -174,3 +174,32 @@ def test_run_concurrency_must_be_positive(monkeypatch, value):
     monkeypatch.setenv("RUN_MAX_CONCURRENT", value)
     with pytest.raises(ValueError, match=r"RUN_MAX_CONCURRENT must be >= 1"):
         config._positive_int_env("RUN_MAX_CONCURRENT", "2")
+
+
+# ------------------------------------------------ editable export window
+
+def test_apply_window_override():
+    from datetime import date
+    from app.reconciler.parsers import parse_dmr
+    from app.reconciler.runs import apply_window_override
+
+    class FakeDmr:
+        window_from = date(2025, 1, 1)
+        window_to = date(2025, 12, 31)
+
+    d = FakeDmr()
+    # no keys at all (legacy options) → detected window untouched
+    apply_window_override(d, {"use_llm": True})
+    assert d.window_from == date(2025, 1, 1)
+    # user widened the window to include 2024
+    apply_window_override(d, {"window_from": "2024-01-01",
+                              "window_to": "2025-12-31"})
+    assert d.window_from == date(2024, 1, 1)
+    assert d.window_to == date(2025, 12, 31)
+    # cleared a bound → that side unset (disables window checks)
+    apply_window_override(d, {"window_from": "", "window_to": "2025-12-31"})
+    assert d.window_from is None and d.window_to == date(2025, 12, 31)
+    # garbage never crashes a run
+    apply_window_override(d, {"window_from": "not-a-date",
+                              "window_to": "2025-13-45"})
+    assert d.window_from is None and d.window_to is None

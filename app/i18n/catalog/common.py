@@ -310,6 +310,10 @@ ZH: dict[str, str] = {
     "perimeter REDBOOK_IDs": "个 Perimeter REDBOOK_ID",
     "{p} PLOG rows ↔ {d} DMR rows — nothing external has been called yet.":
         "PLOG {p} 行 ↔ DMR {d} 行——目前尚未调用任何外部服务。",
+    "Export window from": "导出窗口 从",
+    "Export window to": "导出窗口 至",
+    "Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). Clear either date to disable the window checks.":
+        "从 DMR 文件的元信息中检测得到——可修改，用来决定哪些帖子算「在导出窗口外」（属预期缺失，不算 DMR 漏抓）。清空任一日期即关闭窗口检查。",
     "All": "全部",
     "Needs attention": "待处理",
     "Search name / campaign / blogger…": "搜索博主名／项目／Blogger…",

@@ -402,7 +402,8 @@ FLOW_HANDLERS["run"] = _apply_remap_run
 
 @router.post("/runs/{run_id}/start")
 async def start(run_id: str, retry_failed_links: str = Form("0"),
-                use_llm: str = Form("0")):
+                use_llm: str = Form("0"),
+                window_from: str = Form(""), window_to: str = Form("")):
     """Checkbox values arrive as "1" (hidden-input fallback supplies "0" when
     unchecked — a bool Form default can never receive False from a form)."""
     lease_path = config.UPLOAD_DIR / run_id
@@ -418,6 +419,10 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                 db.run_update(run_id, options_json=json.dumps({
                     "retry_failed_links": retry_failed_links == "1",
                     "use_llm": use_llm == "1",
+                    # user-editable DMR export window (confirm screen);
+                    # runs.apply_window_override validates and applies it
+                    "window_from": window_from.strip()[:10],
+                    "window_to": window_to.strip()[:10],
                 }), status="queued", error=None)
                 if (initial_start and run.get("perimeter_uploaded") != 0
                         and run.get("perimeter_hash")):

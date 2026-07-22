@@ -7,6 +7,8 @@
            value="{{ '1' if options.get('retry_failed_links') else '0' }}">
     <input type="hidden" name="use_llm"
            value="{{ '1' if options.get('use_llm') else '0' }}">
+    <input type="hidden" name="window_from" value="{{ options.get('window_from', '') }}">
+    <input type="hidden" name="window_to" value="{{ options.get('window_to', '') }}">
     <button type="submit">{{ t("Retry run") }}</button>
   </form>
 </div>

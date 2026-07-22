@@ -143,3 +143,24 @@ def test_cached_upload_keeps_run_filename_and_retry_does_not_promote(
     assert started == [first_id, second_id, second_id]
     assert pm.current_meta()["hash"] == newer_meta["hash"]
     assert pm.current_meta()["filename"] == "newest.xlsx"
+
+
+def test_preview_offers_editable_export_window(client, tmp_path):
+    import tempfile, os
+    from tests import fixtures
+    fd, pp = tempfile.mkstemp(suffix=".xlsx"); os.close(fd)
+    fd, dp = tempfile.mkstemp(suffix=".xlsx"); os.close(fd)
+    fixtures.build_plog(pp)
+    fixtures.build_dmr(dp)
+    mime = ("application/vnd.openxmlformats-officedocument"
+            ".spreadsheetml.sheet")
+    r = client.post("/upload", files={
+        "plog": ("p.xlsx", open(pp, "rb").read(), mime),
+        "dmr": ("d.xlsx", open(dp, "rb").read(), mime)})
+    os.unlink(pp); os.unlink(dp)
+    assert r.status_code == 200
+    body = r.text
+    # date inputs exist and are prefilled with the metadata-detected window
+    assert 'name="window_from"' in body and 'name="window_to"' in body
+    assert 'value="2026-01-01"' in body and 'value="2026-07-20"' in body
+    assert "Clear either date to disable the window checks" in body

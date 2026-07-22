@@ -111,6 +111,28 @@ def _run_slot(run_id: str) -> None:
                              daemon=True).start()
 
 
+def apply_window_override(dmr, options: dict) -> None:
+    """Apply the user-edited DMR export window from the confirm screen.
+
+    The metadata-detected window prefills the form, so unedited runs are
+    unchanged. Clearing either date (or an unparseable value) leaves that
+    bound unset — and the pipeline requires both bounds, so a cleared field
+    disables the out-of-window checks entirely."""
+    if "window_from" not in options and "window_to" not in options:
+        return
+
+    def _parse(key):
+        from datetime import date
+        v = str(options.get(key) or "").strip()
+        try:
+            return date.fromisoformat(v) if v else None
+        except ValueError:
+            return None
+
+    dmr.window_from = _parse("window_from")
+    dmr.window_to = _parse("window_to")
+
+
 def _run(run_id: str) -> None:
     run = db.run_get(run_id)
     if not run:
@@ -121,6 +143,7 @@ def _run(run_id: str) -> None:
                       message="Parsing workbooks…")
         plog = run_upload_task_sync(parse_plog, run["plog_path"])
         dmr = run_upload_task_sync(parse_dmr, run["dmr_path"])
+        apply_window_override(dmr, options)
 
         perim = None
         perim_warning = None

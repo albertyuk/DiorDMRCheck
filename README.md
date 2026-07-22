@@ -302,6 +302,11 @@ excusing those two**.
   instead), and the evidence block shifts right past any column that
   already contains data. A UI override — an explicit action in this tool —
   still writes its value.
+- **The DMR export window is editable** on the confirm screen: it prefills
+  from the file's metadata, an edit overrides which posts count as
+  超出DMR导出窗口 (expected-missing, not DMR gaps), and clearing either date
+  disables the window checks. The choice is stored with the run's options
+  and survives retries.
 - Human overrides are stored per sheet row and win over the pipeline verdict
   in both the UI and the exports; the special choice `已匹配（清空S）` forces a
   blank column S (asserting a match), while clearing the dropdown reverts to
