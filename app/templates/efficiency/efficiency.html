@@ -28,6 +28,21 @@
         <option value="zh" {% if lang == "zh" %}selected{% endif %}>中文</option>
       </select></label></p>
     <button type="submit">{{ t("Analyze & generate") }}</button>
+
+  <details class="evidence" style="margin-top:1.1rem">
+    <summary>{{ t("What the workbook must contain") }}</summary>
+    <div style="font-size:.8rem">
+      <p style="margin-top:.7rem">
+        {{ t("Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:") }}</p>
+      <p><code>NO</code> <code>CAMPAIGN</code> <code>TYPE</code> <code>LEVEL</code>
+         <code>NAME</code> <code>FAN BASE（K)</code> <code>POST DATE</code>
+         <code>POST LINK</code> <code>IMPRESSION</code> <code>LIKE</code>
+         <code>COLLECTION</code> <code>COMMENT</code> <code>TTL ENGAGEMENT</code>
+         <code>PRICE</code></p>
+      <p>{{ t("TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — or switch tier assignment to FAN BASE thresholds above. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.") }}</p>
+      <p class="muted">{{ t("Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.") }}</p>
+    </div>
+  </details>
   </form>
   <figure style="flex:1 1 440px; min-width:300px; margin:0">
     <img src="/static/eff_demo_{{ lang }}.jpg"

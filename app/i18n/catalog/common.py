@@ -291,6 +291,33 @@ ZH: dict[str, str] = {
     "Per-post average — mean of each post's own ratio": "单篇平均——每篇帖子各自比值的平均",
     "Perimeter (Micro) — optional": "Perimeter（Micro）名单——选填",
     "Perimeter (Micro):": "Perimeter（Micro）：",
+    # file-requirements blocks (upload forms) -------------------------------
+    "What the files must contain": "文件需要满足什么要求",
+    "What the workbook must contain": "工作簿需要满足什么要求",
+    "All files": "所有文件",
+    "Excel .xlsx only, up to 25 MB each. Sheet names don't matter and metadata rows above the table are fine: the header row is found automatically anywhere in the first 15 rows, and header spelling is forgiving (case, spacing and full-width characters are normalized).":
+        "只支持 Excel .xlsx，每个最大 25 MB。工作表叫什么名字都行，表格上方有说明行也没关系：程序会在前 15 行内自动找到表头行，对表头写法也很宽容（大小写、空格、全角字符都会归一化）。",
+    "needs columns": "必须包含列",
+    "and": "和",
+    "POST LINK can be visible text or a hyperlink cell, as xhslink.com share links or xiaohongshu.com note links. Also used when present:":
+        "POST LINK 可以是文字链接，也可以是超链接单元格——xhslink.com 分享短链或 xiaohongshu.com 笔记链接均可。以下列存在时也会用到：",
+    "; blank CAMPAIGN cells inherit the section above them.":
+        "；CAMPAIGN 留空的行沿用上方最近的项目名。",
+    "(the 24-character Xiaohongshu note id).": "（即 24 位小红书笔记 ID）。",
+    "is strongly recommended — without it 无博主 vs 无帖子 cannot be decided deterministically. Also used when present:":
+        "强烈建议保留——没有它就无法确定地区分「无博主」和「无帖子」。以下列存在时也会用到：",
+    '. A "From … To …" line above the header enables the export-window checks.':
+        "。表头上方的「From … To …」说明行用于导出窗口检查。",
+    "the LVMH workbook with a": "LVMH 名单工作簿，需包含",
+    "sheet; needs": "工作表；必须有",
+    'The "Date of extraction" line is read to show staleness. Only China-market rows are used (IN_CHINA_REPORTS=YES, else COUNTRY=Mainland China).':
+        "会读取「Date of extraction」说明行来提示名单新旧。只使用中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）。",
+    "Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.":
+        "表头或版式不一样（比如中文表头的追踪表）？直接上传即可——Claude 会给出列映射建议，你在审核页批准之前不会开始任何处理。",
+    "Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
+        "Excel .xlsx，最大 25 MB，一张 PLOG 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
+    "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — or switch tier assignment to FAN BASE thresholds above. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
+        "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——也可以在上方把层级判定改为按 FAN BASE 阈值。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
     "Perimeter in use:": "当前使用的 Perimeter：",
     "China market only ({signal}): kept {kept} of {scanned} rows.":
         "仅限中国市场（按 {signal} 判定）：{scanned} 行中保留 {kept} 行。",

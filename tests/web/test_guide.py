@@ -43,3 +43,17 @@ def test_guide_translates(client):
     assert "判定结果怎么读" in body and "真正的 DMR 漏抓" in body
     assert "表格格式不认识怎么办" in body and "只评估中国市场" in body
     assert "知道了" in body
+
+
+def test_file_requirements_blocks_on_upload_pages(client):
+    body = client.get("/").text
+    assert "What the files must contain" in body
+    for probe in ("NAME", "POST LINK", "Blogger", "PostID", "List Micro",
+                  "REDBOOK_ID", "24-character Xiaohongshu note id"):
+        assert probe in body, probe
+    eff = client.get("/efficiency").text
+    assert "What the workbook must contain" in eff
+    assert "TTL ENGAGEMENT" in eff and "PRICE" in eff
+    client.cookies.set("dmr_lang", "zh")
+    assert "文件需要满足什么要求" in client.get("/").text
+    assert "工作簿需要满足什么要求" in client.get("/efficiency").text
