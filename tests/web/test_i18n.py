@@ -131,6 +131,28 @@ def test_td_translates_known_runtime_messages():
     assert "9" in got and "aaa" in got and "bbb" in got and "为准" in got
 
 
+def test_td_translates_macro_perimeter_notes():
+    """Every Macro-labeled perimeter note must translate like its Micro
+    sibling (the strings are generated in pipeline._annotate_name_hits and
+    apply_perimeter with a per-list label)."""
+    td = i18n.make_td("zh")
+    got = td("Blogger is inside DMR's monitored Macro perimeter "
+             "(REDBOOK_ID 5fabc) yet absent from the export — a genuine "
+             "DMR gap, grouped with 无帖子.")
+    assert "Macro Perimeter" in got and "5fabc" in got and "漏抓" in got
+    got = td("同名Macro Perimeter条目但REDBOOK_ID不同（近似未命中）/ same-name "
+             "macro perimeter entry carries a different REDBOOK_ID "
+             "(5faaa vs resolved 5fbbb)")
+    assert got.startswith("同名Macro Perimeter条目") and "5faaa" in got
+    assert "same-name" not in got
+    got = td("3个同名Macro Perimeter条目，无法按名字判定 / name matches "
+             "multiple macro perimeter rows — never auto-picked by name")
+    assert got == "3个同名Macro Perimeter条目，无法按名字判定——绝不按名字自动选取。"
+    got = td("在Macro Perimeter名单但未登记REDBOOK_ID — register the ID; DMR "
+             "cannot crawl an unregistered account")
+    assert "register" not in got and got.startswith("在Macro Perimeter名单")
+
+
 def test_td_translates_efficiency_findings_and_insights():
     """The V2–V10 findings and the insight bullets are generated in English
     by effreport.py; the zh report page translates them at render time."""

@@ -468,6 +468,8 @@ ZH: dict[str, str] = {
     "不在Perimeter内 — out of scope": "不在Perimeter内——无需处理",
     "在Perimeter名单但未登记REDBOOK_ID — register the ID; DMR cannot crawl an unregistered account":
         "在Perimeter名单但未登记REDBOOK_ID——请先登记该 ID；未登记的账号 DMR 抓不到。",
+    "在Macro Perimeter名单但未登记REDBOOK_ID — register the ID; DMR cannot crawl an unregistered account":
+        "在Macro Perimeter名单但未登记REDBOOK_ID——请先登记该 ID；未登记的账号 DMR 抓不到。",
     "无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.":
         "「无博主」的行会按是否在 Perimeter 名单内拆分。Perimeter 名单会定期更新——提取日期旧了就换一份新的。",
     "链接失效，仅作参考：名字命中Perimeter条目 / dead link — perimeter name hits recorded as evidence only, verdict unchanged":

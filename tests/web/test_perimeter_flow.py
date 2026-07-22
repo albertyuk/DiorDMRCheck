@@ -226,3 +226,33 @@ def test_perimeter_remove_is_kind_scoped(client, tmp_path):
 
     client.post("/perimeter/remove", data={})      # defaults to micro
     assert pm.current_meta() is None
+
+
+def test_mode_excluding_a_list_blocks_its_promotion(client, tmp_path,
+                                                    monkeypatch):
+    """Flicking a list OFF for the run means its upload must not become the
+    app-wide default other users inherit."""
+    r, _ = _upload_with_macro(client, tmp_path)
+    run_id = _run_id(r)
+    monkeypatch.setattr(runs, "start_run", lambda rid: None)
+    client.post(f"/runs/{run_id}/start", data={"perimeter_mode": "micro"},
+                follow_redirects=False)
+    assert pm.current_meta("macro") is None       # excluded → not promoted
+
+
+def test_retry_form_round_trips_perimeter_mode(client, tmp_path, monkeypatch):
+    import json
+    from app.core import db
+    r, _ = _upload_with_macro(client, tmp_path)
+    run_id = _run_id(r)
+    monkeypatch.setattr(runs, "start_run", lambda rid: None)
+    client.post(f"/runs/{run_id}/start", data={"perimeter_mode": "macro"},
+                follow_redirects=False)
+    db.run_update(run_id, status="error", phase="error", message="boom")
+    panel = client.get(f"/runs/{run_id}/progress").text
+    assert 'name="perimeter_mode"' in panel and 'value="macro"' in panel
+    # retrying via the panel's hidden fields keeps the choice
+    client.post(f"/runs/{run_id}/start", data={"perimeter_mode": "macro"},
+                follow_redirects=False)
+    run = db.run_get(run_id)
+    assert json.loads(run["options_json"])["perimeter_mode"] == "macro"

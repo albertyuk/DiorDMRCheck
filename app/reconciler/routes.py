@@ -444,20 +444,24 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                 return Response(status_code=404)
             if run["status"] in ("pending", "error"):
                 initial_start = run["status"] == "pending"
+                mode = (perimeter_mode
+                        if perimeter_mode in perimeter_mod.MODES else "both")
                 db.run_update(run_id, options_json=json.dumps({
                     "retry_failed_links": retry_failed_links == "1",
                     "use_llm": use_llm == "1",
                     # which perimeter lists to check — the toggle on the
                     # confirm screen (micro / macro / both)
-                    "perimeter_mode": (perimeter_mode
-                                       if perimeter_mode in perimeter_mod.MODES
-                                       else "both"),
+                    "perimeter_mode": mode,
                     # user-editable DMR export window (confirm screen);
                     # runs.apply_window_override validates and applies it
                     "window_from": window_from.strip()[:10],
                     "window_to": window_to.strip()[:10],
                 }), status="queued", error=None)
-                if (initial_start and run.get("perimeter_uploaded") != 0
+                # Promotion is gated on the chosen mode: flicking a list OFF
+                # for this run means its upload must not become the app-wide
+                # default other users inherit.
+                if (initial_start and mode in ("micro", "both")
+                        and run.get("perimeter_uploaded") != 0
                         and run.get("perimeter_hash")):
                     # Explicit uploads promote once. NULL denotes a migrated
                     # legacy row whose provenance was not recorded, so it
@@ -465,7 +469,8 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                     perimeter_mod.promote_cached(
                         run["perimeter_hash"],
                         filename=run.get("perimeter_name") or "")
-                if (initial_start and run.get("perimeter_macro_uploaded")
+                if (initial_start and mode in ("macro", "both")
+                        and run.get("perimeter_macro_uploaded")
                         and run.get("perimeter_macro_hash")):
                     perimeter_mod.promote_cached(
                         run["perimeter_macro_hash"],
@@ -532,6 +537,7 @@ async def results_fragment(request: Request, run_id: str):
         "perimeter_macro_meta": result.get("perimeter_macro_meta"),
         "perimeter_mode": result.get("perimeter_mode"),
         "perimeter_warning": result.get("perimeter_warning"),
+        "perimeter_warnings": result.get("perimeter_warnings") or [],
         "reverse_rows": result.get("reverse_audit", []),
         "plog_meta": result.get("plog_meta", {}),
         "dmr_meta": result.get("dmr_meta", {}),

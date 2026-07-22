@@ -22,6 +22,7 @@
   </div>
   {% endif %}
   {% if perimeter_warning %}<div class="warn">{{ td(perimeter_warning) }}</div>{% endif %}
+  {% for w in perimeter_warnings %}<div class="warn">{{ td(w) }}</div>{% endfor %}
   <p>
     <a class="btn" href="/runs/{{ run_id }}/export.xlsx">{{ t("Download annotated .xlsx") }}</a>
     <a class="btn secondary" href="/runs/{{ run_id }}/export.json">{{ t("JSON audit log") }}</a>

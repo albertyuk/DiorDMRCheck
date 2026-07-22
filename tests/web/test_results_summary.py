@@ -73,3 +73,23 @@ def test_results_render_for_runs_stored_before_dmr_fields(client, plog_path,
     assert r.status_code == 200
     assert "Total posts" in r.text
     assert "DMR snapshot:" in r.text and "WEIGHTED ENG. ?" in r.text
+
+
+def test_per_list_perimeter_warnings_both_render(client, plog_path, dmr_path):
+    """Both missing-cache warnings must surface — one per dropped list."""
+    run_id = "cafe00000003"
+    db.run_create(run_id, plog_path=plog_path, dmr_path=dmr_path)
+    db.run_update(run_id, status="done", result_json=json.dumps({
+        "verdicts": [], "counts": {},
+        "plog_meta": {}, "dmr_meta": {},
+        "perimeter_warnings": [
+            "The perimeter file recorded for this run is no longer in the "
+            "cache — running without the perimeter split.",
+            "The Macro perimeter file recorded for this run is no longer in "
+            "the cache — running without the Macro check.",
+        ],
+    }))
+    r = client.get(f"/runs/{run_id}/results")
+    assert r.status_code == 200
+    assert "running without the perimeter split" in r.text
+    assert "running without the Macro check" in r.text

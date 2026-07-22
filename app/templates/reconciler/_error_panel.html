@@ -9,6 +9,8 @@
            value="{{ '1' if options.get('use_llm') else '0' }}">
     <input type="hidden" name="window_from" value="{{ options.get('window_from', '') }}">
     <input type="hidden" name="window_to" value="{{ options.get('window_to', '') }}">
+    <input type="hidden" name="perimeter_mode"
+           value="{{ options.get('perimeter_mode', 'both') }}">
     <button type="submit">{{ t("Retry run") }}</button>
   </form>
 </div>

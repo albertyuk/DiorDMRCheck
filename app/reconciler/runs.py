@@ -152,12 +152,12 @@ def _run(run_id: str) -> None:
             mode = "micro"
         perim = None
         perim_macro = None
-        perim_warning = None
+        perim_warnings: list[str] = []
         if mode in ("micro", "both") and run.get("perimeter_hash"):
             perim = perimeter_mod.load_cached(
                 run["perimeter_hash"], filename=run.get("perimeter_name") or "")
             if perim is None:
-                perim_warning = (
+                perim_warnings.append(
                     "The perimeter file recorded for this run is no longer in "
                     "the cache — running without the perimeter split.")
         if mode in ("macro", "both") and run.get("perimeter_macro_hash"):
@@ -165,7 +165,7 @@ def _run(run_id: str) -> None:
                 run["perimeter_macro_hash"],
                 filename=run.get("perimeter_macro_name") or "")
             if perim_macro is None:
-                perim_warning = (
+                perim_warnings.append(
                     "The Macro perimeter file recorded for this run is no "
                     "longer in the cache — running without the Macro check.")
 
@@ -220,7 +220,9 @@ def _run(run_id: str) -> None:
                 "redbook_count": len(perim_macro.by_redbook),
             } if perim_macro else None),
             "perimeter_mode": mode,
-            "perimeter_warning": perim_warning,
+            # list (one entry per missing list); the legacy singular key is
+            # still rendered for runs stored before this change
+            "perimeter_warnings": perim_warnings,
             "reverse_audit": reverse_rows,
             "plog_meta": {
                 "sheet": plog.sheet, "header_row": plog.header_row,
