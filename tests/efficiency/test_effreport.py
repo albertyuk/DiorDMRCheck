@@ -341,3 +341,34 @@ def test_explicit_level_wins_over_fanbase():
     tiny fan base stays TOP."""
     a = analyze(io.BytesIO(_level_fallback_wb([("头部", 50)])), ReportConfig())
     assert a["metrics"]["groups"]["TOP PAID"]["n"] == 1
+
+
+# ------------------------------------------------- FAN BASE unit heuristic
+
+def test_fanbase_units_small_is_thousands_huge_is_raw():
+    """130 means 130K (user rule: 1–1000 are thousands); 1741 stays 1741K
+    (real-file semantics — a 1.74M account written in the K column); 450,000
+    is unmistakably a raw count → 450K. Tiers follow the normalized values."""
+    a = analyze(io.BytesIO(_level_fallback_wb([
+        ("", 130),          # 130K → KOC
+        ("", 1741),         # 1741K = 1.74M → TOP (NOT read as raw 1.7K)
+        ("", 9999),         # just under the cutoff — still K → TOP
+        ("", 450000),       # raw → 450K → MID
+        ("", 10000),        # at the cutoff — raw → 10K → KOC
+        ("", 1300000),      # raw → 1300K → TOP
+    ])), ReportConfig())
+    g = a["metrics"]["groups"]
+    assert g["KOC PAID"]["n"] == 2      # 130K, 10K
+    assert g["MID PAID"]["n"] == 1      # 450K
+    assert g["TOP PAID"]["n"] == 3      # 1741K, 9999K, 1300K
+    v12 = [f for f in a["findings"] if f["code"] == "V12"]
+    assert len(v12) == 1 and len(v12[0]["rows"]) == 3
+    from app.i18n import make_td
+    zh = make_td("zh")(v12[0]["message"])
+    assert "原始粉丝数" in zh and "除以 1,000" in zh
+
+
+def test_fanbase_normalization_feeds_fanbase_mode_too():
+    a = analyze(io.BytesIO(_level_fallback_wb([("头部", 450000)])),
+                ReportConfig(tier_mode="fanbase"))
+    assert a["metrics"]["groups"]["MID PAID"]["n"] == 1   # 450K → MID

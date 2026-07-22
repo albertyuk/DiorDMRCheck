@@ -102,6 +102,15 @@ class Finding:
 
 # ---------------------------------------------------------------- parsing
 
+# FAN BASE unit heuristic: the canonical column is in THOUSANDS, and small
+# values (1–1000, e.g. 130 → 130K) plus big-account values up to a few
+# thousand K (1741 → 1.74M, observed in real data) are taken at face value.
+# A value at or above this cutoff cannot plausibly be K-units (10,000K would
+# be a 10M-follower celebrity in a micro-KOL tracker) — it is a RAW follower
+# count entered without the ÷1000, and is normalized. Reported as V12.
+FANBASE_RAW_CUTOFF = 10_000
+
+
 def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
     """Parse the KOL sheet. Returns (rows, findings, meta). V1 failures are
     the only thing that raises — everything else is a Finding."""
@@ -141,6 +150,7 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
         "collection", "comment", "ttlengagement", "price", "cpm", "cpe")}
 
     rows: list[Row] = []
+    raw_fanbase_rows: list[int] = []
     current_campaign = ""
     blank = 0
     for excel_row_cells in ws.iter_rows(min_row=header_row + 1):
@@ -167,11 +177,15 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
         campaign = cell_str(get("campaign"))
         if campaign:
             current_campaign = campaign
+        fanbase_k = to_float(get("fanbase(k)"))
+        if fanbase_k is not None and fanbase_k >= FANBASE_RAW_CUTOFF:
+            fanbase_k = fanbase_k / 1000     # raw follower count → K
+            raw_fanbase_rows.append(r)
         rows.append(Row(
             idx=len(rows), excel_row=r,
             campaign=current_campaign, no=cell_str(get("no")), name=name,
             type_raw=cell_str(get("type")), level_raw=cell_str(get("level")),
-            fanbase_k=to_float(get("fanbase(k)")),
+            fanbase_k=fanbase_k,
             post_date=to_date(get("postdate")),
             post_link=link.strip(),
             impression=to_int(get("impression")), like=to_int(get("like")),
@@ -181,6 +195,14 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
             price=to_float(get("price")),
             cpm_src=to_float(get("cpm")), cpe_src=to_float(get("cpe")),
         ))
+    if raw_fanbase_rows:
+        findings.append(Finding(
+            "V12", "WARN",
+            f"FAN BASE ≥{FANBASE_RAW_CUTOFF:,} on {len(raw_fanbase_rows)} "
+            "row(s) — read as a raw follower count and divided by 1,000 "
+            "(e.g. 450,000 → 450K). Values up to a few thousand are taken "
+            "as thousands (130 → 130K). Verify the units.",
+            raw_fanbase_rows))
     meta = {"sheet": ws.title, "header_row": header_row, "rows": len(rows),
             "campaigns": sorted({r.campaign for r in rows if r.campaign})}
     return rows, findings, meta

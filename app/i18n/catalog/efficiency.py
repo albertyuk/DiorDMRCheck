@@ -16,6 +16,12 @@ ZH: dict[str, str] = {
 }
 
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^FAN BASE ≥([\d,]+) on (\d+) row\(s\) — read as a raw "
+                r"follower count and divided by 1,000 \(e\.g\. 450,000 → "
+                r"450K\)\. Values up to a few thousand are taken as thousands "
+                r"\(130 → 130K\)\. Verify the units\.$"),
+     r"共 \2 行的 FAN BASE ≥\1——按原始粉丝数处理，已除以 1,000"
+     r"（如 450,000 → 450K）。几千以内的数值按「千」计（130 → 130K）。请核实单位。"),
     (re.compile(r"^LEVEL value (.+) missing/unclear on (\d+) row\(s\) — "
                 r"tiered by FAN BASE instead \(≤200K KOC · 200–400K BOT · "
                 r"400–1000K MID · 1M\+ TOP\)\. Verify the assignment\.$"),

@@ -92,12 +92,16 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
   LEVEL is missing or unrecognizable falls back to the follower ladder
   (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP) and is reported as
   V11; an explicit label always wins over follower count. Rows with neither
-  signal land in an UNCLASSIFIED bucket, never guessed.
+  signal land in an UNCLASSIFIED bucket, never guessed. FAN BASE units are
+  normalized first: values under 10,000 are thousands (130 → 130K, and
+  1741 → 1.74M as in the real file), values at/above are raw follower
+  counts ÷1000 (450,000 → 450K) — reported as V12 so units are never
+  silently reinterpreted.
 - **Metrics** — pooled basis (group Σspend÷Σimpressions ×1000, Σspend÷Σeng)
   by default, per-post average as the alternative; the basis is printed on
   the slide. The source file's CPM column is price per *single* impression —
   ×1000 off standard CPM — and is never reused, only cross-checked (V5).
-- **Validation V1–V11** — findings (duplicate links, engagement identity
+- **Validation V1–V12** — findings (duplicate links, engagement identity
   breaks, missing values, zero denominators, label conflicts, n<3 groups,
   viral-post concentration >50%) are shown *with* the output and, where they
   bias a number, become on-slide caveats. The source file is never mutated.
