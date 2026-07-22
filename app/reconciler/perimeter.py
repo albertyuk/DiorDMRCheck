@@ -63,14 +63,34 @@ class PerimeterParse:
     extraction_date: str
     rows: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    rows_scanned: int = 0        # before the China-market filter
+    china_filter: str = ""       # IN_CHINA_REPORTS | COUNTRY | "" (no column)
 
     @property
     def redbook_count(self) -> int:
         return sum(1 for r in self.rows if r["redbook_id"])
 
 
+# Bumped whenever parsing semantics change: the cache is content-addressed,
+# so without a version salt an already-cached file would keep serving rows
+# parsed under the OLD semantics (e.g. unfiltered, pre-China-market).
+_PARSER_VERSION = b"2:china-market\x00"
+
+# The tool evaluates the Chinese market only. Micro sheets carry no
+# IN_CHINA flag, so COUNTRY is the signal there; Macro sheets (future
+# feature) have an explicit IN_CHINA_REPORTS YES/NO which wins when present.
+# Verified on the real file: every REDBOOK_ID row is MAINLAND CHINA, so this
+# filter cannot flip a membership verdict — it only drops the ~52k non-China
+# rows that polluted same-name evidence scans.
+_CHINA_COUNTRIES = {"MAINLANDCHINA", "CHINA"}
+
+
+def _is_china_country(value: str) -> bool:
+    return value.replace(" ", "").upper() in _CHINA_COUNTRIES
+
+
 def file_hash(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.sha256(_PARSER_VERSION + data).hexdigest()
 
 
 def _pick_micro_sheet(wb):
@@ -127,6 +147,16 @@ def parse_perimeter(source: Union[str, IO[bytes]], filename: str = "",
         c_name, c_namebis = cols.get("name"), cols.get("namebis")
         c_dmrid, c_rid = cols.get("dmrid"), cols.get("redbook_id")
         c_rfol = cols.get("redbook_followers")
+        c_inchina = cols.get("in_china_reports")
+        c_country = cols.get("country")
+        if c_inchina is not None:
+            result.china_filter = "IN_CHINA_REPORTS"
+        elif c_country is not None:
+            result.china_filter = "COUNTRY"
+        else:
+            result.warnings.append(
+                "No IN_CHINA_REPORTS or COUNTRY column found — cannot "
+                "restrict the perimeter to the China market; keeping all rows.")
 
         def col(row, c):
             return _s(row[c]) if c is not None and c < len(row) else ""
@@ -137,6 +167,14 @@ def parse_perimeter(source: Union[str, IO[bytes]], filename: str = "",
             rid = col(row, c_rid).lower()
             if not name and not namebis:
                 continue
+            result.rows_scanned += 1
+            # China market only — this tool evaluates Chinese-market KOLs
+            if c_inchina is not None:
+                if col(row, c_inchina).strip().upper() != "YES":
+                    continue
+            elif c_country is not None:
+                if not _is_china_country(col(row, c_country)):
+                    continue
             # Tier-0 normalized forms are precomputed here so the cached JSON
             # can be scanned without re-normalizing 58.8k names per run.
             result.rows.append({
@@ -148,7 +186,12 @@ def parse_perimeter(source: Union[str, IO[bytes]], filename: str = "",
                 "nb": norm(namebis), "cb": cjk(namebis),
                 "ab": ascii_part(namebis),
             })
-        if not result.rows:
+        if not result.rows and result.rows_scanned:
+            result.warnings.append(
+                f"All {result.rows_scanned} perimeter rows were filtered out "
+                "— none are China-market (COUNTRY=MAINLAND CHINA / "
+                "IN_CHINA_REPORTS=YES). Check that this is the right file.")
+        elif not result.rows:
             result.warnings.append("Perimeter sheet parsed but had no data rows.")
         return result
     finally:
@@ -162,9 +205,20 @@ def store_parsed(parsed: PerimeterParse) -> None:
         parsed.file_hash, filename=parsed.filename, sheet=parsed.sheet,
         extraction_date=parsed.extraction_date, row_count=len(parsed.rows),
         redbook_count=parsed.redbook_count,
-        parsed_json=json.dumps(parsed.rows, ensure_ascii=False),
+        parsed_json=json.dumps(
+            {"rows": parsed.rows, "rows_scanned": parsed.rows_scanned,
+             "china_filter": parsed.china_filter}, ensure_ascii=False),
         warnings_json=json.dumps(parsed.warnings, ensure_ascii=False),
     )
+
+
+def _payload(cached: dict) -> dict:
+    """parsed_json is versioned by shape: v1 was a bare rows list (only ever
+    stored under pre-salt hashes, but tolerate it), v2 a dict with counters."""
+    loaded = json.loads(cached["parsed_json"])
+    if isinstance(loaded, list):
+        return {"rows": loaded, "rows_scanned": len(loaded), "china_filter": ""}
+    return loaded
 
 
 def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"]:
@@ -177,7 +231,7 @@ def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"
     row = db.perimeter_cache_get(file_hash)
     if not row:
         return None
-    rows = json.loads(row["parsed_json"])
+    rows = _payload(row)["rows"]
     return PerimeterIndex(rows, extraction_date=row["extraction_date"] or "",
                           filename=filename or row["filename"] or "",
                           file_hash=file_hash)
@@ -257,11 +311,14 @@ def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
     cached = db.perimeter_cache_get(h)
     if cached:
         warnings = json.loads(cached.get("warnings_json") or "[]")
+        payload = _payload(cached)
         meta = {
             "hash": h, "filename": filename,
             "extraction_date": cached["extraction_date"] or "",
             "rows": cached["row_count"],
             "redbook_count": cached["redbook_count"],
+            "rows_scanned": payload["rows_scanned"],
+            "china_filter": payload["china_filter"],
         }
         return meta, warnings
     parsed = parse_perimeter(io.BytesIO(data), filename=filename,
@@ -271,6 +328,8 @@ def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:
         "hash": h, "filename": filename,
         "extraction_date": parsed.extraction_date,
         "rows": len(parsed.rows), "redbook_count": parsed.redbook_count,
+        "rows_scanned": parsed.rows_scanned,
+        "china_filter": parsed.china_filter,
     }
     return meta, parsed.warnings
 
@@ -282,11 +341,14 @@ def promote_cached(file_hash_: str, filename: str = "") -> None:
     row = db.perimeter_cache_get(file_hash_)
     if not row:
         return
+    payload = _payload(row)
     db.setting_set("current_perimeter", json.dumps({
         "hash": file_hash_,
         "filename": filename or row["filename"] or "",
         "extraction_date": row["extraction_date"] or "",
         "rows": row["row_count"], "redbook_count": row["redbook_count"],
+        "rows_scanned": payload["rows_scanned"],
+        "china_filter": payload["china_filter"],
         "uploaded_at": time.time(),
     }, ensure_ascii=False))
 

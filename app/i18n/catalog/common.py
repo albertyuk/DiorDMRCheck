@@ -289,6 +289,10 @@ ZH: dict[str, str] = {
     "Perimeter (Micro) — optional": "Perimeter（Micro）名单——选填",
     "Perimeter (Micro):": "Perimeter（Micro）：",
     "Perimeter in use:": "当前使用的 Perimeter：",
+    "China market only ({signal}): kept {kept} of {scanned} rows.":
+        "仅限中国市场（按 {signal} 判定）：{scanned} 行中保留 {kept} 行。",
+    "No IN_CHINA_REPORTS or COUNTRY column found — cannot restrict the perimeter to the China market; keeping all rows.":
+        "找不到 IN_CHINA_REPORTS 或 COUNTRY 列——无法把 Perimeter 限定到中国市场；已保留全部行。",
     "Perimeter:": "Perimeter：",
     "Pooled — group Σspend ÷ Σimpressions (campaign-level truth)":
         "合并口径——组内 Σ花费 ÷ Σ曝光（投放整体的真实成本）",

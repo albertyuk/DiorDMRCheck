@@ -46,6 +46,12 @@ ZH: dict[str, str] = {
 }
 
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^All (\d+) perimeter rows were filtered out — none are "
+                r"China-market \(COUNTRY=MAINLAND CHINA / "
+                r"IN_CHINA_REPORTS=YES\)\. Check that this is the right "
+                r"file\.$"),
+     r"Perimeter 的 \1 行全部被过滤——没有任何中国市场的行"
+     r"（COUNTRY=MAINLAND CHINA / IN_CHINA_REPORTS=YES）。请确认文件是否正确。"),
     (re.compile(r"^Resolving links (\d+/\d+)…$"), r"正在解析链接 \1…"),
     (re.compile(r"^Matching rows (\d+/\d+)…$"), r"正在逐行匹配 \1…"),
     (re.compile(r"^Run failed: (.*)$", re.S), r"核对失败：\1"),

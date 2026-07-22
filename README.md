@@ -58,6 +58,18 @@ no new external calls:
   unregistered account), and multi-hit names (e.g. `esther`, or
   `Ananas吃一半` with 91 same-name rows) are never auto-classified.
 
+**China market only.** This tool evaluates the Chinese market, so the
+perimeter is filtered on ingest: rows with `IN_CHINA_REPORTS = YES` when
+that column exists (the Macro sheet has it — ready for the future Macro
+feature), otherwise rows whose `COUNTRY` is Mainland China (the Micro sheet
+has no IN_CHINA flag). On the real file this keeps 6,919 of 58,796 Micro
+rows — including **all** 6,140 REDBOOK_ID holders, so membership verdicts
+are unaffected; the win is that same-name evidence scans no longer match
+tens of thousands of non-China influencers. The kept/total count is shown
+wherever the perimeter is displayed; a file with neither column keeps all
+rows and warns. (The parse cache is version-salted, so previously cached
+unfiltered parses are never served.)
+
 Only the `List Micro` sheet is read (header located by the NAME+REDBOOK_ID
 fingerprint; the extraction date is parsed from the metadata and shown —
 staleness matters). The parsed 58.8k rows are cached in SQLite by content

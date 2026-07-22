@@ -264,3 +264,79 @@ def test_promote_cached_unknown_hash_is_noop(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "p2.sqlite3")
     pm.promote_cached("deadbeef" * 8)
     assert pm.current_meta() is None
+
+
+# ------------------------------------------------- China-market filter
+
+def _mini_perimeter(headers, rows, sheet="List Micro") -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet
+    ws.append(["Date of extraction : 19/05/2026 10:30:00"])
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_country_filter_keeps_only_china():
+    """The tool evaluates the Chinese market: Micro sheets (no IN_CHINA
+    column) filter by COUNTRY."""
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID"],
+        [["甲", "MAINLAND CHINA", "5f0000000000000000000001"],
+         ["乙", "Mainland China", ""],          # case-insensitive
+         ["丙", "China", "5f0000000000000000000002"],
+         ["丁", "U.S.A.", "5f0000000000000000000003"],
+         ["戊", "TAIWAN", ""],
+         ["己", "Hong Kong", ""]])
+    p = parse_perimeter(io.BytesIO(data))
+    assert p.china_filter == "COUNTRY"
+    assert p.rows_scanned == 6
+    assert [r["name"] for r in p.rows] == ["甲", "乙", "丙"]
+    assert p.redbook_count == 2                 # 丁's REDBOOK row dropped
+
+
+def test_in_china_reports_wins_over_country():
+    """Macro-style sheets carry an explicit flag — it overrides COUNTRY
+    (an influencer abroad can still be in China-market reports)."""
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID", "IN_CHINA_REPORTS"],
+        [["在库海外", "U.S.A.", "5f0000000000000000000001", "YES"],
+         ["不在库本土", "MAINLAND CHINA", "5f0000000000000000000002", "NO"],
+         ["在库本土", "MAINLAND CHINA", "5f0000000000000000000003", "yes"]])
+    p = parse_perimeter(io.BytesIO(data))
+    assert p.china_filter == "IN_CHINA_REPORTS"
+    assert [r["name"] for r in p.rows] == ["在库海外", "在库本土"]
+
+
+def test_missing_both_columns_keeps_all_and_warns():
+    data = _mini_perimeter(
+        ["NAME", "REDBOOK_ID"],
+        [["甲", "5f0000000000000000000001"], ["乙", ""]])
+    p = parse_perimeter(io.BytesIO(data))
+    assert p.china_filter == ""
+    assert len(p.rows) == 2
+    assert any("cannot restrict" in w for w in p.warnings)
+
+
+def test_all_rows_filtered_warns_loudly():
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID"],
+        [["甲", "U.S.A.", ""], ["乙", "JAPAN", ""]])
+    p = parse_perimeter(io.BytesIO(data))
+    assert not p.rows and p.rows_scanned == 2
+    warning = next(w for w in p.warnings if "filtered out" in w)
+    # …and it translates
+    from app.i18n import make_td
+    zh = make_td("zh")(warning)
+    assert "全部被过滤" in zh and "2" in zh
+
+
+def test_file_hash_is_parser_version_salted():
+    """Same bytes must NOT hit caches written under old parse semantics
+    (they would serve unfiltered, non-China rows)."""
+    import hashlib
+    assert file_hash(b"same-bytes") != hashlib.sha256(b"same-bytes").hexdigest()

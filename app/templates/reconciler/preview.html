@@ -53,7 +53,13 @@
            filename=preview.perimeter.filename,
            date=preview.perimeter.extraction_date or t("unknown date"),
            rows="{:,}".format(preview.perimeter.rows),
-           redbook="{:,}".format(preview.perimeter.redbook_count)) }}</div>
+           redbook="{:,}".format(preview.perimeter.redbook_count)) }}
+      {% if preview.perimeter.china_filter %}
+      {{ t("China market only ({signal}): kept {kept} of {scanned} rows.",
+           signal=preview.perimeter.china_filter,
+           kept="{:,}".format(preview.perimeter.rows),
+           scanned="{:,}".format(preview.perimeter.rows_scanned or 0)) }}
+      {% endif %}</div>
     {% for w in preview.perimeter.warnings %}<div class="warn">{{ t("Perimeter:") }} {{ td(w) }}</div>{% endfor %}
   {% else %}
     <p class="muted" style="font-size:.78rem">{{ t("No perimeter — 无博主 rows stay unsplit.") }}</p>

@@ -30,6 +30,12 @@
            date=perimeter.extraction_date or t("unknown date"),
            rows="{:,}".format(perimeter.rows),
            redbook="{:,}".format(perimeter.redbook_count)) }}
+      {% if perimeter.china_filter %}
+      {{ t("China market only ({signal}): kept {kept} of {scanned} rows.",
+           signal=perimeter.china_filter,
+           kept="{:,}".format(perimeter.rows),
+           scanned="{:,}".format(perimeter.rows_scanned or 0)) }}
+      {% endif %}
       {{ t("无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.") }}
       <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
             onsubmit="return confirm('{{ t("Remove the perimeter? Runs revert to plain 无博主.") }}')">
