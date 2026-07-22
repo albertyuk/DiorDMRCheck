@@ -213,6 +213,15 @@ External API integrations remain optional and degrade gracefully.
 | `UPLOAD_MAX_TOTAL_MB` | Aggregate upload-directory budget; defaults to 900 MB, with the oldest eligible runs removed first. |
 | `MAINTENANCE_INTERVAL_SECONDS` | Interval for expired-token and upload-retention cleanup; defaults to 60 seconds. |
 
+**Resolve-phase speed.** The free direct-to-XHS path sits behind an
+adaptive circuit breaker: after 3 consecutive failures (datacenter IPs are
+usually blocked) it is skipped — re-probing every 25th link so it can
+recover — instead of every link paying the direct timeout before TikHub.
+TikHub calls share one pooled HTTPS connection (no per-call TLS handshake),
+and the default concurrency is 8 (`TIKHUB_CONCURRENCY`; 429s are still
+honored with backoff). Re-runs stay near-instant via the permanent success
+cache.
+
 TikHub endpoints are configurable (`TIKHUB_IMAGE_NOTE_PATH`,
 `TIKHUB_VIDEO_NOTE_PATH`) because TikHub versions its API; the defaults were
 verified against `api.tikhub.io/openapi.json` at build time. Both accept the

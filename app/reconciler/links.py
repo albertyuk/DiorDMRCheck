@@ -40,6 +40,62 @@ MOBILE_UA = (
 # Global TikHub throttle: ≤ TIKHUB_CONCURRENCY requests in flight at once.
 _tikhub_semaphore = threading.BoundedSemaphore(config.TIKHUB_CONCURRENCY)
 
+# Shared pooled HTTP client for TikHub: every call hits the same host, and a
+# fresh client per request paid a TCP+TLS handshake each time (~0.1–0.3 s ×
+# hundreds of calls per run). httpx.Client is thread-safe; process-lifetime.
+_tikhub_client_lock = threading.Lock()
+_tikhub_client: Optional[httpx.Client] = None
+
+
+def _tikhub_http() -> httpx.Client:
+    global _tikhub_client
+    with _tikhub_client_lock:
+        if _tikhub_client is None:
+            _tikhub_client = httpx.Client(timeout=config.TIKHUB_TIMEOUT)
+        return _tikhub_client
+
+
+class _DirectBreaker:
+    """Adaptive skip for the free direct-to-XHS path.
+
+    From a datacenter IP, Xiaohongshu usually blackholes these requests, so
+    every link paid the full direct timeout before TikHub even started.
+    After TRIP_AFTER consecutive failures the free path is skipped; every
+    REPROBE_EVERY skipped attempt one probe goes through so the path can
+    recover if the network changes, and any success resets the counter.
+    (A cluster of genuinely dead links can also trip it — that only skips a
+    free attempt that was going to fail; TikHub remains authoritative.)"""
+
+    TRIP_AFTER = 3
+    REPROBE_EVERY = 25
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._fails = 0
+        self._skipped = 0
+
+    def should_try(self) -> bool:
+        with self._lock:
+            if self._fails < self.TRIP_AFTER:
+                return True
+            self._skipped += 1
+            if self._skipped >= self.REPROBE_EVERY:
+                self._skipped = 0
+                return True
+            return False
+
+    def record(self, ok: bool) -> None:
+        with self._lock:
+            self._fails = 0 if ok else self._fails + 1
+
+    def reset(self) -> None:
+        with self._lock:
+            self._fails = 0
+            self._skipped = 0
+
+
+DIRECT_BREAKER = _DirectBreaker()
+
 
 @dataclass
 class Resolution:
@@ -367,11 +423,10 @@ def _tikhub_get(path: str, params: dict, counter: Optional[Callable[[], None]]) 
             with _tikhub_semaphore:
                 if counter:
                     counter()
-                with httpx.Client(timeout=config.TIKHUB_TIMEOUT) as client:
-                    resp = client.get(
-                        url, params=params,
-                        headers={"Authorization": f"Bearer {config.TIKHUB_API_KEY}"},
-                    )
+                resp = _tikhub_http().get(
+                    url, params=params,
+                    headers={"Authorization": f"Bearer {config.TIKHUB_API_KEY}"},
+                )
             body = None
             if resp.headers.get("content-type", "").startswith("application/json"):
                 try:
@@ -480,10 +535,14 @@ def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
     # note id alone is enough for the Tier-1 join — TikHub (which costs money)
     # is deferred to ensure_author, which the pipeline invokes only when the
     # join misses and the 无博主/无帖子 decision actually needs the author id.
-    note_id = direct_resolve(url)
-    if note_id:
-        db.cache_put(url, status="ok", note_id=note_id, source="direct")
-        return Resolution(status="ok", note_id=note_id, source="direct")
+    # The breaker skips this once the network has proven blocked (datacenter
+    # IPs usually are) so links stop paying dead timeout before TikHub.
+    if DIRECT_BREAKER.should_try():
+        note_id = direct_resolve(url)
+        DIRECT_BREAKER.record(bool(note_id))
+        if note_id:
+            db.cache_put(url, status="ok", note_id=note_id, source="direct")
+            return Resolution(status="ok", note_id=note_id, source="direct")
 
     # 2. Authoritative: TikHub accepts the raw share URL via share_text and
     # returns full note detail (note_id, author, engagement snapshot, title).
@@ -533,8 +592,12 @@ def ensure_author(url: str, res: Resolution,
 
     # Free first try: the note page's SSR state carries the author id. This
     # runs even when a previous enrichment failed (it costs nothing) — the
-    # failure TTL below only gates the paid TikHub call.
-    page = direct_fetch_note_detail(url, expected_note_id=res.note_id)
+    # failure TTL below only gates the paid TikHub call. Same breaker as the
+    # resolve fast path: a blocked network shouldn't tax every enrichment.
+    page = {}
+    if DIRECT_BREAKER.should_try():
+        page = direct_fetch_note_detail(url, expected_note_id=res.note_id)
+        DIRECT_BREAKER.record(bool(page.get("author_id")))
     if page.get("author_id"):
         res.author_id = page["author_id"]
         res.author_name = page.get("author_name") or res.author_name

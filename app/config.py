@@ -49,10 +49,10 @@ TIKHUB_VIDEO_NOTE_PATH = _env(
 )
 TIKHUB_TIMEOUT = float(_env("TIKHUB_TIMEOUT", "15"))
 TIKHUB_MAX_RETRIES = int(_env("TIKHUB_MAX_RETRIES", "3"))
-TIKHUB_CONCURRENCY = int(_env("TIKHUB_CONCURRENCY", "4"))
+TIKHUB_CONCURRENCY = int(_env("TIKHUB_CONCURRENCY", "8"))
 
-DIRECT_HTTP_TIMEOUT = float(_env("DIRECT_HTTP_TIMEOUT", "5"))
-DIRECT_HTTP_RETRIES = int(_env("DIRECT_HTTP_RETRIES", "2"))
+DIRECT_HTTP_TIMEOUT = float(_env("DIRECT_HTTP_TIMEOUT", "3"))
+DIRECT_HTTP_RETRIES = int(_env("DIRECT_HTTP_RETRIES", "0"))
 
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 # The build prompt asked for "the latest Sonnet model string, verified at build
