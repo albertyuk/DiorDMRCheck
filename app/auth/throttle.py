@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
+import uuid
+from dataclasses import dataclass
 
 WINDOW_SECONDS = 5 * 60
 LIMITS = {          # scope → max failures inside the window
@@ -25,6 +26,15 @@ _MAX_KEYS = 10_000  # hard memory bound under distributed abuse
 
 _LOCK = threading.Lock()
 _failures: dict[tuple[str, str], list[float]] = {}
+_pending: dict[tuple[str, str], dict[str, float]] = {}
+
+
+@dataclass(frozen=True)
+class Reservation:
+    """One attempt provisionally charged against every applicable limit."""
+
+    token: str
+    keys: tuple[tuple[str, str], ...]
 
 
 def client_ip(request) -> str:
@@ -41,6 +51,68 @@ def _prune(now: float) -> None:
     while len(_failures) > _MAX_KEYS:   # oldest-last-failure first
         oldest = min(_failures, key=lambda k: _failures[k][-1])
         del _failures[oldest]
+    for key, attempts in list(_pending.items()):
+        for token, started in list(attempts.items()):
+            if now - started > WINDOW_SECONDS:
+                attempts.pop(token, None)
+        if not attempts:
+            _pending.pop(key, None)
+
+
+def _wait_locked(scope: str, key: str, now: float) -> int:
+    failures = [t for t in _failures.get((scope, key), [])
+                if now - t <= WINDOW_SECONDS]
+    pending = list(_pending.get((scope, key), {}).values())
+    attempts = sorted([*failures, *pending])
+    if len(attempts) < LIMITS[scope]:
+        return 0
+    return max(1, int(WINDOW_SECONDS - (now - attempts[0])) + 1)
+
+
+def reserve(*keys: tuple[str, str]) -> tuple[Reservation | None, int]:
+    """Atomically reserve capacity for one credential attempt.
+
+    Counting in-flight attempts closes the check-then-hash race where a burst
+    could all pass ``retry_after`` before any request registered its failure.
+    The caller must always finish a successful reservation with ``complete``.
+    """
+    if not keys:
+        raise ValueError("at least one throttle key is required")
+    for scope, _key in keys:
+        if scope not in LIMITS:
+            raise ValueError(f"unknown throttle scope {scope!r}")
+    now = time.time()
+    with _LOCK:
+        _prune(now)
+        wait = max(_wait_locked(scope, key, now) for scope, key in keys)
+        if wait:
+            return None, wait
+        reservation = Reservation(uuid.uuid4().hex, tuple(keys))
+        for key in reservation.keys:
+            _pending.setdefault(key, {})[reservation.token] = now
+        return reservation, 0
+
+
+def complete(reservation: Reservation, *, failed: bool,
+             clear_scopes: tuple[str, ...] = ()) -> None:
+    """Commit a reserved attempt as a failure, or release it on success."""
+    now = time.time()
+    with _LOCK:
+        for key in reservation.keys:
+            attempts = _pending.get(key)
+            if attempts is not None:
+                attempts.pop(reservation.token, None)
+                if not attempts:
+                    _pending.pop(key, None)
+            if failed:
+                ts = _failures.setdefault(key, [])
+                ts.append(now)
+                del ts[:-LIMITS[key[0]]]
+        if not failed:
+            for scope, key in reservation.keys:
+                if scope in clear_scopes:
+                    _failures.pop((scope, key), None)
+        _prune(now)
 
 
 def retry_after(scope: str, key: str) -> int:
@@ -48,11 +120,7 @@ def retry_after(scope: str, key: str) -> int:
     now = time.time()
     with _LOCK:
         _prune(now)
-        ts = [t for t in _failures.get((scope, key), [])
-              if now - t <= WINDOW_SECONDS]
-        if len(ts) < LIMITS[scope]:
-            return 0
-        return max(1, int(WINDOW_SECONDS - (now - ts[0])) + 1)
+        return _wait_locked(scope, key, now)
 
 
 def register_failure(scope: str, key: str) -> None:
@@ -73,3 +141,4 @@ def reset() -> None:
     """Test hook."""
     with _LOCK:
         _failures.clear()
+        _pending.clear()

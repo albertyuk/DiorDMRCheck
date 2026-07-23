@@ -1,14 +1,17 @@
 <div class="card"><h2>{{ t("Run failed") }}</h2>
   <p>{{ td(run.message) }}</p>
-  {% if run.error %}<pre class="muted" style="white-space:pre-wrap">{{ run.error }}</pre>{% endif %}
   <form method="post" action="/runs/{{ run_id }}/start" data-busy>
     {# preserve the options the user originally chose #}
     <input type="hidden" name="retry_failed_links"
            value="{{ '1' if options.get('retry_failed_links') else '0' }}">
     <input type="hidden" name="use_llm"
            value="{{ '1' if options.get('use_llm') else '0' }}">
-    <input type="hidden" name="window_from" value="{{ options.get('window_from', '') }}">
-    <input type="hidden" name="window_to" value="{{ options.get('window_to', '') }}">
+    {% if 'window_from' in options or 'window_to' in options %}
+      <input type="hidden" name="window_from"
+             value="{{ options.get('window_from', '') }}">
+      <input type="hidden" name="window_to"
+             value="{{ options.get('window_to', '') }}">
+    {% endif %}
     <button type="submit">{{ t("Retry run") }}</button>
   </form>
 </div>

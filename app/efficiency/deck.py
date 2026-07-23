@@ -375,12 +375,17 @@ def build_deck(analysis: dict) -> bytes:
 
 # ------------------------------------------------------- chart-data assert
 
+def _series_name(ser, fallback_index: int) -> str:
+    tx = ser.find(
+        f"{_c('tx')}/{_c('strRef')}/{_c('strCache')}/{_c('pt')}/{_c('v')}")
+    return tx.text if tx is not None else f"series{fallback_index}"
+
+
 def _cached_values(chart_xml: bytes) -> dict[str, list[Optional[float]]]:
     root = etree.fromstring(chart_xml)
     out = {}
-    for ser in root.findall(f".//{_c('ser')}"):
-        tx = ser.find(f"{_c('tx')}/{_c('strRef')}/{_c('strCache')}/{_c('pt')}/{_c('v')}")
-        name = tx.text if tx is not None else f"series{len(out)}"
+    for index, ser in enumerate(root.findall(f".//{_c('ser')}")):
+        name = _series_name(ser, index)
         vals: dict[int, Optional[float]] = {}
         num_cache = ser.find(f"{_c('val')}/{_c('numRef')}/{_c('numCache')}")
         if num_cache is None:
@@ -390,6 +395,30 @@ def _cached_values(chart_xml: bytes) -> dict[str, list[Optional[float]]]:
             v = pt.find(_c("v"))
             vals[int(pt.get("idx"))] = float(v.text) if v is not None and v.text else None
         out[name] = [vals.get(i) for i in range(count)]
+    return out
+
+
+def _cached_categories(chart_xml: bytes) -> dict[str, list[str]]:
+    """Return every series' category cache, keyed by series name."""
+    root = etree.fromstring(chart_xml)
+    out = {}
+    for index, ser in enumerate(root.findall(f".//{_c('ser')}")):
+        name = _series_name(ser, index)
+        cache = ser.find(f"{_c('cat')}/{_c('strRef')}/{_c('strCache')}")
+        if cache is None:
+            cache = ser.find(f"{_c('cat')}/{_c('numRef')}/{_c('numCache')}")
+        if cache is None:
+            out[name] = []
+            continue
+        count_node = cache.find(_c("ptCount"))
+        if count_node is None:
+            raise VerificationError("chart category cache has no point count")
+        count = int(count_node.get("val"))
+        values: dict[int, str] = {}
+        for pt in cache.findall(_c("pt")):
+            value = pt.find(_c("v"))
+            values[int(pt.get("idx"))] = value.text if value is not None else ""
+        out[name] = [values.get(i, "") for i in range(count)]
     return out
 
 
@@ -410,27 +439,47 @@ def assert_chart_cache(pptx_bytes: bytes, analysis: dict) -> None:
     donut_expected = [groups[g]["share"] for g in DONUT_ORDER if g in groups]
     if totals["unclassified"]:
         donut_expected.append(totals["unclassified_share"])
+    donut_categories = [g for g in DONUT_ORDER if g in groups]
+    if totals["unclassified"]:
+        donut_categories.append("UNCLASSIFIED")
     expected_charts = [
-        {"share": donut_expected},
-        series_for("avg_price"),
-        series_for(cpm_key),
-        series_for(cpe_key),
+        ({"share": donut_expected}, donut_categories),
+        (series_for("avg_price"), TIERS),
+        (series_for(cpm_key), TIERS),
+        (series_for(cpe_key), TIERS),
     ]
 
     with zipfile.ZipFile(io.BytesIO(pptx_bytes)) as z:
         chart_names = sorted(
             n for n in z.namelist()
             if re.fullmatch(r"ppt/charts/chart\d+\.xml", n))
-        cached = [_cached_values(z.read(n)) for n in chart_names]
+        chart_xml = [z.read(n) for n in chart_names]
+        cached = [(_cached_values(xml), _cached_categories(xml))
+                  for xml in chart_xml]
 
     if len(cached) != len(expected_charts):
         raise VerificationError(
             f"expected {len(expected_charts)} charts, found {len(cached)}")
-    for want, got, name in zip(expected_charts, cached, chart_names):
+    for (want, want_categories), (got, got_categories), name in zip(
+            expected_charts, cached, chart_names):
+        if set(got) != set(want):
+            raise VerificationError(
+                f"{name}: series {sorted(got)!r} do not match "
+                f"computed {sorted(want)!r}")
         for series, values in want.items():
+            series_categories = got_categories.get(series)
+            if series_categories != list(want_categories):
+                raise VerificationError(
+                    f"{name} series {series!r}: categories "
+                    f"{series_categories!r} do not match computed "
+                    f"{list(want_categories)!r}")
             gvals = got.get(series)
             if gvals is None:
                 raise VerificationError(f"{name}: series {series!r} missing")
+            if len(gvals) != len(values):
+                raise VerificationError(
+                    f"{name} series {series!r}: expected {len(values)} "
+                    f"points, found {len(gvals)}")
             for i, (a, b) in enumerate(zip(values, gvals)):
                 if a is None and b is None:
                     continue

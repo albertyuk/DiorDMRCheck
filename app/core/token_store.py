@@ -11,6 +11,7 @@ process, or this class must grow a shared (e.g. SQLite) backing first.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -18,6 +19,7 @@ from typing import Callable, Iterator, Literal, Optional
 
 
 ClaimStatus = Literal["claimed", "busy", "missing"]
+logger = logging.getLogger(__name__)
 
 
 class TokenStoreFull(RuntimeError):
@@ -47,7 +49,7 @@ class TokenStore:
             except Exception:
                 # Cleanup must not break expiry or capacity enforcement.
                 # Startup retention remains the final safety net.
-                pass
+                logger.exception("token-store discard callback failed")
         return entry
 
     def _live_entry_locked(self, token: str, now: float) -> Optional[dict]:

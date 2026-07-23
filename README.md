@@ -84,32 +84,36 @@ reference agreement math is unchanged, and prints the in/out split.
 Upload a PLOG-style tracker on its own and get a chart-based efficiency
 presentation: a one-slide 16:9 `.pptx` with **native, editable charts**
 (donut of group shares, avg collab price, CPM & CPE bars split SOFT vs PAID
-per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
+per TIER) plus an HTML report view. No DMR file or TikHub is involved; Claude
+is used only when the uploader explicitly opts into mapping unfamiliar headers.
 
 - **Classification** — COOP from `TYPE` (`报备…`→PAID, `软植…`→SOFT), TIER
   from `LEVEL` labels (`尾部`+`底部` merge into BOT — documented judgment
   call, V8) or, via the form toggle, from `FAN BASE` thresholds. A row whose
-  LEVEL is missing or unrecognizable falls back to the follower ladder
-  (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP) and is reported as
-  V11; an explicit label always wins over follower count. Rows with neither
-  signal land in an UNCLASSIFIED bucket, never guessed. FAN BASE units are
-  normalized first: values under 10,000 are thousands (130 → 130K, and
-  1741 → 1.74M as in the real file), values at/above are raw follower
-  counts ÷1000 (450,000 → 450K) — reported as V12 so units are never
-  silently reinterpreted.
+  `LEVEL` is blank or an approved placeholder (`待定` / `?`) falls back to
+  the follower ladder (≥1000K TOP · ≥400K MID · ≥200K BOT · otherwise KOC)
+  and is reported as V12. Other unknown labels stay UNCLASSIFIED (V7);
+  they are never silently guessed. In label mode, an explicit recognized
+  label always wins; fanbase mode deliberately uses the follower ladder for
+  every row.
+  The uploader selects one `FAN BASE` unit for the whole workbook:
+  thousands (default; `450` means 450K) or raw followers (`450000` means
+  450K). Raw mode divides every valid value by 1,000 and reports V13; values
+  are never reinterpreted row by row from their magnitude.
 - **Metrics** — pooled basis (group Σspend÷Σimpressions ×1000, Σspend÷Σeng)
   by default, per-post average as the alternative; the basis is printed on
   the slide. The source file's CPM column is price per *single* impression —
   ×1000 off standard CPM — and is never reused, only cross-checked (V5).
-- **Validation V1–V12** — findings (duplicate links, engagement identity
+- **Validation V1–V13** — findings (duplicate links, engagement identity
   breaks, missing values, zero denominators, label conflicts, n<3 groups,
   viral-post concentration >50%) are shown *with* the output and, where they
   bias a number, become on-slide caveats. The source file is never mutated.
 - **Verification before download** — metrics are computed twice (raw loop +
   pandas groupby, diffed to 1e-6), totals reconciled, and after the deck is
-  built the embedded chart XML's cached values are parsed back out of the
-  package and diffed against the metrics. Any mismatch blocks the download.
-- **Insights are single-wave only** — winners, premiums, and caveats derived
+  built its package is inspected and diffed against the metrics, including
+  series, category order, point counts, and values. Any mismatch blocks the
+  download.
+- **Insights are single-wave only** — comparisons, premiums, ties, and caveats derived
   from the uploaded file; wave-over-wave comparisons are never generated.
 - **Privacy** — the workbook is analyzed in memory, never written to disk or
   the database; the finished report is held in an in-process store and
@@ -117,8 +121,9 @@ per TIER) plus an HTML report view. No DMR file, TikHub, or Claude involved.
 - **Demo image** — the sample slide shown next to the feature (home card and
   the `/efficiency` form, `app/static/eff_demo_{en,zh}.jpg`) is rendered
   through the real deck builder from *synthetic* data — client workbooks are
-  never used for site assets. Regenerate with the scratch script if the deck
-  design changes.
+  never used for site assets. Regenerate it with
+  `python tools/make_demo_assets.py` (requires LibreOffice and `pdftoppm`) if
+  the deck design changes.
 
 ## Unfamiliar sheet formats — LLM header mapping with human audit
 
@@ -126,22 +131,26 @@ When an uploaded workbook's headers don't match the deterministic
 fingerprint (PLOG, DMR, or the efficiency workbook — e.g. a tracker with
 Chinese headers like 博主昵称/笔记链接), the app no longer just fails:
 
-1. Claude is shown a small **structural sample** — sheet names plus the
-   first 15 rows — and proposes which sheet/header-row/columns correspond to
+1. Only after the uploader checks the disclosure, Claude is shown a bounded
+   **structural sample** — visible sheet names plus at most the first 15 rows ×
+   24 columns, with each cell truncated to 60 characters. Hidden sheets are
+   excluded. Claude proposes which sheet/header-row/columns correspond to
    the canonical fields, with per-field confidence and warnings for anything
    a human must double-check (suspected unit differences, rate-vs-count
    columns). It maps columns; it never rewrites data.
-2. **A human audits before anything runs.** The proposal renders as an
+2. **An administrator audits before anything runs.** The proposal renders as an
    editable table: each field shows the original header, example values from
    that column, and the model's confidence (low-confidence picks are
    flagged). Correct any column, or cancel. Required fields must be mapped.
-3. On approval, **only the header cells are rewritten** to canonical names
-   (in a copy — the uploaded original is kept); every data cell is
-   byte-identical and the normal deterministic pipeline runs unchanged. The
+3. On approval, **only the selected header-cell OOXML is patched** to canonical
+   names (in a copy — the uploaded original is kept). Data values, formulas,
+   cached formula results, and hyperlinks remain unchanged, and the normal
+   deterministic pipeline runs unchanged. The
    preview/report shows exactly what was remapped and who approved it.
 4. Approved mappings are **cached by a signature of the header region** —
-   each new format costs one LLM call and one approval ever; identical
-   formats later auto-apply with a visible "approved by X on date" note.
+   each new format costs one LLM call and one approval until its signature
+   changes or an administrator revokes it. Identical formats later auto-apply
+   with a visible "approved by X on date" note.
 
 Efficiency-report uploads keep their privacy contract: the workbook and the
 pending mapping live only in memory. Without `ANTHROPIC_API_KEY` the
@@ -184,7 +193,7 @@ form's slide-language default follows the interface language.
 ## Running locally
 
 ```sh
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 ALLOW_OPEN_ACCESS=1 SESSION_COOKIE_SECURE=0 uvicorn app.main:app --port 8080
 # open http://localhost:8080
 ```
@@ -196,31 +205,44 @@ External API integrations remain optional and degrade gracefully.
 | Var | Purpose |
 |---|---|
 | `TIKHUB_API_KEY` | XHS link resolution (authoritative path). Without it, only the free direct-redirect path runs — usually blocked from datacenter IPs. |
-| `ANTHROPIC_API_KEY` | Tier-4 adjudication + bilingual run summary. |
+| `TIKHUB_CONCURRENCY` | Maximum concurrent TikHub requests; defaults to 8 and must be between 1 and 32. |
+| `ANTHROPIC_API_KEY` | Tier-4 adjudication + bilingual run summary, plus explicitly opted-in unfamiliar-header mapping. |
 | `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5` (the current Sonnet, verified at build time — the older `claude-sonnet-4-6` works as an override). |
 | `APP_PASSWORD` | The **required-by-default setup code** for the account system. Visit `/setup`, enter the code, and create the admin account; admins add coworkers on `/team`. Startup fails if neither this nor the explicit local opt-out is set. |
 | `ALLOW_OPEN_ACCESS` | Set to `1` only for intentional local passwordless use. Defaults off, so a missing deployment secret fails closed. |
 | `SESSION_COOKIE_SECURE` | Defaults to `1`; set to `0` only for local plain-HTTP development. |
+| `APP_SECRET` | Optional session-signing secret. When unset, a random secret is generated once under `DATA_DIR`; never derive it from the shared setup code. |
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
 | `MAX_UPLOAD_MB` | Maximum compressed size per workbook; defaults to 25 MB. |
 | `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents; defaults to 50 MB to reject ZIP bombs. |
 | `MAX_XLSX_ENTRIES` | Maximum files inside an XLSX archive; defaults to 2,000. |
+| `MAX_XLSX_SHEETS` | Maximum worksheets per workbook; defaults to 64. |
+| `MAX_XLSX_ROW_INDEX` / `MAX_XLSX_COLUMN_INDEX` | Maximum declared worksheet coordinates; defaults to 150,000 rows and 256 columns, including sparse cells. |
 | `MAX_XLSX_CELLS` | Maximum populated worksheet cells; defaults to 600,000 to bound `openpyxl` object growth. |
+| `MAX_PLOG_ROWS` / `MAX_DMR_ROWS` / `MAX_PERIMETER_ROWS` / `MAX_EFFICIENCY_ROWS` | Logical parsed-row caps; defaults to 50,000 / 100,000 / 100,000 / 50,000. |
+| `MAX_PERIMETER_SCAN_CELLS` | Maximum rectangular cell values synthesized while streaming a perimeter sheet; defaults to 5,000,000. |
+| `MAX_CANDIDATES_PER_VERDICT` | Maximum ranked candidates retained per reconciliation row; defaults to 25. |
+| `MAX_RESULT_MB` | Maximum serialized reconciliation result size; defaults to 64 MB. |
+| `MAX_PERIMETER_CACHE_MB` | Maximum serialized size of one cached perimeter; defaults to 64 MB. |
+| `RUN_MAX_CONCURRENT` | Maximum background reconciliation runs executing at once; defaults to 2. |
 | `UPLOAD_REQUEST_CONCURRENCY` | Maximum upload requests admitted before multipart spooling; defaults to 2 to bound aggregate memory and temporary disk. |
 | `UPLOAD_PARSE_CONCURRENCY` | App-wide limit for concurrent workbook parsing/remapping; defaults to 1 to bound memory use. |
 | `EXPORT_STREAM_CONCURRENCY` | Maximum concurrent XLSX response streams; defaults to 4 so slow clients cannot accumulate unbounded temporary exports. |
 | `UPLOAD_RETENTION_HOURS` | Maximum age for eligible staged/run upload directories; defaults to 720 hours (30 days). |
-| `UPLOAD_MAX_TOTAL_MB` | Aggregate upload-directory budget; defaults to 900 MB, with the oldest eligible runs removed first. |
+| `UPLOAD_MAX_TOTAL_MB` / `DB_MAX_TOTAL_MB` / `DATA_MAX_TOTAL_MB` | Upload, logical SQLite, and shared-volume budgets; defaults to 500 / 400 / 900 MB. Startup rejects inconsistent totals. |
+| `LINK_CACHE_MAX_ROWS` / `LINK_CACHE_MAX_RAW_MB` | Link-cache row and raw-response budgets; defaults to 100,000 rows and 128 MB. |
+| `PERIMETER_CACHE_MAX_ROWS` | Maximum cached perimeter snapshots; defaults to 100, subject also to the byte budgets above. |
 | `MAINTENANCE_INTERVAL_SECONDS` | Interval for expired-token and upload-retention cleanup; defaults to 60 seconds. |
 
-**Resolve-phase speed.** The free direct-to-XHS path sits behind an
-adaptive circuit breaker: after 3 consecutive failures (datacenter IPs are
-usually blocked) it is skipped — re-probing every 25th link so it can
-recover — instead of every link paying the direct timeout before TikHub.
-TikHub calls share one pooled HTTPS connection (no per-call TLS handshake),
-and the default concurrency is 8 (`TIKHUB_CONCURRENCY`; 429s are still
-honored with backoff). Re-runs stay near-instant via the permanent success
-cache.
+**Resolve-phase speed.** Redirect resolution and note-detail enrichment use
+separate adaptive circuit breakers. Each opens after 3 consecutive transport
+failures and re-probes every 25th skipped call; completed HTTP responses that
+simply lack content do not trip it. Canonical note URLs are parsed without
+network I/O, and equivalent URLs share one in-flight resolution, so duplicate
+rows and concurrent forced retries do not duplicate paid calls. TikHub calls
+share one pooled HTTPS client that is closed during application shutdown.
+The default concurrency is 8 (`TIKHUB_CONCURRENCY`; 429s are still honored
+with backoff). Re-runs stay near-instant via the permanent success cache.
 
 TikHub endpoints are configurable (`TIKHUB_IMAGE_NOTE_PATH`,
 `TIKHUB_VIDEO_NOTE_PATH`) because TikHub versions its API; the defaults were
@@ -228,7 +250,8 @@ verified against `api.tikhub.io/openapi.json` at build time. Both accept the
 raw `xhslink.com` share URL via `share_text`, so no redirect-following is
 required for the authoritative path. Operational limits: 15 s timeout,
 3 retries with exponential backoff, 429 `Retry-After` respected, global
-concurrency ≤ 4, and a per-run cost counter shown in the UI.
+concurrency configurable from 1–32 (default 8), and a per-run cost counter
+shown in the UI.
 Workbook URLs are restricted to `xhslink.com` and `xiaohongshu.com` hosts,
 including every direct redirect hop.
 
@@ -241,7 +264,7 @@ missing an app name"*. Fly app names are globally unique, so pick your own:
 ```sh
 APP=dmr-reconciler-yourname            # choose a unique name
 fly apps create "$APP"
-sed -i "s/^app = .*/app = \"$APP\"/" fly.toml   # keep fly.toml in sync
+# Edit the `app = "..."` line in fly.toml to match $APP.
 fly volumes create data --region sin --size 1 -a "$APP"
 fly secrets set TIKHUB_API_KEY=... ANTHROPIC_API_KEY=... APP_PASSWORD=... -a "$APP"
 fly deploy -a "$APP"
@@ -271,8 +294,10 @@ It prints a confusion matrix and a per-row disagreement report. Two reference
 labels are known noise (verified by direct inspection): 兔子糖糖公主Rinrin
 (2026-06-26) and 宅鱼日常 (2026-06-29) are marked `无博主` by the human but
 exist in the DMR file with exact-date posts. The harness lists them as
-*expected* disagreements and the acceptance gate is **≥ 99/101 agreement after
-excusing those two**.
+*expected* disagreements only when the full reviewed row identity and
+`无博主`→`MATCH` transition agree. The acceptance gate requires **every other
+reference row to agree**, and also fails on missing, duplicate, or unexpected
+pipeline rows.
 
 ## Operational notes
 
@@ -297,16 +322,19 @@ excusing those two**.
   both a maximum age and aggregate disk budget while protecting queued,
   running, and pending-audit runs; removal also clears matching run history.
 - **The export never overwrites populated cells.** An S cell that already
-  holds a value in the uploaded file is kept verbatim (when it disagrees
-  with the pipeline the verdict is recorded in the evidence Notes column
-  instead), and the evidence block shifts right past any column that
-  already contains data. A UI override — an explicit action in this tool —
-  still writes its value.
+  holds a value in the uploaded file is kept unless a UI override explicitly
+  wins, including its original value type and formatting. Newly written
+  external text is formula-neutralized and stripped of characters that OOXML
+  cannot store. The source S value and disposition are retained in hidden
+  audit metadata, and the evidence block avoids populated and merged
+  whole-sheet column ranges. If no range exists before Excel's XFD limit,
+  evidence goes to a collision-safe hidden `_DMR_EVIDENCE` sheet instead.
 - **The DMR export window is editable** on the confirm screen: it prefills
   from the file's metadata, an edit overrides which posts count as
   超出DMR导出窗口 (expected-missing, not DMR gaps), and clearing either date
-  disables the window checks. The choice is stored with the run's options
-  and survives retries.
+  atomically clears both and disables the window checks. Non-ISO or reversed
+  ranges are rejected rather than silently accepted. The choice is stored
+  with the run's options and survives retries.
 - Human overrides are stored per sheet row and win over the pipeline verdict
   in both the UI and the exports; the special choice `已匹配（清空S）` forces a
   blank column S (asserting a match), while clearing the dropdown reverts to
@@ -317,7 +345,13 @@ excusing those two**.
 ```sh
 pip install -r requirements-dev.txt
 python -m pytest tests/ -q
+ruff check app tests tools
 ```
+
+Generated assets are regenerable with declared tooling:
+`python tools/make_templates.py` writes the two Excel templates under
+`docs/`; the Word rubric uses the pinned Node dependency
+(`cd tools && npm ci && npm run make:rubric`).
 
 Synthetic fixtures reproduce every observed real-data edge case: emoji in
 NAME (`一颗鸡蛋🥚`), the quirky headers, NO resetting per campaign, DMR

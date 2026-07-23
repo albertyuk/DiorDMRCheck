@@ -24,8 +24,10 @@ from openpyxl import load_workbook
 from pypinyin import lazy_pinyin
 from rapidfuzz import fuzz, process
 
+from .. import config
 from ..core import db
 from ..core.textnorm import ascii_part, cjk, header_key, norm
+from ..core.uploads import UploadLimitError
 from .name_match import (FUZZY_CUTOFF, METHOD_ASCII_FUZZY, METHOD_CJK,
                          METHOD_NORM, METHOD_PINYIN, MIN_COMPARE_LEN)
 
@@ -50,7 +52,7 @@ def _i(v) -> Optional[int]:
         if v is None or v == "":
             return None
         return int(float(str(v).replace(",", "")))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -74,7 +76,7 @@ class PerimeterParse:
 # Bumped whenever parsing semantics change: the cache is content-addressed,
 # so without a version salt an already-cached file would keep serving rows
 # parsed under the OLD semantics (e.g. unfiltered, pre-China-market).
-_PARSER_VERSION = b"2:china-market\x00"
+_PARSER_VERSION = b"3:china-market-id-only-and-limits\x00"
 
 # The tool evaluates the Chinese market only. Micro sheets carry no
 # IN_CHINA flag, so COUNTRY is the signal there; Macro sheets (future
@@ -83,6 +85,12 @@ _PARSER_VERSION = b"2:china-market\x00"
 # filter cannot flip a membership verdict — it only drops the ~52k non-China
 # rows that polluted same-name evidence scans.
 _CHINA_COUNTRIES = {"MAINLANDCHINA", "CHINA"}
+MAX_PERIMETER_NAME_SCAN_COMPARISONS = 5_000_000
+_NAME_SCAN_BUDGET_WARNING = (
+    "Perimeter name-suggestion scan reached its per-run safety budget; "
+    "REDBOOK_ID membership remains exact, but some name-only suggestions "
+    "were omitted."
+)
 
 
 def _is_china_country(value: str) -> bool:
@@ -161,13 +169,32 @@ def parse_perimeter(source: Union[str, IO[bytes]], filename: str = "",
         def col(row, c):
             return _s(row[c]) if c is not None and c < len(row) else ""
 
-        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        needed_columns = (
+            c_name, c_namebis, c_dmrid, c_rid, c_rfol, c_inchina, c_country,
+        )
+        max_needed_col = max(c for c in needed_columns if c is not None) + 1
+        scan_cells = max(0, ws.max_row - header_row) * max_needed_col
+        if scan_cells > config.MAX_PERIMETER_SCAN_CELLS:
+            raise UploadLimitError(
+                "Perimeter worksheet scan would cover more than "
+                f"{config.MAX_PERIMETER_SCAN_CELLS:,} cells; remove distant "
+                "empty rows/columns or use a smaller China-market export."
+            )
+        for row in ws.iter_rows(min_row=header_row + 1,
+                                max_col=max_needed_col,
+                                values_only=True):
             name = col(row, c_name)
             namebis = col(row, c_namebis)
             rid = col(row, c_rid).lower()
-            if not name and not namebis:
+            if not name and not namebis and not rid:
                 continue
             result.rows_scanned += 1
+            if result.rows_scanned > config.MAX_PERIMETER_ROWS:
+                raise ValueError(
+                    "Perimeter contains more than "
+                    f"{config.MAX_PERIMETER_ROWS:,} data rows; use a smaller "
+                    "China-market export."
+                )
             # China market only — this tool evaluates Chinese-market KOLs
             if c_inchina is not None:
                 if col(row, c_inchina).strip().upper() != "YES":
@@ -231,10 +258,21 @@ def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"
     row = db.perimeter_cache_get(file_hash)
     if not row:
         return None
-    rows = _payload(row)["rows"]
-    return PerimeterIndex(rows, extraction_date=row["extraction_date"] or "",
-                          filename=filename or row["filename"] or "",
-                          file_hash=file_hash)
+    payload = _payload(row)
+    rows = payload["rows"]
+    try:
+        warnings = json.loads(row.get("warnings_json") or "[]")
+    except (TypeError, ValueError):
+        warnings = ["Cached perimeter warnings could not be decoded."]
+    return PerimeterIndex(
+        rows,
+        extraction_date=row["extraction_date"] or "",
+        filename=filename or row["filename"] or "",
+        file_hash=file_hash,
+        rows_scanned=payload.get("rows_scanned", len(rows)),
+        china_filter=payload.get("china_filter", ""),
+        warnings=warnings,
+    )
 
 
 # ------------------------------------------------------------------ indexes
@@ -248,11 +286,16 @@ class PerimeterIndex:
     (e.g. 'esther' matches several rows), so callers must never auto-pick."""
 
     def __init__(self, rows: list[dict], extraction_date: str = "",
-                 filename: str = "", file_hash: str = ""):
+                 filename: str = "", file_hash: str = "",
+                 rows_scanned: int = 0, china_filter: str = "",
+                 warnings: Optional[list[str]] = None):
         self.rows = rows
         self.extraction_date = extraction_date
         self.filename = filename
         self.file_hash = file_hash
+        self.rows_scanned = rows_scanned
+        self.china_filter = china_filter
+        self.warnings = list(warnings or [])
         self.by_redbook: dict[str, dict] = {}
         for r in rows:
             rid = (r.get("redbook_id") or "").lower()
@@ -264,6 +307,9 @@ class PerimeterIndex:
                     if len(r["an"]) >= MIN_COMPARE_LEN]
         self._ab = [(i, r["ab"]) for i, r in enumerate(rows)
                     if len(r["ab"]) >= MIN_COMPARE_LEN]
+        self._name_scan_remaining = MAX_PERIMETER_NAME_SCAN_COMPARISONS
+        self._name_cache: dict[str, tuple[list[tuple[dict, str]], bool]] = {}
+        self.last_scan_skipped = False
 
     def lookup_author(self, author_id: str) -> Optional[dict]:
         return self.by_redbook.get((author_id or "").strip().lower())
@@ -282,6 +328,24 @@ class PerimeterIndex:
     def scan_name(self, plog_name: str) -> list[tuple[dict, str]]:
         pc, pn = cjk(plog_name), norm(plog_name)
         pa = ascii_part(plog_name)
+        cache_key = f"{pc}\x00{pn}\x00{pa}"
+        if cache_key in self._name_cache:
+            result, complete = self._name_cache[cache_key]
+            self.last_scan_skipped = not complete
+            return result
+        # The exact containment loop plus rapidfuzz passes are all linear in
+        # perimeter size. Bound their aggregate across unique PLOG names.
+        fuzzy_passes = 2 + (2 if pc else 0)
+        cost = len(self.rows) + fuzzy_passes * (len(self._an) + len(self._ab))
+        if cost > self._name_scan_remaining:
+            self.last_scan_skipped = True
+            result: list[tuple[dict, str]] = []
+            self._name_cache[cache_key] = (result, False)
+            if _NAME_SCAN_BUDGET_WARNING not in self.warnings:
+                self.warnings.append(_NAME_SCAN_BUDGET_WARNING)
+            return result
+        self._name_scan_remaining -= cost
+        self.last_scan_skipped = False
         hits: dict[int, str] = {}
         # ladder steps a/b — exact containment over precomputed forms
         for i, r in enumerate(self.rows):
@@ -296,7 +360,9 @@ class PerimeterIndex:
             pinyin = "".join(lazy_pinyin(pc)).casefold()
             self._fuzzy(pinyin, self._an, hits, METHOD_PINYIN)
             self._fuzzy(pinyin, self._ab, hits, METHOD_PINYIN)
-        return [(self.rows[i], m) for i, m in sorted(hits.items())]
+        result = [(self.rows[i], m) for i, m in sorted(hits.items())]
+        self._name_cache[cache_key] = (result, True)
+        return result
 
 
 def parse_and_cache(data: bytes, filename: str) -> tuple[dict, list[str]]:

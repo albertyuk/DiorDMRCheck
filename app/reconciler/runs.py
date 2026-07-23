@@ -11,9 +11,12 @@ file-level parse failures abort a run.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import traceback
 from collections import deque
+from datetime import date
+from typing import Optional
 
 from .. import config
 from ..core import db
@@ -24,6 +27,8 @@ from .domain import ENGAGEMENT_CAVEAT
 from .pipeline import run_pipeline, status_counts, summary_buckets
 from .parsers import parse_dmr, parse_plog
 from .reverse_audit import reverse_audit
+
+logger = logging.getLogger(__name__)
 
 
 def recover_orphans() -> None:
@@ -111,34 +116,70 @@ def _run_slot(run_id: str) -> None:
                              daemon=True).start()
 
 
+def normalize_window_override(
+        window_from: Optional[str],
+        window_to: Optional[str]) -> Optional[tuple[str, str]]:
+    """Validate and normalize an editable DMR export-window form pair.
+
+    ``None, None`` means a legacy caller supplied no override, so the detected
+    workbook window remains intact. If either visible field is deliberately
+    cleared, both bounds are cleared and window checks are disabled. Otherwise
+    both values must be ISO dates in ascending order.
+    """
+    if window_from is None and window_to is None:
+        return None
+    raw_from = str(window_from or "").strip()
+    raw_to = str(window_to or "").strip()
+    if not raw_from or not raw_to:
+        return "", ""
+    try:
+        parsed_from = date.fromisoformat(raw_from)
+        parsed_to = date.fromisoformat(raw_to)
+    except ValueError as exc:
+        raise ValueError(
+            "Export window dates must use YYYY-MM-DD."
+        ) from exc
+    if parsed_from > parsed_to:
+        raise ValueError(
+            "Export window start must not be after its end."
+        )
+    return parsed_from.isoformat(), parsed_to.isoformat()
+
+
 def apply_window_override(dmr, options: dict) -> None:
     """Apply the user-edited DMR export window from the confirm screen.
 
     The metadata-detected window prefills the form, so unedited runs are
-    unchanged. Clearing either date (or an unparseable value) leaves that
-    bound unset — and the pipeline requires both bounds, so a cleared field
-    disables the out-of-window checks entirely."""
+    unchanged. Clearing either date clears both bounds and disables the
+    out-of-window checks. Persisted options are validated again here so a
+    manually edited database row cannot silently change reconciliation."""
     if "window_from" not in options and "window_to" not in options:
         return
-
-    def _parse(key):
-        from datetime import date
-        v = str(options.get(key) or "").strip()
-        try:
-            return date.fromisoformat(v) if v else None
-        except ValueError:
-            return None
-
-    dmr.window_from = _parse("window_from")
-    dmr.window_to = _parse("window_to")
+    normalized = normalize_window_override(
+        options.get("window_from"), options.get("window_to")
+    )
+    if normalized is None:
+        return
+    raw_from, raw_to = normalized
+    dmr.window_from = date.fromisoformat(raw_from) if raw_from else None
+    dmr.window_to = date.fromisoformat(raw_to) if raw_to else None
 
 
 def _run(run_id: str) -> None:
     run = db.run_get(run_id)
     if not run:
         return
-    options = json.loads(run.get("options_json") or "{}")
     try:
+        try:
+            options = json.loads(run.get("options_json") or "{}")
+            if not isinstance(options, dict):
+                raise ValueError("Persisted run options must be a JSON object.")
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            # Error pages and retry forms parse this field too. Replace only
+            # corrupt/non-object persisted options, rather than leaving a run
+            # that is marked failed but still raises on every status view.
+            db.run_update(run_id, options_json="{}")
+            raise ValueError("Persisted run options are invalid.") from exc
         db.run_update(run_id, status="running", phase="parse",
                       message="Parsing workbooks…")
         plog = run_upload_task_sync(parse_plog, run["plog_path"])
@@ -189,15 +230,19 @@ def _run(run_id: str) -> None:
         result = {
             "verdicts": [v.to_dict() for v in verdicts],
             "counts": counts,
-            "buckets": summary_buckets(counts),
+            "buckets": summary_buckets(verdicts),
             # document-level context: DMR engagement numbers in the rows are
             # early-crawl snapshots, never a matching signal
             "engagement_caveat": ENGAGEMENT_CAVEAT,
             "perimeter_meta": ({
                 "filename": perim.filename,
+                "hash": perim.file_hash,
                 "extraction_date": perim.extraction_date,
                 "rows": len(perim.rows),
                 "redbook_count": len(perim.by_redbook),
+                "rows_scanned": perim.rows_scanned,
+                "china_filter": perim.china_filter,
+                "warnings": perim.warnings,
             } if perim else None),
             "perimeter_warning": perim_warning,
             "reverse_audit": reverse_rows,
@@ -215,13 +260,39 @@ def _run(run_id: str) -> None:
                 "warnings": dmr.warnings,
             },
         }
+        result_json = json.dumps(result, ensure_ascii=False, default=str)
+        max_result_bytes = config.MAX_RESULT_MB * 1024 * 1024
+        result_bytes = len(result_json.encode("utf-8"))
+        if result_bytes > max_result_bytes:
+            raise ValueError(
+                f"Run result is {result_bytes / (1024 * 1024):.1f} MiB, above "
+                f"the {config.MAX_RESULT_MB} MiB persistence limit. Split the "
+                "PLOG into smaller runs."
+            )
         db.run_update(
             run_id, status="done", phase="done",
             message="Run complete.",
-            result_json=json.dumps(result, ensure_ascii=False, default=str),
+            result_json=result_json,
             summary_json=json.dumps(summary, ensure_ascii=False),
         )
-    except Exception as e:
+    except db.StorageLimitError:
+        logger.info("run %s exceeded a storage limit", run_id, exc_info=True)
+        db.run_update(
+            run_id, status="error", phase="error",
+            message=("Run output exceeds a configured storage limit. "
+                     "Split the input into smaller runs."),
+            error=traceback.format_exc()[:8000],
+        )
+    except ValueError:
+        logger.info("run %s rejected invalid input", run_id, exc_info=True)
         db.run_update(run_id, status="error", phase="error",
-                      message=f"Run failed: {e}",
+                      message=("Run input or output failed validation. Check "
+                               "the workbook preview and configured limits."),
                       error=traceback.format_exc()[:8000])
+    except Exception:
+        logger.exception("run %s failed", run_id)
+        db.run_update(
+            run_id, status="error", phase="error",
+            message="Run failed because of an internal error. Retry or contact an administrator.",
+            error=traceback.format_exc()[:8000],
+        )

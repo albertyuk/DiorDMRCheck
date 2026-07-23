@@ -1,7 +1,9 @@
 """Blank starter templates for the two input files, with the exact headers,
 dropdowns for controlled vocabularies, correct column formats, one example
 row block (marked for deletion), and a bilingual README sheet each."""
+import sys
 from datetime import datetime
+from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -15,6 +17,12 @@ HDR_FILL = PatternFill("solid", fgColor="F0EEE9")
 EX_FILL = PatternFill("solid", fgColor="FFF6DF")   # example rows — delete me
 THIN = Side(style="thin", color="C9C6C0")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+OUTPUT_DIR = (
+    Path(sys.argv[1]).expanduser()
+    if len(sys.argv) > 1
+    else Path(__file__).resolve().parents[1] / "docs"
+)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def style_header(ws, row, headers, widths):
@@ -52,10 +60,10 @@ ws.freeze_panes = "A2"
 
 examples = [
     [1, "ORANGE", "CAMPAIGN #001", "报备图文", "腰部", "示例博主A（删除此行）", 350,
-     datetime(2026, 6, 25), "MICRO", "http://xhslink.com/o/EXAMPLE1",
+     datetime(2026, 6, 25), "MICRO", "https://xhslink.com/o/EXAMPLE1",
      242757, 838, 143, 74, "=L2+M2+N2", 30300, None, None],
     [2, "ORANGE", None, "软植图文", "KOC", "示例博主B（删除此行）", 88,
-     datetime(2026, 6, 28), "MICRO", "http://xhslink.com/o/EXAMPLE2",
+     datetime(2026, 6, 28), "MICRO", "https://xhslink.com/o/EXAMPLE2",
      34211, 1037, 677, 18, "=L3+M3+N3", 8000, None, None],
 ]
 for r, row in enumerate(examples, start=2):
@@ -96,8 +104,8 @@ readme_sheet(wb, [
     ("  不要改名、调换或删除表头行。S 列及之后请留空（工具会写入判定结果）。", False),
     ("• POST LINK: one unique xhslink.com / xiaohongshu.com link per row — never the same link on two rows.", False),
     ("  POST LINK：每行一条 xhslink.com / xiaohongshu.com 链接，绝不能两行共用。", False),
-    ("• FAN BASE（K) is in THOUSANDS: 130,000 followers → write 130; 1.74M → write 1741.", False),
-    ("  FAN BASE（K) 单位为「千」：13 万粉写 130；174 万粉写 1741。", False),
+    ("• This template defaults to THOUSANDS (K): 130,000 followers → write 130; 1.74M → write 1741. If raw mode is selected in the report form, every row must use raw followers. Never mix units.", False),
+    ("  本模板默认单位为「千」：13 万粉写 130；174 万粉写 1741。如在报告表单选择原始粉丝数，整份文件每行都必须使用原始值，绝不能混用单位。", False),
     ("• TTL ENGAGEMENT must equal LIKE + COLLECTION + COMMENT. The example rows carry the formula =L2+M2+N2 — copy it down.", False),
     ("  TTL ENGAGEMENT 必须等于 点赞+收藏+评论。示例行已带公式 =L2+M2+N2——请向下复制。", False),
     ("• TYPE and LEVEL cells have dropdowns — use them. POST DATE must be a real date (the column is date-formatted).", False),
@@ -107,7 +115,7 @@ readme_sheet(wb, [
     ("", False),
     ("Full rules: see “DMR Reconciler — Input File Formatting Rubric”. 完整规则见《输入文件格式规范》。", False),
 ])
-wb.save("PLOG_Tracker_Template.xlsx")
+wb.save(OUTPUT_DIR / "PLOG_Tracker_Template.xlsx")
 
 # =================================================================== DMR ==
 DMR_HEADERS = ["Country", "Category", "Blogger", "Username", "Platform",
@@ -163,5 +171,5 @@ readme_sheet(wb, [
     ("", False),
     ("Full rules: see “DMR Reconciler — Input File Formatting Rubric”. 完整规则见《输入文件格式规范》。", False),
 ])
-wb.save("DMR_Export_Template.xlsx")
-print("templates written")
+wb.save(OUTPUT_DIR / "DMR_Export_Template.xlsx")
+print(f"templates written to {OUTPUT_DIR}")

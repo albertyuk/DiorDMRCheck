@@ -22,6 +22,14 @@ from .. import config
 PBKDF2_ITERATIONS = 200_000
 SESSION_TTL = 7 * 24 * 3600
 
+# A syntactically valid, fixed PBKDF2 credential used when a login names an
+# unknown account. Verifying it takes the same expensive path as a real user,
+# preventing a username oracle without creating a new salt on every request.
+DUMMY_PASSWORD_HASH = (
+    "00000000000000000000000000000000$"
+    "e3772016883f6ba01c9e682e7bfa0e77ac4938afb4f09c24e5fb726786ce82e5"
+)
+
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
 
 _SECRET_LOCK = threading.Lock()

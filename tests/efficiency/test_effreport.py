@@ -1,7 +1,7 @@
 """KOL efficiency report: engine (effreport) and deck generation.
 
-The synthetic workbook is built so every metric is hand-computable, and each
-validation rule V2–V10 has a row that trips it. The golden test against the
+The synthetic workbook is built so every metric is hand-computable, and the
+core validation rules have rows that trip them. The golden test against the
 real client workbook runs only when the (gitignored) file is present.
 """
 from __future__ import annotations
@@ -48,7 +48,9 @@ def test_group_metrics_hand_computed(analysis):
 def test_zero_impression_row_excluded_from_cpm_only(analysis):
     bs = analysis["metrics"]["groups"]["BOT SOFT"]
     assert bs["n"] == 2                       # still counted in share/n
-    assert bs["cpm_pooled"] == pytest.approx(50.0)   # 5000/100000*1000
+    # Both posts incurred spend.  The zero-impression post is excluded only
+    # from per-post ratios, not from the pooled campaign numerator.
+    assert bs["cpm_pooled"] == pytest.approx(100.0)  # 10000/100000*1000
     assert bs["cpe_pooled"] == pytest.approx(10.0)   # both rows have eng
     assert "V3" in _codes(analysis)
 
@@ -118,6 +120,169 @@ def test_v1_missing_columns_raises():
     buf.seek(0)
     with pytest.raises(ValueError, match="V1"):
         analyze(buf)
+
+
+def test_parse_report_closes_workbook_when_validation_raises(monkeypatch):
+    from app.efficiency import analysis as analysis_module
+
+    wb = Workbook()
+    wb.active.append(["NAME", "POST LINK"])
+    closed = False
+    real_close = wb.close
+
+    def record_close():
+        nonlocal closed
+        closed = True
+        real_close()
+
+    monkeypatch.setattr(wb, "close", record_close)
+    monkeypatch.setattr(analysis_module, "load_workbook",
+                        lambda *_args, **_kwargs: wb)
+
+    with pytest.raises(ValueError, match="V1"):
+        analysis_module.parse_report(io.BytesIO())
+    assert closed
+
+
+def test_header_probe_skips_early_partial_header():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(["NAME", "POST LINK"])
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    buf = io.BytesIO()
+    wb.save(buf)
+    result = analyze(io.BytesIO(buf.getvalue()))
+    assert result["meta"]["header_row"] == 2
+
+
+def test_report_finds_complete_schema_on_later_worksheet():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    wb.active.title = "Instructions"
+    wb.active.append(["Read me first"])
+    ws = wb.create_sheet("Campaign data")
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()))
+
+    assert result["meta"]["sheet"] == "Campaign data"
+    assert result["rows_total"] == 1
+
+
+@pytest.mark.parametrize("field", ["CPM", "CPE"])
+def test_invalid_diagnostics_only_values_warn_without_blocking(field):
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index(field)] = "Infinity"
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()))
+
+    assert not result["blocked"]
+    assert result["metrics"]["totals"]["rows"] == 1
+    assert any(f["code"] == "V11" and f["severity"] == "WARN"
+               for f in result["findings"])
+
+
+def test_invalid_fanbase_does_not_block_label_mode():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index("FAN BASE（K)")] = -1
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()), ReportConfig(tier_mode="label"))
+
+    assert not result["blocked"]
+    assert result["metrics"]["groups"]["KOC PAID"]["n"] == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("IMPRESSION", -1),
+    ("LIKE", 1.5),
+    ("PRICE", -500),
+    ("PRICE", "NaN"),
+    ("PRICE", "Infinity"),
+])
+def test_invalid_numeric_domains_block_with_row_and_field(field, value):
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index(field)] = value
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    with pytest.raises(ValueError, match=rf"V11:.*{field}.*Excel rows 2"):
+        analyze(io.BytesIO(buf.getvalue()))
+
+
+def test_empty_and_all_missing_workbooks_are_user_validation_errors():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    for add_row in (False, True):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "MASTER KOL LIST"
+        ws.append(EFF_HEADERS)
+        if add_row:
+            ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20,
+                               "https://x/1", None, None, None, None,
+                               None, None))
+        buf = io.BytesIO()
+        wb.save(buf)
+        with pytest.raises(ValueError, match="V2:.*no analyzable"):
+            analyze(io.BytesIO(buf.getvalue()))
+
+
+def test_efficiency_row_limit_is_enforced(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MAX_EFFICIENCY_ROWS", 1)
+    with pytest.raises(ValueError, match="more than 1 efficiency rows"):
+        analyze(io.BytesIO(build_eff_bytes()))
+
+
+def test_data_after_more_than_200_blank_rows_is_not_silently_dropped():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "first", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    for _ in range(205):
+        ws.append([])
+    ws.append(_eff_row(2, EFF_PAID, "KOC", "later", 20, "https://x/2",
+                       100, 5, 2, 1, 8, 10))
+    # A far-away styled cell must not turn this into a million-row loop.
+    ws.cell(row=1_000_000, column=30).number_format = "0.00"
+    buf = io.BytesIO()
+    wb.save(buf)
+    result = analyze(io.BytesIO(buf.getvalue()))
+    assert result["rows_total"] == 2
 
 
 # ----------------------------------------------------------------- insights
@@ -210,10 +375,95 @@ def test_chart_cache_catches_tampering(analysis):
         assert_chart_cache(pptx, tampered)
 
 
+def _rewrite_chart(pptx: bytes, chart_number: int, mutate) -> bytes:
+    from lxml import etree
+    source = io.BytesIO(pptx)
+    output = io.BytesIO()
+    target_name = f"ppt/charts/chart{chart_number}.xml"
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(output, "w") as zout:
+        for info in zin.infolist():
+            payload = zin.read(info.filename)
+            if info.filename == target_name:
+                root = etree.fromstring(payload)
+                mutate(root)
+                payload = etree.tostring(root, xml_declaration=True,
+                                         encoding="UTF-8")
+            zout.writestr(info, payload)
+    return output.getvalue()
+
+
+def test_chart_cache_rejects_missing_trailing_point(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def remove_last(root):
+        cache = root.find(f".//{ns}val/{ns}numRef/{ns}numCache")
+        points = cache.findall(f"{ns}pt")
+        cache.remove(points[-1])
+        count = cache.find(f"{ns}ptCount")
+        count.set("val", str(int(count.get("val")) - 1))
+
+    tampered = _rewrite_chart(build_deck(analysis), 2, remove_last)
+    with pytest.raises(VerificationError, match="expected 4 points, found 3"):
+        assert_chart_cache(tampered, analysis)
+
+
+def test_chart_cache_rejects_category_reordering(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def rename_category(root):
+        value = root.find(
+            f".//{ns}cat/{ns}strRef/{ns}strCache/{ns}pt/{ns}v")
+        value.text = "WRONG"
+
+    tampered = _rewrite_chart(build_deck(analysis), 2, rename_category)
+    with pytest.raises(VerificationError, match="categories"):
+        assert_chart_cache(tampered, analysis)
+
+
+def test_chart_cache_checks_categories_on_every_series(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def rename_second_series_category(root):
+        series = root.findall(f".//{ns}ser")
+        value = series[1].find(
+            f"{ns}cat/{ns}strRef/{ns}strCache/{ns}pt/{ns}v")
+        value.text = "WRONG"
+
+    tampered = _rewrite_chart(
+        build_deck(analysis), 2, rename_second_series_category)
+    with pytest.raises(VerificationError, match="categories"):
+        assert_chart_cache(tampered, analysis)
+
+
 def test_deck_zh_language():
     a = analyze(io.BytesIO(build_eff_bytes()), ReportConfig(language="zh"))
     pptx = build_deck(a)
     assert_chart_cache(pptx, a)
+    joined = " ".join(a["insights"]["price"] + a["insights"]["efficiency"]
+                      + a["insights"]["caveats"] + [a["insights"]["footnote"]])
+    for english in ("WINNER", "COMPARISON", "CAUTION", "POST(S)",
+                    "BASIS", "RESULTS CONCENTRATED"):
+        assert english not in joined.upper()
+
+
+def test_insight_uses_tie_when_displayed_values_are_equal():
+    from app.efficiency.analysis import build_insights
+    cfg = ReportConfig()
+    groups = {
+        "KOC PAID": {"tier": "KOC", "n": 3, "avg_price": 1000,
+                     "cpm_pooled": 10.44, "cpe_pooled": 2.04,
+                     "cpm_perpost": 10.44, "cpe_perpost": 2.04},
+        "KOC SOFT": {"tier": "KOC", "n": 3, "avg_price": 1000,
+                     "cpm_pooled": 10.45, "cpe_pooled": 2.049,
+                     "cpm_perpost": 10.45, "cpe_perpost": 2.049},
+    }
+    insights = build_insights(
+        {"groups": groups, "totals": {"rows": 6}}, cfg, [])
+    assert "TIE ¥10" in insights["efficiency"][0]
+    assert "TIE ¥2.0" in insights["efficiency"][1]
 
 
 # ----------------------------------------------------- golden (real file)
@@ -306,33 +556,43 @@ def _level_fallback_wb(rows):
 
 
 def test_missing_level_falls_back_to_fanbase_bands():
-    """User-specified ladder: ≤200K KOC · 200–400K BOT · 400–1000K MID ·
-    1M+ TOP — boundary values belong to the band below, 1000K is TOP."""
+    """Fallback keeps the established inclusive 200/400/1000 lower bounds."""
     a = analyze(io.BytesIO(_level_fallback_wb([
-        ("", 150), ("", 200),          # KOC (200 exactly → "200k or less")
-        ("", 201), ("", 400),          # BOT
-        ("待定", 401), ("?", 999),      # MID (unclear labels count too)
-        ("", 1000), ("", 1500),        # TOP
+        ("", 150),                     # KOC
+        ("", 200), ("待定", 399),       # BOT
+        ("?", 400), ("", 999),         # MID
+        ("", 1000),                    # TOP
     ])), ReportConfig())
     g = a["metrics"]["groups"]
-    assert g["KOC PAID"]["n"] == 2
+    assert g["KOC PAID"]["n"] == 1
     assert g["BOT PAID"]["n"] == 2
     assert g["MID PAID"]["n"] == 2
-    assert g["TOP PAID"]["n"] == 2
+    assert g["TOP PAID"]["n"] == 1
     assert a["metrics"]["totals"]["unclassified"] == 0
-    v11 = [f for f in a["findings"] if f["code"] == "V11"]
-    assert v11 and sum(len(f["rows"]) for f in v11) == 8
+    v12 = [f for f in a["findings"] if f["code"] == "V12"]
+    assert len(v12) == 1 and len(v12[0]["rows"]) == 6
+    assert not [f for f in a["findings"] if f["code"] == "V11"]
+    assert any("V12: FAN BASE FALLBACK" in c
+               for c in a["insights"]["caveats"])
     # …and the finding translates
     from app.i18n import make_td
-    zh = make_td("zh")(v11[0]["message"])
-    assert "已按 FAN BASE 粉丝量自动分层" in zh
+    zh = make_td("zh")(v12[0]["message"])
+    assert "FAN BASE 阈值分层" in zh
+
+
+def test_unknown_nonplaceholder_level_does_not_fall_back():
+    a = analyze(io.BytesIO(_level_fallback_wb([("头布", 500)])),
+                ReportConfig())
+    assert a["metrics"]["totals"]["unclassified"] == 1
+    assert [f for f in a["findings"] if f["code"] == "V7"]
+    assert not [f for f in a["findings"] if f["code"] == "V12"]
 
 
 def test_missing_level_and_fanbase_stays_unclassified():
     a = analyze(io.BytesIO(_level_fallback_wb([("", None), ("头部", 1200)])),
                 ReportConfig())
     assert a["metrics"]["totals"]["unclassified"] == 1     # no fallback signal
-    assert not [f for f in a["findings"] if f["code"] == "V11"]
+    assert not [f for f in a["findings"] if f["code"] == "V12"]
     assert [f for f in a["findings"] if f["code"] == "V7"]
 
 
@@ -343,32 +603,74 @@ def test_explicit_level_wins_over_fanbase():
     assert a["metrics"]["groups"]["TOP PAID"]["n"] == 1
 
 
-# ------------------------------------------------- FAN BASE unit heuristic
+# ------------------------------------------------ FAN BASE workbook-level unit
 
-def test_fanbase_units_small_is_thousands_huge_is_raw():
-    """130 means 130K (user rule: 1–1000 are thousands); 1741 stays 1741K
-    (real-file semantics — a 1.74M account written in the K column); 450,000
-    is unmistakably a raw count → 450K. Tiers follow the normalized values."""
+def test_fanbase_unit_k_never_switches_by_magnitude():
+    """The default follows the column's K contract at every magnitude."""
     a = analyze(io.BytesIO(_level_fallback_wb([
-        ("", 130),          # 130K → KOC
-        ("", 1741),         # 1741K = 1.74M → TOP (NOT read as raw 1.7K)
-        ("", 9999),         # just under the cutoff — still K → TOP
-        ("", 450000),       # raw → 450K → MID
-        ("", 10000),        # at the cutoff — raw → 10K → KOC
-        ("", 1300000),      # raw → 1300K → TOP
+        ("", 9999), ("", 10000), ("", 450000),
     ])), ReportConfig())
     g = a["metrics"]["groups"]
-    assert g["KOC PAID"]["n"] == 2      # 130K, 10K
-    assert g["MID PAID"]["n"] == 1      # 450K
-    assert g["TOP PAID"]["n"] == 3      # 1741K, 9999K, 1300K
-    v12 = [f for f in a["findings"] if f["code"] == "V12"]
-    assert len(v12) == 1 and len(v12[0]["rows"]) == 3
+    assert g["TOP PAID"]["n"] == 3
+    assert a["config"]["fanbase_unit"] == "k"
+    assert not [f for f in a["findings"] if f["code"] == "V13"]
+
+
+def test_fanbase_unit_raw_converts_every_valid_row_and_reaches_deck():
+    a = analyze(io.BytesIO(_level_fallback_wb([
+        ("", 130), ("", 1741), ("", 9999),
+        ("", 10000), ("", 450000), ("", 1300000),
+    ])), ReportConfig(fanbase_unit="raw"))
+    g = a["metrics"]["groups"]
+    assert g["KOC PAID"]["n"] == 4
+    assert g["MID PAID"]["n"] == 1
+    assert g["TOP PAID"]["n"] == 1
+    assert a["config"]["fanbase_unit"] == "raw"
+    v13 = [f for f in a["findings"] if f["code"] == "V13"]
+    assert len(v13) == 1 and len(v13[0]["rows"]) == 6
+    assert any("V13: FAN BASE UNIT RAW FOLLOWERS" in c
+               for c in a["insights"]["caveats"])
+
     from app.i18n import make_td
-    zh = make_td("zh")(v12[0]["message"])
+    zh = make_td("zh")(v13[0]["message"])
     assert "原始粉丝数" in zh and "除以 1,000" in zh
 
+    pptx = build_deck(a)
+    assert_chart_cache(pptx, a)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as archive:
+        slide = archive.read("ppt/slides/slide1.xml").decode()
+    assert "V12: FAN BASE FALLBACK USED" in slide
+    assert "V13: FAN BASE UNIT RAW FOLLOWERS" in slide
 
-def test_fanbase_normalization_feeds_fanbase_mode_too():
+
+def test_fanbase_fallback_and_unit_caveats_translate_for_chinese_deck():
+    a = analyze(io.BytesIO(_level_fallback_wb([("", 450000)])),
+                ReportConfig(fanbase_unit="raw", language="zh"))
+    caveats = " ".join(a["insights"]["caveats"])
+    assert "回退分层" in caveats
+    assert "原始粉丝数" in caveats
+    assert "FAN BASE FALLBACK USED" not in caveats
+
+
+@pytest.mark.parametrize("fanbase", ["NaN", "Infinity", -1, 10000.5])
+def test_raw_unit_does_not_rescue_invalid_fanbase(fanbase):
+    a = analyze(io.BytesIO(_level_fallback_wb([("", fanbase)])),
+                ReportConfig(fanbase_unit="raw"))
+    assert not a["blocked"]
+    assert a["metrics"]["totals"]["unclassified"] == 1
+    v11 = [f for f in a["findings"] if f["code"] == "V11"]
+    assert len(v11) == 1 and "invalid diagnostics-only" in v11[0]["message"]
+    assert not [f for f in a["findings"]
+                if f["code"] in {"V12", "V13"}]
+
+
+def test_fanbase_raw_unit_feeds_fanbase_mode_too():
     a = analyze(io.BytesIO(_level_fallback_wb([("头部", 450000)])),
-                ReportConfig(tier_mode="fanbase"))
+                ReportConfig(tier_mode="fanbase", fanbase_unit="raw"))
     assert a["metrics"]["groups"]["MID PAID"]["n"] == 1   # 450K → MID
+
+
+def test_unknown_fanbase_unit_is_rejected():
+    with pytest.raises(ValueError, match="fanbase_unit"):
+        analyze(io.BytesIO(_level_fallback_wb([("", 500)])),
+                ReportConfig(fanbase_unit="guess"))

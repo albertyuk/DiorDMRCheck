@@ -16,9 +16,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from openpyxl import load_workbook
 
-from ..core.xlsx import (HEADER_SCAN_ROWS, MAX_CONSECUTIVE_BLANK_ROWS,
-                         cell_str, extract_link_target, find_header_row,
-                         to_date, to_datetime, to_int)
+from .. import config
+from ..core.xlsx import (HEADER_SCAN_ROWS, cell_str, extract_link_target,
+                         find_header_row, to_date, to_datetime, to_int)
 from .domain import HEX24, is_hex24
 
 
@@ -61,8 +61,52 @@ class PlogParse:
 PLOG_REQUIRED = {"name", "postlink"}
 
 
+def _populated_identity_rows(ws, start_row: int,
+                             columns: tuple[Optional[int], ...]) -> list[int]:
+    """Return only rows with a populated identity cell.
+
+    Iterating ``1..ws.max_row`` is attacker-controlled: a single styled cell
+    at Excel's final row creates a million-iteration scan while remaining far
+    below the archive's populated-cell limit. Normal-mode openpyxl has already
+    materialized real cells in ``_cells``, so enumerate those sparse entries.
+    """
+    wanted = {column for column in columns if column is not None}
+    rows = set()
+    for (row, column), cell in ws._cells.items():
+        if row < start_row or column not in wanted:
+            continue
+        if cell.value not in (None, "") or getattr(cell, "hyperlink", None):
+            rows.add(row)
+    return sorted(rows)
+
+
+def _probe_schema(path: str, required: set[str], label: str) -> None:
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if any(find_header_row(ws, required) for ws in wb.worksheets):
+            return
+        names = " and ".join(repr(name) for name in sorted(required))
+        raise ValueError(
+            f"{label} parse failed: no sheet has a header row containing "
+            f"{names} within the first {HEADER_SCAN_ROWS} rows."
+        )
+    finally:
+        wb.close()
+
+
+def probe_plog_schema(path: str) -> None:
+    _probe_schema(path, PLOG_REQUIRED, "PLOG")
+
+
 def parse_plog(path: str) -> PlogParse:
     wb = load_workbook(path, data_only=True)
+    try:
+        return _parse_plog_workbook(wb)
+    finally:
+        wb.close()
+
+
+def _parse_plog_workbook(wb) -> PlogParse:
     found = None
     for ws in wb.worksheets:
         hit = find_header_row(ws, PLOG_REQUIRED)
@@ -89,9 +133,8 @@ def parse_plog(path: str) -> PlogParse:
     current_campaign = ""
     seen_keys: set[tuple[str, str]] = set()
     bad_dates = 0
-    consecutive_blank = 0
-    for row in ws.iter_rows(min_row=header_row + 1):
-        r = row[0].row
+    for r in _populated_identity_rows(
+            ws, header_row + 1, (c_name, c_link)):
 
         def get(column):
             return ws.cell(row=r, column=column).value if column else None
@@ -105,13 +148,10 @@ def parse_plog(path: str) -> PlogParse:
             else:
                 link = cell_str(link_cell.value)
         if not name and not link:
-            # blank separator / spacer rows — but styled-empty phantom rows can
-            # inflate ws.max_row to the sheet limit, so stop after a long run.
-            consecutive_blank += 1
-            if consecutive_blank >= MAX_CONSECUTIVE_BLANK_ROWS:
-                break
+            # Workbook archive validation bounds the declared cell area, so it
+            # is safe to scan through spacer rows. Stopping after an arbitrary
+            # blank run silently discarded legitimate later campaign blocks.
             continue
-        consecutive_blank = 0
 
         raw_date = get(c_date)
         parsed_date = to_date(raw_date)
@@ -150,6 +190,11 @@ def parse_plog(path: str) -> PlogParse:
         if prow.campaign and prow.campaign not in result.campaigns:
             result.campaigns.append(prow.campaign)
         result.rows.append(prow)
+        if len(result.rows) > config.MAX_PLOG_ROWS:
+            raise ValueError(
+                f"PLOG contains more than {config.MAX_PLOG_ROWS:,} data rows; "
+                "split the workbook into smaller runs."
+            )
 
     if bad_dates > 5:
         result.warnings.append(
@@ -212,8 +257,19 @@ def _embedded_post_id(link_target: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def probe_dmr_schema(path: str) -> None:
+    _probe_schema(path, DMR_REQUIRED, "DMR")
+
+
 def parse_dmr(path: str) -> DmrParse:
     wb = load_workbook(path, data_only=True)
+    try:
+        return _parse_dmr_workbook(wb)
+    finally:
+        wb.close()
+
+
+def _parse_dmr_workbook(wb) -> DmrParse:
     found = None
     for ws in wb.worksheets:
         hit = find_header_row(ws, DMR_REQUIRED)
@@ -241,8 +297,10 @@ def parse_dmr(path: str) -> DmrParse:
     result.metadata_text = " | ".join(meta_parts)
     m = _WINDOW_RE.search(result.metadata_text)
     if m:
-        result.window_from = to_date(m.group(1))
-        result.window_to = to_date(m.group(2))
+        # DMR exports use day/month/year in their human-readable metadata.
+        # Passing the policy explicitly avoids interpreting 05/06 as May 6.
+        result.window_from = to_date(m.group(1), date_order="day-first")
+        result.window_to = to_date(m.group(2), date_order="day-first")
     if not (result.window_from and result.window_to):
         result.warnings.append(
             "Could not parse the DMR export date window from the metadata rows; "
@@ -258,9 +316,11 @@ def parse_dmr(path: str) -> DmrParse:
     c_eng, c_comm, c_link = col("engagement"), col("comments"), col("link")
 
     non_hex_pids = 0
-    consecutive_blank = 0
-    for row in ws.iter_rows(min_row=header_row + 1):
-        r = row[0].row
+    seen_post_ids: dict[str, tuple[int, tuple]] = {}
+    duplicate_post_ids = 0
+    missing_usernames = 0
+    for r in _populated_identity_rows(
+            ws, header_row + 1, (c_blogger, c_pid)):
 
         def get(column):
             return ws.cell(row=r, column=column).value if column else None
@@ -268,11 +328,7 @@ def parse_dmr(path: str) -> DmrParse:
         blogger = cell_str(get(c_blogger))
         pid_raw = cell_str(get(c_pid))
         if not blogger and not pid_raw:
-            consecutive_blank += 1
-            if consecutive_blank >= MAX_CONSECUTIVE_BLANK_ROWS:
-                break
             continue
-        consecutive_blank = 0
         link_cell = ws.cell(row=r, column=c_link) if c_link else None
         link_target = extract_link_target(link_cell)
         embedded = _embedded_post_id(link_target)
@@ -286,9 +342,12 @@ def parse_dmr(path: str) -> DmrParse:
                     f"DMR row {r}: PostID {pid_raw!r} is not a 24-char hex note "
                     "id — this row cannot join against resolved links."
                 )
+        username = cell_str(get(c_user)).strip().lower()
+        if c_user is not None and not username:
+            missing_usernames += 1
         drow = DmrRow(
             blogger=blogger,
-            username=cell_str(get(c_user)),
+            username=username,
             post_id=pid,
             post_id_raw=pid_raw,
             post_date=to_datetime(get(c_pdate)),
@@ -300,16 +359,40 @@ def parse_dmr(path: str) -> DmrParse:
             link_embedded_post_id=embedded,
             excel_row=r,
         )
+        if pid:
+            signature = (username, blogger, drow.post_date, link_target)
+            previous = seen_post_ids.get(pid)
+            if previous is None:
+                seen_post_ids[pid] = (r, signature)
+            else:
+                duplicate_post_ids += 1
+                first_row, first_signature = previous
+                qualifier = "conflicting " if signature != first_signature else ""
+                if duplicate_post_ids <= 5:
+                    result.warnings.append(
+                        f"DMR rows {first_row} and {r} contain {qualifier}duplicate "
+                        f"PostID {pid}; matching that note requires manual review."
+                    )
         if embedded and pid and embedded != pid:
             result.warnings.append(
                 f"DMR row {r}: Link hyperlink embeds PostID {embedded} but the "
                 f"PostID column says {pid} — using the PostID column for the join."
             )
         result.rows.append(drow)
+        if len(result.rows) > config.MAX_DMR_ROWS:
+            raise ValueError(
+                f"DMR contains more than {config.MAX_DMR_ROWS:,} data rows; "
+                "split the export into smaller runs."
+            )
 
     if non_hex_pids > 5:
         result.warnings.append(
             f"DMR: {non_hex_pids} rows in total had non-hex PostID values."
+        )
+    if duplicate_post_ids > 5:
+        result.warnings.append(
+            f"DMR: {duplicate_post_ids} duplicate PostID occurrences were found "
+            "in total; affected notes require manual review."
         )
     if c_user is None:
         result.warnings.append(
@@ -320,6 +403,12 @@ def parse_dmr(path: str) -> DmrParse:
         result.warnings.append(
             "DMR 'Username' column is entirely empty — blogger-presence checks "
             "(无博主 vs 无帖子) cannot be decided deterministically for this file."
+        )
+    elif missing_usernames:
+        result.warnings.append(
+            f"DMR Username is blank on {missing_usernames} data row(s). An "
+            "author absent from the partial Username index cannot be classified "
+            "as 无博主 deterministically and will require review."
         )
     if not result.rows:
         result.warnings.append("DMR sheet parsed but contained no data rows.")

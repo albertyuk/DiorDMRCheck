@@ -95,8 +95,22 @@ def test_to_date_accepts_two_digit_year_first():
 def test_to_date_existing_interpretations_unchanged():
     from datetime import date
     from app.core.xlsx import to_date
-    # ambiguous strings keep their historical reading (earlier formats win)
-    assert to_date("05/06/25") == date(2025, 5, 6)      # %m/%d/%y, not y/m/d
+    # Ambiguous strings keep their historical month-first reading, regardless
+    # of separator. The old implementation changed the date by twenty years
+    # when "/" was replaced with "-" or ".".
+    for value in ("05/06/25", "05-06-25", "05.06.25"):
+        assert to_date(value) == date(2025, 5, 6)
     assert to_date("12/31/2025") == date(2025, 12, 31)  # %m/%d/%Y
     assert to_date("2025-06-01") == date(2025, 6, 1)
     assert to_date("garbage") is None
+
+
+def test_to_date_supports_explicit_source_order():
+    from datetime import date
+    from app.core.xlsx import to_date
+
+    assert to_date("05/06/25", date_order="year-first") == date(2005, 6, 25)
+    assert to_date("05/06/2025", date_order="day-first") == date(2025, 6, 5)
+    assert to_date("05/06/2025", date_order="month-first") == date(2025, 5, 6)
+    with pytest.raises(ValueError, match="date_order"):
+        to_date("2025-01-01", date_order="guess")

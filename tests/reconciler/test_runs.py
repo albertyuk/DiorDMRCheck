@@ -176,11 +176,19 @@ def test_run_concurrency_must_be_positive(monkeypatch, value):
         config._positive_int_env("RUN_MAX_CONCURRENT", "2")
 
 
+@pytest.mark.parametrize("value", ["0", "33"])
+def test_tikhub_concurrency_is_bounded(monkeypatch, value):
+    monkeypatch.setenv("TIKHUB_CONCURRENCY", value)
+    with pytest.raises(ValueError, match="between 1 and 32"):
+        config._bounded_int_env(
+            "TIKHUB_CONCURRENCY", "8", minimum=1, maximum=32
+        )
+
+
 # ------------------------------------------------ editable export window
 
 def test_apply_window_override():
     from datetime import date
-    from app.reconciler.parsers import parse_dmr
     from app.reconciler.runs import apply_window_override
 
     class FakeDmr:
@@ -196,10 +204,75 @@ def test_apply_window_override():
                               "window_to": "2025-12-31"})
     assert d.window_from == date(2024, 1, 1)
     assert d.window_to == date(2025, 12, 31)
-    # cleared a bound → that side unset (disables window checks)
+    # Clearing either bound atomically disables the window.
     apply_window_override(d, {"window_from": "", "window_to": "2025-12-31"})
-    assert d.window_from is None and d.window_to == date(2025, 12, 31)
-    # garbage never crashes a run
-    apply_window_override(d, {"window_from": "not-a-date",
-                              "window_to": "2025-13-45"})
     assert d.window_from is None and d.window_to is None
+
+
+@pytest.mark.parametrize("start,end", [
+    ("not-a-date", "2025-12-31"),
+    ("2025-01-01", "2025-13-45"),
+    ("2025-12-31", "2025-01-01"),
+])
+def test_window_override_rejects_invalid_or_reversed_pairs(start, end):
+    from app.reconciler.runs import normalize_window_override
+
+    with pytest.raises(ValueError, match="Export window"):
+        normalize_window_override(start, end)
+
+
+def test_window_override_distinguishes_legacy_omission_from_clear():
+    from app.reconciler.runs import normalize_window_override
+
+    assert normalize_window_override(None, None) is None
+    assert normalize_window_override("", "2025-12-31") == ("", "")
+
+
+def test_run_result_size_limit_is_enforced(pool, monkeypatch):
+    from datetime import date
+    from app.core import db
+    from app.reconciler.domain import Verdict
+    from app.reconciler.parsers import DmrParse, PlogParse, PlogRow
+
+    plog = PlogParse("P", 1, {}, rows=[
+        PlogRow("C", "1", "n", date(2026, 1, 1),
+                "https://xhslink.com/o/x", 1, 1, 1, 1, 1, 2)
+    ], campaigns=["C"])
+    dmr = DmrParse("D", 1, {})
+    huge = Verdict("C", "1", "n", "2026-01-01",
+                   "https://xhslink.com/o/x", 2,
+                   notes=["x" * (2 * 1024 * 1024)])
+
+    db.run_create("large", plog_path="p", dmr_path="d")
+    db.run_update("large", options_json='{"use_llm": false}', status="queued")
+    monkeypatch.setattr(config, "MAX_RESULT_MB", 1)
+    monkeypatch.setattr(config, "MAX_RESULT_BYTES", 1024 * 1024)
+    monkeypatch.setattr(runs, "parse_plog", lambda _path: plog)
+    monkeypatch.setattr(runs, "parse_dmr", lambda _path: dmr)
+    monkeypatch.setattr(runs, "run_pipeline", lambda *_args, **_kwargs: [huge])
+
+    runs._run("large")
+    stored = db.run_get("large")
+    assert stored["status"] == "error"
+    assert "configured limits" in stored["message"]
+    assert not stored.get("result_json")
+
+
+@pytest.mark.parametrize("options_json", ["{bad json", "[]", "null"])
+def test_malformed_persisted_options_mark_run_error(
+        pool, options_json):
+    from app.core import db
+
+    db.run_create("bad-options", plog_path="p", dmr_path="d")
+    db.run_update(
+        "bad-options", options_json=options_json, status="queued"
+    )
+
+    runs._run("bad-options")
+
+    stored = db.run_get("bad-options")
+    assert stored["status"] == "error"
+    assert stored["phase"] == "error"
+    assert "failed validation" in stored["message"]
+    assert stored["error"]
+    assert stored["options_json"] == "{}"

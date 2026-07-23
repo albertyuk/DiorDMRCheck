@@ -10,6 +10,7 @@ from datetime import datetime
 import pytest
 from openpyxl import Workbook
 
+from app.core.uploads import UploadLimitError
 from app.reconciler.pipeline import (LINK_ERROR, NO_BLOGGER, NO_BLOGGER_NOT_IN_PERIMETER,
                          NO_POST_IN_PERIMETER, run_pipeline)
 from app.reconciler.parsers import parse_dmr, parse_plog
@@ -94,6 +95,13 @@ def test_parse_perimeter_contract(perim_index):
 def test_scan_name_multi_hit(perim_index):
     hits = perim_index.scan_name("esther")
     assert len(hits) >= 2  # esther / esther lee / Esther W collide
+
+
+def test_perimeter_name_scan_budget_degrades_explicitly(perim_index):
+    perim_index._name_scan_remaining = 0
+    assert perim_index.scan_name("new unique name") == []
+    assert perim_index.last_scan_skipped
+    assert any("safety budget" in warning for warning in perim_index.warnings)
 
 
 # --------------------------------------------------------- pipeline split
@@ -320,6 +328,76 @@ def test_missing_both_columns_keeps_all_and_warns():
     assert p.china_filter == ""
     assert len(p.rows) == 2
     assert any("cannot restrict" in w for w in p.warnings)
+
+
+def test_id_only_perimeter_member_is_retained():
+    rid = "5f0000000000000000000011"
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID"],
+        [["", "MAINLAND CHINA", rid]],
+    )
+    parsed = parse_perimeter(io.BytesIO(data))
+    assert len(parsed.rows) == 1
+    assert parsed.rows[0]["redbook_id"] == rid
+    assert PerimeterIndex(parsed.rows).lookup_author(rid) is not None
+
+
+def test_nonfinite_follower_count_does_not_crash_parser():
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID", "REDBOOK_FOLLOWERS"],
+        [["甲", "MAINLAND CHINA", "5f0000000000000000000011", "inf"]],
+    )
+    parsed = parse_perimeter(io.BytesIO(data))
+    assert parsed.rows[0]["redbook_followers"] is None
+
+
+def test_cached_perimeter_retains_provenance_and_warnings(tmp_path, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "provenance.sqlite3")
+    data = _mini_perimeter(
+        ["NAME", "REDBOOK_ID"],
+        [["甲", "5f0000000000000000000011"]],
+    )
+    digest = file_hash(data)
+    parsed = parse_perimeter(io.BytesIO(data), filename="source.xlsx",
+                             content_hash=digest)
+    store_parsed(parsed)
+    cached = load_cached(digest)
+    assert cached is not None
+    assert cached.file_hash == digest
+    assert cached.rows_scanned == 1
+    assert cached.china_filter == ""
+    assert cached.warnings == parsed.warnings
+
+
+def test_perimeter_logical_row_limit_is_enforced(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MAX_PERIMETER_ROWS", 1)
+    data = _mini_perimeter(
+        ["NAME", "COUNTRY", "REDBOOK_ID"],
+        [["甲", "MAINLAND CHINA", ""], ["乙", "MAINLAND CHINA", ""]],
+    )
+    with pytest.raises(ValueError, match="more than 1 data rows"):
+        parse_perimeter(io.BytesIO(data))
+
+
+def test_sparse_perimeter_rectangle_is_rejected_before_iteration(monkeypatch):
+    from app import config
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "List Micro"
+    sheet["A1"] = "NAME"
+    sheet["IV1"] = "REDBOOK_ID"
+    # Three populated cells, but read-only iter_rows would synthesize the
+    # entire 150,000 x 256 rectangle without the scan-area guard.
+    sheet["IV150000"] = "5f0000000000000000000011"
+    payload = io.BytesIO()
+    workbook.save(payload)
+    monkeypatch.setattr(config, "MAX_PERIMETER_SCAN_CELLS", 5_000_000)
+
+    with pytest.raises(UploadLimitError, match="more than 5,000,000 cells"):
+        parse_perimeter(io.BytesIO(payload.getvalue()))
 
 
 def test_all_rows_filtered_warns_loudly():

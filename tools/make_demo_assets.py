@@ -6,6 +6,7 @@ groups, realistic XHS price/impression ranges, one viral-post concentration
 in KOC SOFT so the on-slide caveat machinery is visible in the demo).
 """
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,9 +15,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openpyxl import Workbook
+from PIL import Image
 
-from app.deck import assert_chart_cache, build_deck
-from app.effreport import ReportConfig, analyze
+from app.efficiency.analysis import ReportConfig, analyze
+from app.efficiency.deck import assert_chart_cache, build_deck
 
 HEADERS = ["NO", "MCN", "CAMPAIGN", "TYPE", "LEVEL", "NAME", "FAN BASE（K)",
            "POST DATE", "MICRO MACRO", "POST LINK", "IMPRESSION", "LIKE",
@@ -63,37 +65,75 @@ def build_demo_bytes() -> bytes:
             comm = eng - like - coll
             ws.append([no, "", "DEMO WAVE", type_, level, f"demo{no:02d}",
                        fan + no, datetime(2026, 6, 1 + (no - 1) % 28), "",
-                       f"http://xhslink.com/demo{no:03d}", impr, like, coll,
+                       f"https://xhslink.com/demo{no:03d}", impr, like, coll,
                        comm, eng, price, None, None])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-SCRATCH = Path(tempfile.mkdtemp(prefix="effdemo-"))
-STATIC = Path(__file__).resolve().parents[1] / "app" / "static"
-data = build_demo_bytes()
+def _required_tool(*names: str) -> str:
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    raise RuntimeError(
+        f"Required executable not found on PATH: {' or '.join(names)}"
+    )
 
-for lang in ("en", "zh"):
-    a = analyze(io.BytesIO(data), ReportConfig(language=lang))
-    assert not a["blocked"], a["findings"]
-    print(lang, "findings:", [(f["code"], f["message"][:60]) for f in a["findings"]])
-    pptx = build_deck(a)
-    assert_chart_cache(pptx, a)
-    p = SCRATCH / f"demo_{lang}.pptx"
-    p.write_bytes(pptx)
-    subprocess.run(["python", "/root/.claude/skills/pptx/scripts/office/soffice.py",
-                    "--headless", "--convert-to", "pdf", "--outdir", str(SCRATCH),
-                    str(p)], check=True, capture_output=True)
-    subprocess.run(["pdftoppm", "-jpeg", "-r", "150",
-                    str(SCRATCH / f"demo_{lang}.pdf"),
-                    str(SCRATCH / f"demo_{lang}")], check=True)
 
-from PIL import Image
-for lang in ("en", "zh"):
-    src = SCRATCH / f"demo_{lang}-1.jpg"
-    img = Image.open(src)
-    img.thumbnail((1200, 1200), Image.LANCZOS)
-    out = STATIC / f"eff_demo_{lang}.jpg"
-    img.save(out, "JPEG", quality=87, optimize=True)
-    print(out, img.size, f"{out.stat().st_size // 1024}KB")
+def main() -> None:
+    office = _required_tool("libreoffice", "soffice")
+    pdftoppm = _required_tool("pdftoppm")
+    static = Path(__file__).resolve().parents[1] / "app" / "static"
+    data = build_demo_bytes()
+
+    with tempfile.TemporaryDirectory(prefix="effdemo-") as tmp:
+        scratch = Path(tmp)
+        for lang in ("en", "zh"):
+            analysis = analyze(
+                io.BytesIO(data), ReportConfig(language=lang)
+            )
+            assert not analysis["blocked"], analysis["findings"]
+            print(
+                lang,
+                "findings:",
+                [(f["code"], f["message"][:60])
+                 for f in analysis["findings"]],
+            )
+            pptx = build_deck(analysis)
+            assert_chart_cache(pptx, analysis)
+            presentation = scratch / f"demo_{lang}.pptx"
+            presentation.write_bytes(pptx)
+            subprocess.run(
+                [
+                    office, "--headless", "--convert-to", "pdf",
+                    "--outdir", str(scratch), str(presentation),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    pdftoppm, "-jpeg", "-r", "150",
+                    str(scratch / f"demo_{lang}.pdf"),
+                    str(scratch / f"demo_{lang}"),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        for lang in ("en", "zh"):
+            src = scratch / f"demo_{lang}-1.jpg"
+            out = static / f"eff_demo_{lang}.jpg"
+            with Image.open(src) as image:
+                image.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+                image.save(out, "JPEG", quality=87, optimize=True)
+                size = image.size
+            print(out, size, f"{out.stat().st_size // 1024}KB")
+
+
+if __name__ == "__main__":
+    main()

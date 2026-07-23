@@ -35,6 +35,33 @@ S_TEXT = {
     NO_BLOGGER_NOT_IN_PERIMETER: "无博主（不在Perimeter内）",
 }
 NAME_MISLABEL = "有 但是DMR博主名字标注错误"
+# Explicit MATCH override. An empty selection means "use pipeline verdict",
+# so a non-empty sentinel is required to let a reviewer force a blank column S.
+OVERRIDE_MATCH_BLANK = "已匹配（清空S）"
+
+OVERRIDE_STATUS_MAP = {
+    OVERRIDE_MATCH_BLANK: (MATCH, False),
+    NAME_MISLABEL: (MATCH, True),
+    S_TEXT[NO_BLOGGER]: (NO_BLOGGER, False),
+    S_TEXT[NO_POST]: (NO_POST, False),
+    S_TEXT[LINK_ERROR]: (LINK_ERROR, False),
+    S_TEXT[REVIEW]: (REVIEW, False),
+    S_TEXT[NO_POST_IN_PERIMETER]: (NO_POST_IN_PERIMETER, False),
+    S_TEXT[NO_BLOGGER_NOT_IN_PERIMETER]: (
+        NO_BLOGGER_NOT_IN_PERIMETER, False
+    ),
+}
+OVERRIDE_CHOICES = (
+    "",
+    OVERRIDE_MATCH_BLANK,
+    S_TEXT[NO_BLOGGER],
+    S_TEXT[NO_POST],
+    S_TEXT[LINK_ERROR],
+    NAME_MISLABEL,
+    S_TEXT[REVIEW],
+    S_TEXT[NO_POST_IN_PERIMETER],
+    S_TEXT[NO_BLOGGER_NOT_IN_PERIMETER],
+)
 
 ENGAGEMENT_CAVEAT = (
     "DMR engagement is a first-crawl snapshot (often within hours of posting) "
@@ -135,3 +162,25 @@ class Verdict:
         d = asdict(self)
         d["column_s"] = self.column_s()
         return d
+
+
+def effective_verdict_dict(verdict: dict, override: Optional[dict]) -> dict:
+    """Return the reviewer-effective view without erasing pipeline evidence."""
+    out = dict(verdict)
+    out["pipeline_status"] = verdict.get("status", REVIEW)
+    out["pipeline_column_s"] = verdict.get("column_s", "")
+    out["override"] = override
+    if not override:
+        return out
+    override_text = override.get("status", "")
+    mapped = OVERRIDE_STATUS_MAP.get(override_text)
+    if mapped is None:
+        # Historical releases accepted arbitrary text. Preserve it as audit
+        # evidence, but never let it corrupt current counts/rendering.
+        out["override_invalid"] = True
+        return out
+    status, name_mislabel = mapped
+    out["status"] = status
+    out["name_mislabel"] = name_mislabel
+    out["column_s"] = "" if override_text == OVERRIDE_MATCH_BLANK else override_text
+    return out

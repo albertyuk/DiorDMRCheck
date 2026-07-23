@@ -1,0 +1,13 @@
+{
+  "name": "dior-dmr-document-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Reproducible dependencies for generated repository documents.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "docx": "9.7.1"
+  },
+  "scripts": {
+    "make:rubric": "node make_rubric.js ../docs/DMR_Reconciler_File_Rubric.docx"
+  }
+}

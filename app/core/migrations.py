@@ -6,7 +6,11 @@ additive ALTERs that ignore already-exists errors).
 """
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
+
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS link_cache (
@@ -93,28 +97,122 @@ CREATE TABLE IF NOT EXISTS settings (
 
 def apply(conn: sqlite3.Connection) -> None:
     """Create/upgrade the schema on an open connection. Idempotent."""
+    # Incremental auto-vacuum must be selected before the first table is
+    # created. Existing databases retain their current setting and can still
+    # be compacted explicitly by core.db.database_maintenance.
+    has_tables = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+    ).fetchone()
+    if not has_tables:
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.executescript(SCHEMA)
-    # additive migrations for databases created by older versions
-    for stmt in (
-        "ALTER TABLE link_cache ADD COLUMN author_failed_at REAL",
-        "ALTER TABLE overrides ADD COLUMN updated_by TEXT",
-        "ALTER TABLE runs ADD COLUMN perimeter_hash TEXT",
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _add_column(conn, "link_cache", "author_failed_at", "REAL")
+        _add_column(conn, "overrides", "updated_by", "TEXT")
+        _add_column(conn, "runs", "perimeter_hash", "TEXT")
         # Existing rows cannot distinguish an explicit perimeter upload from
-        # an inherited default. Preserve that as NULL/unknown so first-start
-        # handling can retain the previous release's promotion behavior;
-        # newly created runs always store an explicit 0 or 1.
-        "ALTER TABLE runs ADD COLUMN perimeter_uploaded INTEGER",
-        "ALTER TABLE runs ADD COLUMN perimeter_name TEXT",
-        "ALTER TABLE perimeter_cache ADD COLUMN warnings_json TEXT",
-    ):
-        try:
-            conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    # pre-release overrides table was keyed (run_id, campaign, no);
-    # rebuild it keyed by excel_row (no deployments existed yet)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(overrides)")}
-    if cols and "excel_row" not in cols:
-        conn.execute("DROP TABLE overrides")
-        conn.executescript(SCHEMA)
-    conn.commit()
+        # an inherited default, so preserve NULL/unknown for legacy rows.
+        _add_column(conn, "runs", "perimeter_uploaded", "INTEGER")
+        _add_column(conn, "runs", "perimeter_name", "TEXT")
+        _add_column(conn, "perimeter_cache", "warnings_json", "TEXT")
+        _migrate_legacy_overrides(conn)
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str,
+                declaration: str) -> None:
+    """Add a known schema column without swallowing unrelated DB errors."""
+    if column not in _columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
+def _result_excel_rows(conn: sqlite3.Connection, run_id: str,
+                       campaign: str, no: str) -> list[int]:
+    row = conn.execute(
+        "SELECT result_json FROM runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if not row or not row[0]:
+        return []
+    try:
+        result = json.loads(row[0])
+    except (TypeError, ValueError):
+        return []
+    matches: list[int] = []
+    for verdict in result.get("verdicts", []):
+        if (str(verdict.get("campaign", "")) == campaign
+                and str(verdict.get("no", "")) == no):
+            try:
+                matches.append(int(verdict["excel_row"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return matches
+
+
+def _migrate_legacy_overrides(conn: sqlite3.Connection) -> None:
+    """Preserve pre-excel-row overrides instead of dropping them.
+
+    Where the finished run JSON provides an unambiguous row, the override is
+    restored onto that row. Otherwise it receives a unique negative row key:
+    the evidence remains queryable/exportable for manual recovery rather than
+    being silently destroyed by startup.
+    """
+    cols = _columns(conn, "overrides")
+    if not cols or "excel_row" in cols:
+        return
+
+    legacy_rows = [dict(zip(
+        [column[0] for column in cursor.description], row
+    )) for cursor in [conn.execute("SELECT * FROM overrides")]
+        for row in cursor.fetchall()]
+    conn.execute("ALTER TABLE overrides RENAME TO overrides_legacy_v0")
+    conn.execute("""
+        CREATE TABLE overrides (
+            run_id TEXT NOT NULL,
+            excel_row INTEGER NOT NULL,
+            campaign TEXT NOT NULL,
+            no TEXT NOT NULL,
+            status TEXT NOT NULL,
+            note TEXT,
+            updated_by TEXT,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY (run_id, excel_row)
+        )
+    """)
+
+    next_fallback: dict[str, int] = {}
+    unresolved = 0
+    for old in legacy_rows:
+        run_id = str(old.get("run_id") or "")
+        campaign = str(old.get("campaign") or "")
+        no = str(old.get("no") or "")
+        candidates = _result_excel_rows(conn, run_id, campaign, no)
+        if len(candidates) == 1:
+            excel_row = candidates[0]
+        else:
+            excel_row = next_fallback.get(run_id, -1)
+            next_fallback[run_id] = excel_row - 1
+            unresolved += 1
+        conn.execute(
+            "INSERT INTO overrides (run_id, excel_row, campaign, no, status, "
+            "note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, excel_row, campaign, no, str(old.get("status") or ""),
+             old.get("note"), old.get("updated_by"),
+             float(old.get("updated_at") or time.time())),
+        )
+    conn.execute("DROP TABLE overrides_legacy_v0")
+    if unresolved:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("migration:legacy_overrides_unmapped", str(unresolved)),
+        )
