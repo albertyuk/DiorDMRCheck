@@ -4,14 +4,21 @@ orchestrate and render."""
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from pathlib import Path
 from typing import Optional
+from zipfile import BadZipFile
 
+from defusedxml.ElementTree import ParseError
+from defusedxml.common import DefusedXmlException
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
+from lxml.etree import XMLSyntaxError
+from openpyxl.utils.exceptions import InvalidFileException
+from starlette.concurrency import run_in_threadpool
 
 from .. import config
 from ..core import db
@@ -22,15 +29,22 @@ from ..core.uploads import (UploadLimitError, read_limited,
                             unregister_active_upload, validate_xlsx_archive)
 from ..remap import mapper
 from ..remap.routes import FLOW_HANDLERS
-from ..remap.service import PENDING_MAPS, attempt_remap, remap_note
+from ..remap.service import (PENDING_MAPS, RemapOutcome, finish_remap,
+                             inspect_remap, remap_note)
 from ..web import current_user, templates, td as _td, tr as _tr
 from . import perimeter as perimeter_mod, runs
-from .domain import ENGAGEMENT_CAVEAT
+from .domain import (ENGAGEMENT_CAVEAT, OVERRIDE_CHOICES,
+                     effective_verdict_dict)
 from .export import build_audit_json, load_verdicts, write_annotated_xlsx
-from .parsers import parse_dmr, parse_plog
-from .presentation import OVERRIDE_CHOICES, STATUS_BADGES
+from .parsers import (parse_dmr, parse_plog, probe_dmr_schema,
+                      probe_plog_schema)
+from .pipeline import status_counts, summary_buckets
+from .presentation import STATUS_BADGES
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+EXPECTED_WORKBOOK_ERRORS = (BadZipFile, InvalidFileException, ParseError,
+                            DefusedXmlException, XMLSyntaxError)
 
 _start_lock = threading.Lock()
 _export_stream_slots = threading.BoundedSemaphore(
@@ -75,7 +89,10 @@ async def index(request: Request):
 
 
 @router.post("/perimeter/remove")
-async def perimeter_remove():
+async def perimeter_remove(request: Request):
+    user = current_user(request)
+    if config.APP_PASSWORD and (not user or not user.get("is_admin")):
+        return Response("administrator required", status_code=403)
     db.setting_delete("current_perimeter")
     return RedirectResponse("/", status_code=303)
 
@@ -84,6 +101,10 @@ async def perimeter_remove():
 
 def _parser_of(kind: str):
     return parse_plog if kind == "plog" else parse_dmr
+
+
+def _probe_of(kind: str):
+    return probe_plog_schema if kind == "plog" else probe_dmr_schema
 
 
 def _remap_file(source: Path, kind: str, mapping: dict) -> Path:
@@ -108,6 +129,9 @@ async def _validate_workbook(request: Request, source) -> None:
         max_uncompressed_bytes=config.MAX_XLSX_UNCOMPRESSED_BYTES,
         max_entries=config.MAX_XLSX_ENTRIES,
         max_cells=config.MAX_XLSX_CELLS,
+        max_sheets=config.MAX_XLSX_SHEETS,
+        max_row_index=config.MAX_XLSX_ROW_INDEX,
+        max_column_index=config.MAX_XLSX_COLUMN_INDEX,
     )
 
 
@@ -115,24 +139,34 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
                          plog_path: Path, dmr_path: Path,
                          plog_name: str, dmr_name: str,
                          perim_data: Optional[bytes], perim_name: str,
-                         remap: dict):
+                         remap: dict, parsed: Optional[dict] = None):
     """Everything after both workbooks parse: perimeter ingest, preview,
     run row, preview page. `remap` records any header mappings applied."""
+    parsed = parsed or {}
     try:
-        p = await run_upload_task(request, parse_plog, str(plog_path))
-        d = await run_upload_task(request, parse_dmr, str(dmr_path))
+        p = (parsed.get("plog") or
+             await run_upload_task(request, parse_plog, str(plog_path)))
+        d = (parsed.get("dmr") or
+             await run_upload_task(request, parse_dmr, str(dmr_path)))
     except ValueError as e:
         remove_tree(run_dir)
         return templates.TemplateResponse(
             request, "shared/error.html", {"message": _td(request)(str(e))},
             status_code=422)
-    except Exception as e:
+    except EXPECTED_WORKBOOK_ERRORS:
+        logger.info("invalid workbook structure for run %s", run_id, exc_info=True)
         remove_tree(run_dir)
         return templates.TemplateResponse(
             request, "shared/error.html",
-            {"message": _tr(request)(
-                "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
+            {"message": _tr(request)("The uploaded file is not a valid .xlsx workbook.")},
             status_code=422)
+    except Exception:
+        logger.exception("unexpected workbook parse failure for run %s", run_id)
+        remove_tree(run_dir)
+        return templates.TemplateResponse(
+            request, "shared/error.html",
+            {"message": _tr(request)("An internal workbook parsing error occurred.")},
+            status_code=500)
     except BaseException:
         remove_tree(run_dir)
         raise
@@ -147,18 +181,40 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
             perim_meta, perim_warnings = await run_upload_task(
                 request, perimeter_mod.parse_and_cache,
                 perim_data, perim_name)
+        except db.StorageLimitError:
+            logger.info("perimeter cache limit rejected run %s", run_id,
+                        exc_info=True)
+            remove_tree(run_dir)
+            return templates.TemplateResponse(
+                request, "shared/error.html",
+                {"message": _tr(request)(
+                    "The perimeter is too large for the configured storage limit.")},
+                status_code=413)
+        except UploadLimitError as e:
+            remove_tree(run_dir)
+            return templates.TemplateResponse(
+                request, "shared/error.html", {"message": _tr(request)(str(e))},
+                status_code=413)
         except ValueError as e:
             remove_tree(run_dir)
             return templates.TemplateResponse(
                 request, "shared/error.html", {"message": _td(request)(str(e))},
                 status_code=422)
-        except Exception as e:
+        except EXPECTED_WORKBOOK_ERRORS:
+            logger.info("invalid perimeter workbook for run %s", run_id,
+                        exc_info=True)
             remove_tree(run_dir)
             return templates.TemplateResponse(
                 request, "shared/error.html",
-                {"message": _tr(request)(
-                    "Could not read the perimeter file: {e}", e=e)},
+                {"message": _tr(request)("The perimeter file is not a valid .xlsx workbook.")},
                 status_code=422)
+        except Exception:
+            logger.exception("unexpected perimeter parse failure for run %s", run_id)
+            remove_tree(run_dir)
+            return templates.TemplateResponse(
+                request, "shared/error.html",
+                {"message": _tr(request)("An internal perimeter parsing error occurred.")},
+                status_code=500)
         except BaseException:
             remove_tree(run_dir)
             raise
@@ -214,6 +270,15 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
                       perimeter_uploaded=perimeter_uploaded,
                       perimeter_name=(perim_meta.get("filename")
                                       if perim_meta else None))
+    except db.StorageLimitError:
+        logger.info("run preview exceeded storage limit", exc_info=True)
+        remove_tree(run_dir)
+        return templates.TemplateResponse(
+            request, "shared/error.html",
+            {"message": _tr(request)(
+                "The upload exceeds the configured storage limit.")},
+            status_code=413,
+        )
     except BaseException:
         remove_tree(run_dir)
         raise
@@ -222,7 +287,13 @@ async def _finish_upload(request: Request, run_id: str, run_dir: Path,
 
 @router.post("/upload", response_class=HTMLResponse)
 async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
-                 perimeter: Optional[UploadFile] = File(None)):
+                 perimeter: Optional[UploadFile] = File(None),
+                 allow_header_ai: str = Form("0")):
+    if (perimeter is not None and perimeter.filename and config.APP_PASSWORD):
+        user = current_user(request)
+        if not user or not user.get("is_admin"):
+            return Response("administrator required to replace perimeter",
+                            status_code=403)
     config.ensure_dirs()
     while True:
         run_id = uuid.uuid4().hex[:12]
@@ -240,7 +311,8 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
         break
     try:
         return await _process_upload(
-            request, plog, dmr, perimeter, run_id, run_dir
+            request, plog, dmr, perimeter, run_id, run_dir,
+            allow_header_ai == "1",
         )
     finally:
         unregister_active_upload(run_dir)
@@ -248,7 +320,7 @@ async def upload(request: Request, plog: UploadFile, dmr: UploadFile,
 
 async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
                           perimeter: Optional[UploadFile], run_id: str,
-                          run_dir: Path):
+                          run_dir: Path, allow_header_ai: bool = False):
     plog_path = run_dir / ("plog_" + Path(plog.filename or "plog.xlsx").name)
     dmr_path = run_dir / ("dmr_" + Path(dmr.filename or "dmr.xlsx").name)
     perim_data = None
@@ -267,12 +339,13 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
         return templates.TemplateResponse(
             request, "shared/error.html", {"message": _tr(request)(str(e))},
             status_code=413)
-    except Exception as e:
+    except Exception:
+        logger.info("uploaded workbook archive validation failed", exc_info=True)
         remove_tree(run_dir)
         return templates.TemplateResponse(
             request, "shared/error.html",
             {"message": _tr(request)(
-                "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
+                "Could not read the uploaded file(s) as a valid .xlsx workbook.")},
             status_code=422)
     except BaseException:
         remove_tree(run_dir)
@@ -280,6 +353,7 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
 
     paths = {"plog": plog_path, "dmr": dmr_path}
     remap: dict = {}
+    parsed_results: dict = {}
     audits: dict = {}
     fail_msgs: dict = {}
     for kind in ("plog", "dmr"):
@@ -287,7 +361,7 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
             # openpyxl parsing is CPU-bound; keep it off the event loop so
             # /healthz and progress polls stay responsive during big uploads.
             await run_upload_task(
-                request, _parser_of(kind), str(paths[kind])
+                request, _probe_of(kind), str(paths[kind])
             )
         except ValueError as e:
             # unfamiliar headers — cached approved mapping, LLM proposal for
@@ -297,14 +371,46 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
                     request, paths[kind].read_bytes
                 )
                 outcome = await run_upload_task(
-                    request, attempt_remap, kind, source_data
+                    request, inspect_remap, kind, source_data
                 )
+                if outcome.status == "ready":
+                    if not allow_header_ai:
+                        outcome = RemapOutcome(
+                            "fail",
+                            error=(
+                                "Headers are unfamiliar. No workbook sample was "
+                                "sent to Claude because AI header mapping was not "
+                                "explicitly allowed on the upload form."
+                            ),
+                        )
+                    else:
+                        try:
+                            proposal = await run_in_threadpool(
+                                mapper.propose, outcome.sample or {}, kind
+                            )
+                            outcome = await run_upload_task(
+                                request, finish_remap, kind, source_data, proposal
+                            )
+                        except mapper.SchemaMapError as remap_error:
+                            outcome = RemapOutcome("fail", error=str(remap_error))
                 if outcome.status == "cached":
                     mapping = outcome.mapping
-                    paths[kind] = await run_upload_task(
-                        request, _remap_file, paths[kind], kind, mapping
-                    )
-                    remap[kind] = remap_note(mapping, kind, auto=True)
+                    try:
+                        paths[kind] = await run_upload_task(
+                            request, _remap_file, paths[kind], kind, mapping
+                        )
+                        # A cached mapping is trusted only while its rewritten
+                        # workbook still satisfies the deterministic parser.
+                        # Layout drift can preserve the signature while making
+                        # the old semantic choices invalid.
+                        parsed_results[kind] = await run_upload_task(
+                            request, _parser_of(kind), str(paths[kind])
+                        )
+                        remap[kind] = remap_note(mapping, kind, auto=True)
+                    except (ValueError, mapper.SchemaMapError) as mapping_error:
+                        if mapping and mapping.get("sig"):
+                            mapper.cache_delete(kind, mapping["sig"])
+                        fail_msgs[kind] = (str(e), str(mapping_error))
                 elif outcome.status == "audit":
                     audits[kind] = {
                         "proposal": outcome.proposal.model_dump(),
@@ -313,26 +419,34 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
                     }
                 else:
                     fail_msgs[kind] = (str(e), outcome.error)
-            except Exception as mapping_error:
+            except Exception:
+                logger.exception("unexpected header remapping failure for %s", kind)
                 remove_tree(run_dir)
-                message = _td(request)(str(e))
-                message += f" ({_tr(request)('Header mapping also failed: {e}', e=mapping_error)})"
                 return templates.TemplateResponse(
                     request,
                     "shared/error.html",
-                    {"message": message},
-                    status_code=422,
+                    {"message": _tr(request)(
+                        "An internal header-mapping error occurred.")},
+                    status_code=500,
                 )
             except BaseException:
                 remove_tree(run_dir)
                 raise
-        except Exception as e:  # corrupt zip, wrong format, … — never a 500
+        except EXPECTED_WORKBOOK_ERRORS:
+            logger.info("invalid workbook structure during upload for %s", kind,
+                        exc_info=True)
             remove_tree(run_dir)
             return templates.TemplateResponse(
                 request, "shared/error.html",
-                {"message": _tr(request)(
-                    "Could not read the uploaded file(s) as .xlsx: {e}", e=e)},
+                {"message": _tr(request)("The uploaded file is not a valid .xlsx workbook.")},
                 status_code=422)
+        except Exception:
+            logger.exception("unexpected parser failure during upload for %s", kind)
+            remove_tree(run_dir)
+            return templates.TemplateResponse(
+                request, "shared/error.html",
+                {"message": _tr(request)("An internal workbook parsing error occurred.")},
+                status_code=500)
         except BaseException:
             remove_tree(run_dir)
             raise
@@ -370,7 +484,7 @@ async def _process_upload(request: Request, plog: UploadFile, dmr: UploadFile,
     return await _finish_upload(
         request, run_id, run_dir, paths["plog"], paths["dmr"],
         plog.filename or "plog.xlsx", dmr.filename or "dmr.xlsx",
-        perim_data, perim_name, remap)
+        perim_data, perim_name, remap, parsed=parsed_results)
 
 
 async def _apply_remap_run(request: Request, token: str, entry: dict,
@@ -379,20 +493,25 @@ async def _apply_remap_run(request: Request, token: str, entry: dict,
     write remapped copies next to the originals, then continue."""
     remap = dict(entry.get("remap") or {})
     paths = {k: Path(v) for k, v in entry["paths"].items()}
+    parsed_results: dict = {}
     for kind, m in approved.items():
         src = paths[kind]
         paths[kind] = await run_upload_task(
             request, _remap_file, src, kind, m
         )
+        parsed_results[kind] = await run_upload_task(
+            request, _parser_of(kind), str(paths[kind])
+        )
         mapper.cache_put(kind, m["sig"], m["sheet"], m["header_row"],
                          m["columns"], username)
         remap[kind] = remap_note(
-            {**m, "approved_by": username}, kind, auto=False)
+            {**m, "approved_by": username}, kind, auto=False, shared=True)
     return await _finish_upload(
         request, entry["run_id"], Path(entry["run_dir"]),
         paths["plog"], paths["dmr"],
         entry["names"]["plog"], entry["names"]["dmr"],
-        entry.get("perim_data"), entry.get("perim_name", ""), remap)
+        entry.get("perim_data"), entry.get("perim_name", ""), remap,
+        parsed=parsed_results)
 
 
 FLOW_HANDLERS["run"] = _apply_remap_run
@@ -401,11 +520,25 @@ FLOW_HANDLERS["run"] = _apply_remap_run
 # -------------------------------------------------------------------- runs
 
 @router.post("/runs/{run_id}/start")
-async def start(run_id: str, retry_failed_links: str = Form("0"),
+async def start(request: Request, run_id: str,
+                retry_failed_links: str = Form("0"),
                 use_llm: str = Form("0"),
-                window_from: str = Form(""), window_to: str = Form("")):
+                window_from: Optional[str] = Form(None),
+                window_to: Optional[str] = Form(None)):
     """Checkbox values arrive as "1" (hidden-input fallback supplies "0" when
     unchecked — a bool Form default can never receive False from a form)."""
+    try:
+        normalized_window = runs.normalize_window_override(
+            window_from, window_to
+        )
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "shared/error.html",
+            {"message": _tr(request)(str(exc))},
+            status_code=422,
+        )
+
     lease_path = config.UPLOAD_DIR / run_id
     if not register_active_upload(lease_path):
         return Response(status_code=404)
@@ -416,14 +549,36 @@ async def start(run_id: str, retry_failed_links: str = Form("0"),
                 return Response(status_code=404)
             if run["status"] in ("pending", "error"):
                 initial_start = run["status"] == "pending"
-                db.run_update(run_id, options_json=json.dumps({
+                if (initial_start and run.get("perimeter_uploaded") != 0
+                        and run.get("perimeter_hash") and config.APP_PASSWORD):
+                    user = current_user(request)
+                    if not user or not user.get("is_admin"):
+                        return Response(
+                            "administrator required to promote perimeter",
+                            status_code=403,
+                        )
+                if (run.get("perimeter_hash")
+                        and db.perimeter_cache_get(run["perimeter_hash"]) is None):
+                    return Response(
+                        "the perimeter snapshot for this run is unavailable; "
+                        "create a new run with a current perimeter",
+                        status_code=409,
+                    )
+                options = {
                     "retry_failed_links": retry_failed_links == "1",
                     "use_llm": use_llm == "1",
-                    # user-editable DMR export window (confirm screen);
-                    # runs.apply_window_override validates and applies it
-                    "window_from": window_from.strip()[:10],
-                    "window_to": window_to.strip()[:10],
-                }), status="queued", error=None)
+                }
+                if normalized_window is not None:
+                    options.update({
+                        "window_from": normalized_window[0],
+                        "window_to": normalized_window[1],
+                    })
+                db.run_update(
+                    run_id,
+                    options_json=json.dumps(options),
+                    status="queued",
+                    error=None,
+                )
                 if (initial_start and run.get("perimeter_uploaded") != 0
                         and run.get("perimeter_hash")):
                     # Explicit uploads promote once. NULL denotes a migrated
@@ -480,21 +635,26 @@ async def results_fragment(request: Request, run_id: str):
     if not run:
         return Response("run not found", status_code=404)
     result = json.loads(run.get("result_json") or "{}")
-    verdicts = result.get("verdicts", [])
+    pipeline_verdicts = result.get("verdicts", [])
     overrides = db.overrides_for_run(run_id)
-    for v in verdicts:
-        v["override"] = overrides.get(v["excel_row"])
+    verdicts = [
+        effective_verdict_dict(v, overrides.get(v["excel_row"]))
+        for v in pipeline_verdicts
+    ]
+    counts = status_counts(verdicts)
+    buckets = summary_buckets(verdicts)
     summary = json.loads(run.get("summary_json") or "{}")
     return templates.TemplateResponse(request, "reconciler/_results.html", {
         "run": run, "run_id": run_id, "verdicts": verdicts,
-        "counts": result.get("counts", {}),
-        "buckets": result.get("buckets"),
+        "counts": counts,
+        "buckets": buckets,
         "perimeter_meta": result.get("perimeter_meta"),
         "perimeter_warning": result.get("perimeter_warning"),
         "reverse_rows": result.get("reverse_audit", []),
         "plog_meta": result.get("plog_meta", {}),
         "dmr_meta": result.get("dmr_meta", {}),
         "summary": summary,
+        "has_overrides": bool(overrides),
         "engagement_caveat": ENGAGEMENT_CAVEAT,
         "badges": STATUS_BADGES, "override_choices": OVERRIDE_CHOICES,
     })
@@ -508,13 +668,28 @@ async def results(request: Request, run_id: str):
 @router.post("/runs/{run_id}/override", response_class=HTMLResponse)
 async def set_override(request: Request, run_id: str,
                        excel_row: int = Form(...),
-                       campaign: str = Form(""), no: str = Form(""),
                        status: str = Form(""), note: str = Form("")):
-    if not db.run_get(run_id):
+    run = db.run_get(run_id)
+    if not run:
         return Response("run not found", status_code=404)
+    result = json.loads(run.get("result_json") or "{}")
+    verdict = next(
+        (v for v in result.get("verdicts", [])
+         if int(v.get("excel_row", -1)) == excel_row),
+        None,
+    )
+    if verdict is None:
+        return Response("verdict row not found", status_code=404)
+    if status not in OVERRIDE_CHOICES:
+        return Response("invalid override status", status_code=422)
+    if len(note) > 2000:
+        return Response("override note is too long", status_code=422)
     user = current_user(request)
     if status:
-        db.override_set(run_id, excel_row, campaign, no, status, note,
+        # Campaign and NO are evidence from the immutable stored verdict; never
+        # trust hidden fields supplied by the browser.
+        db.override_set(run_id, excel_row, verdict.get("campaign", ""),
+                        verdict.get("no", ""), status, note,
                         updated_by=user["username"] if user else "")
     else:
         db.override_clear(run_id, excel_row)
@@ -563,6 +738,8 @@ async def export_xlsx(request: Request, run_id: str):
             result.get("plog_meta", {}).get("header_row", 1),
             result.get("plog_meta", {}).get("sheet"),
             overrides,
+            result.get("perimeter_meta"),
+            result.get("perimeter_warning"),
         )
         response = _LeasedFileResponse(
             str(out), filename=f"PLOG_DMR_CHECK_{run_id}.xlsx",
@@ -603,7 +780,9 @@ async def export_json(run_id: str):
                                result.get("plog_meta", {}),
                                result.get("dmr_meta", {}),
                                result.get("reverse_audit", []),
-                               overrides=overrides)
+                               overrides=overrides,
+                               perimeter_meta=result.get("perimeter_meta"),
+                               perimeter_warning=result.get("perimeter_warning"))
         return Response(doc, media_type="application/json", headers={
             "Content-Disposition":
                 f'attachment; filename="audit_{run_id}.json"'})

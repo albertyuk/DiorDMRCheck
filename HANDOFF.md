@@ -2,7 +2,7 @@
 
 This file briefs a fresh Claude session (or human) taking over development.
 It captures state, architecture, hard invariants, judgment calls, and the
-working conventions this project was built under. Last updated: 2026-07-22.
+working conventions this project was built under. Last updated: 2026-07-23.
 
 ## What this is
 
@@ -26,22 +26,33 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
 
 ## Current state
 
-- **Branches**: `claude/dmr-reconciler-webapp-9bwvwn` (the user's deploy
-  branch) and `main` are kept in lockstep — **push every change to BOTH**
-  (`git push origin <branch>` then `git push origin HEAD:main`). A third
-  branch `claude/codebase-reorganization-review-15xt85` was a big
-  reorg+hardening PR (#1), already merged; don't touch it.
-- **Tests**: 238 passing (`python -m pytest tests/ -q`). Keep it that way.
-- **Deploy**: the user runs, on their Mac:
-  `cd ~/DiorDMRCheck && git pull origin claude/dmr-reconciler-webapp-9bwvwn && fly deploy`
-  (always name the branch — a bare `git pull` once shipped a stale image).
-  `APP_PASSWORD` is set as a Fly secret (auth is fail-closed without it).
-- **Real data** for validation lives in `data/real/` (gitignored, present in
-  the dev container): `PLOG_DMR_CHECK.xlsx` (101 rows), the human reference
-  `PLOG_DMR_CHECK_1.xlsx`, `YTD_DMR_MICRO_0720.xlsx`, `Perimeters.xlsx`
-  (58.8k Micro rows + a Macro sheet). A newer 417-row PLOG and 1555-row DMR
-  exist only on the user's machine (they described its quirks: YY/MM/DD
-  dates, 17 campaigns, 2025 window).
+- **Integration provenance**: remote feature commit
+  `36911ed51656ef18f85a4ddecf3fbb16be742da1` was integrated with the
+  reviewed hardening checkpoint
+  `2a92bf5` (`agent/hardening-checkpoint-36911ed`) on local branch
+  `agent/integrate-hardening-36911ed`. The work was done in the sibling
+  `DiorDMRCheck-integration` worktree so neither input was overwritten.
+- **Publishing rule**: do **not** push multiple branches or deploy directly
+  from an arbitrary working tree. Review the integration diff, run the full
+  gate below, then publish the single intended branch through the normal PR
+  or user-approved deployment workflow. No instruction in this file grants
+  permission to push, merge, or deploy.
+- **Tests**: in this integration environment on 2026-07-23, 405 passed and
+  1 real-client efficiency golden test skipped. The full gate is
+  `python -m pytest tests/ -q`, `ruff check app tests tools`, and
+  `git diff HEAD --check`; the fixture skip is expected when its gitignored
+  input is unavailable, and the rubric syntax test also skips if Node.js is
+  not installed.
+- **Deploy**: deploy only the exact reviewed commit. Authentication is
+  fail-closed; production must have `APP_PASSWORD` and secure cookies.
+- **Real data** for validation belongs in `data/real/` (gitignored) and is
+  available only in environments where it has been supplied:
+  `PLOG_DMR_CHECK.xlsx` (101 rows), the human reference
+  `PLOG_DMR_CHECK_1.xlsx`, `YTD_DMR_MICRO_0720.xlsx`, and `Perimeters.xlsx`
+  (58.8k Micro rows + a Macro sheet). It was not present for the 2026-07-23
+  integration gate, so the golden test skipped. A newer 417-row PLOG and
+  1555-row DMR exist only on the user's machine (they described its quirks:
+  YY/MM/DD dates, 17 campaigns, 2025 window).
 
 ## Architecture map (post-reorg package layout)
 
@@ -53,12 +64,13 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
                                 uploads.py (body limits, zip-bomb caps, admission gates, retention),
                                 token_store.py (TTL in-memory stores), llm.py
     app/reconciler/             parsers.py (PLOG/DMR, fingerprint headers), pipeline.py (tiered matcher),
-                                links.py (resolver: direct path + TikHub, SSRF allowlist, DIRECT_BREAKER,
-                                pooled client), adjudicator.py (Claude tier-4, annotation only),
+                                links.py (HTTPS-only resolver, canonical single-flight, independent
+                                network breakers, pooled TikHub client), adjudicator.py (Claude tier-4,
+                                annotation only),
                                 perimeter.py (China-filter, content-hash cache with _PARSER_VERSION salt),
                                 runs.py (bounded run scheduler + apply_window_override), export.py
                                 (annotated xlsx — never overwrites populated cells), routes.py
-    app/efficiency/             analysis.py (parse→classify→validate V1–V12→metrics→verify→insights),
+    app/efficiency/             analysis.py (parse→classify→validate V1–V13→metrics→verify→insights),
                                 deck.py (python-pptx + lxml chart-XML patching; assert_chart_cache),
                                 routes.py (in-memory store EFF_REPORTS)
     app/remap/                  LLM header-mapping: mapper.py (sample→Claude proposal→validated),
@@ -101,9 +113,12 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
 5. **Never mutate source data; never reuse the source CPM column** (it's
    price per single impression — ×1000 off standard). **Never generate
    cross-wave comparisons** in insights.
-6. **Export never overwrites populated cells** — pre-filled column-S values
-   are kept (disagreement recorded in evidence Notes), the evidence block
-   shifts right past populated columns, A–R untouched. UI overrides win.
+6. **Export preserves source data and records provenance.** A valid UI
+   override wins; otherwise a populated source-S value is preserved, with
+   formula-like text neutralized before writing. Raw source S, disposition,
+   overrides, perimeter provenance, and evidence are recorded in
+   collision-safe audit metadata. Evidence uses a whole-sheet-empty column
+   block or a collision-safe hidden `_DMR_EVIDENCE` fallback at XFD.
 7. **Header remap**: the LLM proposes column mappings from a structural
    sample only; NOTHING applies without human approval on the audit screen;
    only header cells are rewritten; approved mappings cached by
@@ -127,25 +142,33 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
 ## Domain judgment calls (deliberate, documented — don't "fix" silently)
 
 - 尾部 and 底部 LEVEL labels merge into BOT (V8 warns when both coexist).
-- Tier ladder (fallback when LEVEL missing/unclear, and fanbase mode):
-  ≤200K KOC · 200–400K BOT · 400K–1M MID · 1M+ TOP; boundary values belong
-  to the band below, exactly 1000K is TOP. Explicit label always wins
-  (V11 reports fallback rows).
-- FAN BASE units: values <10,000 are thousands (130→130K, 1741→1.74M —
-  real-file semantics); ≥10,000 are raw counts ÷1000 (V12 reports). Cutoff
-  chosen against real data: all real values are 34–1741 K.
+- Tier ladder (approved fallback and fanbase mode): ≥1000K TOP · ≥400K MID ·
+  ≥200K BOT · otherwise KOC. Boundaries belong to the higher band.
+  In label mode, recognized explicit labels win; fanbase mode deliberately
+  applies the follower ladder to every row.
+- LEVEL fallback is deliberately narrow: only blank, `待定`, and `?` use
+  FAN BASE and report V12. Any other unknown label stays UNCLASSIFIED/V7.
+- FAN BASE has one explicit unit for the entire workbook: `k` (default) or
+  `raw`. Raw mode divides every valid row by 1,000 and reports V13. There is
+  no per-row magnitude cutoff or unit guessing.
 - Perimeter is China-market only: IN_CHINA_REPORTS=YES when the column
   exists (Macro sheet — future feature hook), else COUNTRY=Mainland China.
   Verified: all 6,140 REDBOOK_ID rows in the real Micro sheet are Mainland
   China, so membership verdicts can't flip.
-- DMR export window: parsed from the metadata "From … To …" line, editable
-  on the confirm screen (stored in run options; blank side disables checks).
-- Date parsing: YY/MM/DD ("24/11/27") accepted, but the two-digit-year
-  formats sit LAST in core/xlsx.py so ambiguous strings keep historical
-  readings ("05/06/25" is still %m/%d/%y).
-- Resolver: free direct-to-XHS path sits behind DIRECT_BREAKER (3 failures
-  trip, re-probe every 25th) because datacenter IPs are blocked; TikHub is
-  authoritative and uses one pooled client; TIKHUB_CONCURRENCY default 8.
+- DMR export window: parsed from the metadata "From … To …" line and editable
+  on the confirm screen. Omitted fields preserve the detected window;
+  clearing either atomically clears both; invalid or reversed ISO ranges are
+  rejected. Options survive retries.
+- Date parsing: separators never change interpretation. Ambiguous numeric
+  dates use an explicit source policy where known; DMR metadata is day-first,
+  YY/MM/DD tracker values such as `24/11/27` are supported, and generic
+  ambiguous input retains the historical month-first default.
+- Resolver: canonical Xiaohongshu note URLs are extracted without I/O.
+  Redirect resolution and detail enrichment have separate breakers that trip
+  only on transport failures (3 failures; re-probe every 25th skip). URL-keyed
+  single-flight coalesces equivalent concurrent requests and forced retries.
+  TikHub is authoritative, uses one pooled client closed at app shutdown, and
+  `TIKHUB_CONCURRENCY` defaults to 8 with a validated 1–32 range.
 - Column S vocabulary and 超出DMR导出窗口/Perimeter split suffixes reproduce
   the human reference exactly — never rename them.
 
@@ -164,19 +187,19 @@ constraints). UI is bilingual (EN default, 中文 via top-left toggle).
   drive-through (pattern: scratchpad scripts that boot uvicorn in-process
   with `config.ALLOW_OPEN_ACCESS=True` and fake `pipeline.resolve_link`
   from tests/fixtures.fake_resolutions).
-- **Findings codes**: V1–V12 are stable public vocabulary (README table).
+- **Findings codes**: V1–V13 are stable public vocabulary.
   New validation = next number + zh pattern + README row.
 - **Container QA deps** (not preinstalled; apt-get when needed):
   `libreoffice-impress libreoffice-writer libreoffice-calc poppler-utils`,
   pip `defusedxml`. Playwright uses `/opt/pw-browsers/chromium`.
-- Commit style: imperative summary + a body that says *why*; push to BOTH
-  branches (see Current state).
+- Commit style: imperative summary + a body that says *why*. Never push,
+  merge, or deploy unless the user explicitly asks for that state change.
 
 ## Config quick reference (app/config.py)
 
 `APP_PASSWORD` (setup code, required in prod) · `ALLOW_OPEN_ACCESS` ·
 `APP_SECRET` (optional; else persisted random) · `SESSION_COOKIE_SECURE` ·
-`TIKHUB_API_KEY` + `TIKHUB_CONCURRENCY=8` + timeouts ·
+`TIKHUB_API_KEY` + `TIKHUB_CONCURRENCY=8` (valid 1–32) + timeouts ·
 `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` (default claude-sonnet-5; adjudicator,
 run summary, header-map proposals) · `MAX_UPLOAD_MB=25` and zip caps ·
 `RUN_MAX_CONCURRENT=2` · `DATA_DIR` (/data on Fly volume).
@@ -192,13 +215,67 @@ run summary, header-map proposals) · `MAX_UPLOAD_MB=25` and zip caps ·
   bullets are built in English in analysis.build_insights).
 - The 1900-01-06 junk-date artifact (bare numbers in POST DATE) parses
   "successfully" — a loud warning for pre-2015 dates was discussed, not built.
-- `docs/` deliverables (rubric + templates) are generated by tools/ scripts —
-  regenerate and re-commit when formats change.
+- `docs/` deliverables (rubric + templates) are generated by `tools/`.
+  Templates: `python tools/make_templates.py`. Rubric:
+  `cd tools && npm ci && npm run make:rubric`; `docx` is pinned in the lock.
+
+## 2026-07-23 integration change map
+
+This section is the concrete review map for the feature-preserving hardening
+integration. It is intentionally path-specific.
+
+- `app/auth/{routes,service,throttle}.py`, `app/core/{db,migrations,uploads,
+  token_store,xlsx}.py`, `app/config.py`, `entrypoint.sh`, `Dockerfile`:
+  retained fail-closed auth, atomic admin/session and cache behavior,
+  POST-only same-origin logout, upload/ZIP/workbook/result/storage limits,
+  safer container startup, finite numeric coercion, explicit date-order
+  parsing, bounded concurrency, and fail-fast validation for finite timeouts,
+  nonnegative retries/date windows, and positive cache TTLs.
+- `app/reconciler/{routes,runs,parsers}.py` and reconciler templates:
+  preserved the new editable export window while distinguishing an omitted
+  override from an intentional clear, rejecting malformed/reversed ranges,
+  parsing DMR metadata day-first, preserving retry choices, enforcing admin
+  perimeter promotion, quarantining malformed persisted run options instead
+  of stranding queued work, and returning bounded/sanitized failures.
+- `app/reconciler/links.py`, `app/main.py`: combined pooled TikHub HTTP with
+  canonical URL single-flight, strict HTTPS/host/identity checks, independent
+  transport-only breakers, note-scoped author extraction, safe `Retry-After`
+  handling, zero-I/O canonical-note extraction, sanitized public errors,
+  forced-retry coalescing, deterministic pool shutdown, and same-origin
+  anti-framing response headers.
+- `app/reconciler/adjudicator.py`, `app/remap/mapper.py`: retained provider
+  details in server logs while replacing user-visible exception text with
+  stable, non-sensitive failure messages.
+- `app/reconciler/export.py`: kept source S unless a valid UI override wins,
+  preserved its value type/formatting, sanitized newly written external text,
+  recorded raw/disposition provenance, excluded populated and merged
+  whole-sheet columns from evidence placement, and added an XFD-safe hidden
+  evidence-sheet fallback.
+- `app/efficiency/{analysis,deck,routes}.py` and efficiency templates:
+  preserved the new reports/UI while replacing magnitude-based FAN BASE
+  guessing with one explicit workbook unit, keeping finite and row-limit
+  checks, using inclusive ≥200/400/1000 boundaries, restricting fallback to
+  blank/待定/?, and carrying V12/V13 provenance into HTML and PPTX.
+- `app/i18n/catalog/{common,efficiency}.py`: added bilingual strings and
+  runtime patterns for the new window/unit/finding behavior.
+- `tools/make_demo_assets.py`, `tools/make_templates.py`,
+  `tools/make_rubric.js`, `tools/package{,-lock}.json`: removed machine-local
+  paths, made the generators portable and re-runnable, pinned the Word
+  generator dependency, and added smoke coverage in
+  `tests/test_generators.py` (templates execute and parse; the demo imports
+  and builds; the rubric lock and JavaScript syntax are checked). The
+  generated DOCX received separate rendered-page visual QA.
+- Tests under `tests/core`, `tests/reconciler`, `tests/efficiency`, and
+  `tests/web` cover the concurrency, breaker, provenance, sparse-XFD, date,
+  window, unit, auth, storage, generator, and regression paths above.
 
 ## How to start (for the next session)
 
-1. Read this file, then README.md (user-facing behavior + validation table).
-2. `python -m pytest tests/ -q` — expect 238 passed (1 skip if data/real absent).
+1. Read this file, then README.md (user-facing behavior + validation summary).
+2. Run `python -m pytest tests/ -q`, `ruff check app tests tools`, and
+   `git diff HEAD --check`; in the 2026-07-23 integration environment the
+   baseline was 405 passed, with one skip because the real efficiency fixture
+   was absent. A machine without Node.js also skips the rubric syntax check.
 3. Skim `docs/REORGANIZATION.md` if you need the deep architecture rationale.
-4. Make changes → tests → push to BOTH branches → remind the user:
-   `git pull origin claude/dmr-reconciler-webapp-9bwvwn && fly deploy`.
+4. Inspect `git status`, `git diff --stat`, and the integration commit before
+   changing anything. Publishing or deploying is a separate, explicit action.

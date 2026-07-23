@@ -21,14 +21,28 @@
     <p><label>{{ t("Tier assignment") }}<br>
       <select name="tier_mode">
         <option value="label" selected>{{ t("From LEVEL labels (头部/腰部/尾部+底部→BOT/KOC)") }}</option>
-        <option value="fanbase">{{ t("From FAN BASE thresholds (1M+ TOP · 400–1000K MID · 200–400K BOT · ≤200K KOC)") }}</option>
+        <option value="fanbase">{{ t("From FAN BASE thresholds (≥1000K TOP · ≥400K MID · ≥200K BOT · else KOC)") }}</option>
       </select></label></p>
+    <p><label>{{ t("FAN BASE unit") }}<br>
+      <select name="fanbase_unit">
+        <option value="k" selected>{{ t("Thousands (K) — 450 means 450K") }}</option>
+        <option value="raw">{{ t("Raw followers — 450,000 means 450K") }}</option>
+      </select></label><br>
+      <span class="muted" style="font-size:.72rem">
+        {{ t("One unit is applied to the entire workbook; values are never reinterpreted row by row.") }}
+      </span></p>
     <p><label>{{ t("Slide language") }}<br>
       <select name="language">
         {# not translated — each option label names itself in its own language #}
         <option value="en" {% if lang != "zh" %}selected{% endif %}>English</option>
         <option value="zh" {% if lang == "zh" %}selected{% endif %}>中文</option>
       </select></label></p>
+    <input type="hidden" name="allow_header_ai" value="0">
+    <p><label><input type="checkbox" name="allow_header_ai" value="1">
+      {{ t("If the headers are unfamiliar, send a bounded structural sample to Claude for mapping") }}</label><br>
+      <span class="muted" style="font-size:.72rem">
+        {{ t("Opt-in disclosure: only visible sheet names and at most the first 15 rows × 24 columns (cell text truncated to 60 characters) are sent to Anthropic. Hidden sheets are excluded. Leave unchecked to keep all workbook content local; unfamiliar headers will then be rejected.") }}
+      </span></p>
     <button type="submit"
             data-busy-label="{{ t('Analyzing…') }}">{{ t("Analyze & generate") }}</button>
 
@@ -42,8 +56,8 @@
          <code>POST LINK</code> <code>IMPRESSION</code> <code>LIKE</code>
          <code>COLLECTION</code> <code>COMMENT</code> <code>TTL ENGAGEMENT</code>
          <code>PRICE</code></p>
-      <p>{{ t("TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.") }}</p>
-      <p class="muted">{{ t("Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.") }}</p>
+      <p>{{ t("TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC. Blank LEVEL values and the approved placeholders 待定/? fall back to FAN BASE thresholds (reported as V12); other unknown labels remain unclassified. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.") }}</p>
+      <p class="muted">{{ t("Different headers or layout (e.g. a Chinese-headed tracker)? Opt in above if you want Claude to propose a column mapping; nothing is applied until an administrator approves it on the audit screen.") }}</p>
     </div>
   </details>
   </form>

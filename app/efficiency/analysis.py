@@ -19,13 +19,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from datetime import date
+import math
 from typing import Optional
 
 from openpyxl import load_workbook
 
+from .. import config
 from ..core.textnorm import header_key, nfkc
-from ..core.xlsx import (MAX_CONSECUTIVE_BLANK_ROWS, cell_str,
-                         find_header_row, to_date, to_float, to_int)
+from ..core.uploads import UploadLimitError
+from ..core.xlsx import cell_str, find_header_row, to_date, to_float
+from ..i18n import make_td
 
 TIERS = ["TOP", "MID", "BOT", "KOC"]
 COOPS = ["SOFT", "PAID"]
@@ -39,12 +42,17 @@ REQUIRED_COLS = {
 }
 METRIC_COLS = ("impression", "like", "collection", "comment",
                "ttl_engagement", "price")
+FANBASE_UNITS = frozenset({"k", "raw"})
+# Keep fallback deliberately narrow. Unexpected non-blank labels are data
+# quality signals (V7), not permission to guess a tier from another column.
+LEVEL_FALLBACK_PLACEHOLDERS = frozenset({"", "待定", "?"})
 
 
 @dataclass
 class ReportConfig:
     basis: str = "pooled"                # pooled | per_post
     tier_mode: str = "label"             # label | fanbase
+    fanbase_unit: str = "k"              # k | raw (one unit per workbook)
     fanbase_top_k: float = 1000
     fanbase_mid_k: float = 400
     fanbase_bot_k: float = 200           # below → KOC
@@ -79,6 +87,9 @@ class Row:
     coop: str = ""           # PAID | SOFT | ""
     tier: str = ""           # TOP | MID | BOT | KOC | ""
     excluded: bool = False   # dropped from metrics (V2)
+    invalid_metrics: list[str] = field(default_factory=list, repr=False)
+    advisory_invalid_metrics: list[str] = field(default_factory=list,
+                                                       repr=False)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -102,37 +113,79 @@ class Finding:
 
 # ---------------------------------------------------------------- parsing
 
-# FAN BASE unit heuristic: the canonical column is in THOUSANDS, and small
-# values (1–1000, e.g. 130 → 130K) plus big-account values up to a few
-# thousand K (1741 → 1.74M, observed in real data) are taken at face value.
-# A value at or above this cutoff cannot plausibly be K-units (10,000K would
-# be a 10M-follower celebrity in a micro-KOL tracker) — it is a RAW follower
-# count entered without the ÷1000, and is normalized. Reported as V12.
-FANBASE_RAW_CUTOFF = 10_000
+def _select_report_sheet(
+        wb, findings: Optional[list[Finding]] = None):
+    """Choose the preferred sheet that actually carries the full schema.
+
+    A cover/instructions tab is common.  Falling back blindly to worksheet 1
+    made valid reports fail whenever their data lived on a later tab.
+    """
+    named = next((ws for ws in wb.worksheets
+                  if header_key(ws.title) == "masterkollist"), None)
+    ordered = ([named] if named is not None else []) + [
+        ws for ws in wb.worksheets if ws is not named
+    ]
+    for candidate in ordered:
+        hit = find_header_row(candidate, set(REQUIRED_COLS))
+        if hit:
+            if findings is not None and candidate is not named:
+                if named is None:
+                    message = (
+                        "Sheet 'MASTER KOL LIST' not found — using "
+                        f"schema-compatible sheet {candidate.title!r}.")
+                else:
+                    message = (
+                        "Sheet 'MASTER KOL LIST' lacks the required schema — "
+                        f"using schema-compatible sheet {candidate.title!r}.")
+                findings.append(Finding("V1", "WARN", message))
+            return candidate, hit
+
+    # Preserve a useful sheet name in the V1 error when no sheet matches.
+    fallback = named or wb.worksheets[0]
+    return fallback, None
 
 
-def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
+def probe_report_schema(path_or_file) -> tuple[str, int]:
+    """Cheap schema-only probe used to decide whether remapping is needed."""
+    wb = load_workbook(path_or_file, read_only=True, data_only=True)
+    try:
+        ws, hit = _select_report_sheet(wb)
+        if not hit:
+            raise ValueError(
+                "V1: no complete efficiency-report header row found in "
+                f"sheet {ws.title!r} within the first 15 rows.")
+        return ws.title, hit[0]
+    finally:
+        wb.close()
+
+
+def parse_report(path_or_file, fanbase_unit: str = "k"
+                 ) -> tuple[list[Row], list[Finding], dict]:
     """Parse the KOL sheet. Returns (rows, findings, meta). V1 failures are
     the only thing that raises — everything else is a Finding."""
-    findings: list[Finding] = []
+    if fanbase_unit not in FANBASE_UNITS:
+        raise ValueError(
+            f"fanbase_unit must be one of {sorted(FANBASE_UNITS)!r}.")
     wb = load_workbook(path_or_file, data_only=True)
-    ws = None
-    for candidate in wb.worksheets:
-        if header_key(candidate.title) == "masterkollist":
-            ws = candidate
-            break
-    if ws is None:
-        ws = wb.worksheets[0]
-        findings.append(Finding(
-            "V1", "WARN",
-            f"Sheet 'MASTER KOL LIST' not found — using first sheet "
-            f"{ws.title!r}."))
+    try:
+        return _parse_report_workbook(wb, fanbase_unit)
+    finally:
+        wb.close()
 
-    hit = find_header_row(ws, {"name", "postlink"})
+
+def _parse_report_workbook(
+        wb, fanbase_unit: str = "k"
+) -> tuple[list[Row], list[Finding], dict]:
+    """Parse an already-open workbook; :func:`parse_report` owns closing it."""
+    findings: list[Finding] = []
+    ws, hit = _select_report_sheet(wb, findings)
+
+    # Bind only to a complete schema.  A metadata row containing the two old
+    # fingerprint labels must not shadow a later, valid header row.
     if not hit:
         raise ValueError(
-            "V1: no header row containing NAME and POST LINK found in "
-            f"sheet {ws.title!r}.")
+            "V1: no complete efficiency-report header row found in "
+            f"sheet {ws.title!r} within the first 15 rows.")
     header_row, cols = hit
 
     missing = [label for key, label in REQUIRED_COLS.items() if key not in cols]
@@ -150,11 +203,27 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
         "collection", "comment", "ttlengagement", "price", "cpm", "cpe")}
 
     rows: list[Row] = []
-    raw_fanbase_rows: list[int] = []
+    converted_fanbase_rows: list[int] = []
     current_campaign = ""
-    blank = 0
-    for excel_row_cells in ws.iter_rows(min_row=header_row + 1):
-        r = excel_row_cells[0].row
+    # Iterate physical rows that can actually be report records instead of the
+    # worksheet dimension.  This handles legitimate blocks separated by 200+
+    # blank rows without walking to a styled cell at Excel row 1,048,576.
+    # Normal-mode openpyxl has already materialized every physical cell in
+    # `_cells`; limiting to identity columns keeps this set bounded by the
+    # logical row limit even for style-heavy workbooks.
+    identity_cols = {c["name"], c["postlink"]}
+    data_rows: set[int] = set()
+    for (row_index, column_index), cell in ws._cells.items():
+        if (row_index > header_row and column_index in identity_cols
+                and (cell.value not in (None, "")
+                     or getattr(cell, "hyperlink", None))):
+            data_rows.add(row_index)
+            if len(data_rows) > config.MAX_EFFICIENCY_ROWS:
+                raise UploadLimitError(
+                    "V1: workbook contains more than "
+                    f"{config.MAX_EFFICIENCY_ROWS:,} efficiency rows.")
+
+    for r in sorted(data_rows):
 
         def get(key):
             column = c.get(key)
@@ -169,40 +238,74 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
             else:
                 link = cell_str(link_cell.value)
         if not name and not link:
-            blank += 1
-            if blank >= MAX_CONSECUTIVE_BLANK_ROWS:
-                break
             continue
-        blank = 0
         campaign = cell_str(get("campaign"))
         if campaign:
             current_campaign = campaign
-        fanbase_k = to_float(get("fanbase(k)"))
-        if fanbase_k is not None and fanbase_k >= FANBASE_RAW_CUTOFF:
-            fanbase_k = fanbase_k / 1000     # raw follower count → K
-            raw_fanbase_rows.append(r)
-        rows.append(Row(
+        invalid_metrics: list[str] = []
+        advisory_invalid_metrics: list[str] = []
+
+        def count_value(key: str) -> Optional[int]:
+            raw = get(key)
+            if raw is None or raw == "":
+                return None
+            value = to_float(raw)
+            if (value is None or not math.isfinite(value) or value < 0
+                    or not value.is_integer()):
+                invalid_metrics.append(key.upper())
+                return None
+            return int(value)
+
+        def amount_value(key: str, *, blocking: bool = True) -> Optional[float]:
+            raw = get(key)
+            if raw is None or raw == "":
+                return None
+            value = to_float(raw)
+            if value is None or not math.isfinite(value) or value < 0:
+                target = (invalid_metrics if blocking
+                          else advisory_invalid_metrics)
+                target.append(key.upper())
+                return None
+            return value
+
+        # FAN BASE is only an input under fanbase tiering. Source CPM/CPE are
+        # diagnostics and never feed report metrics, so malformed values in
+        # those columns must not discard an otherwise valid report row.
+        fanbase = amount_value("fanbase(k)", blocking=False)
+        if fanbase is not None and fanbase_unit == "raw":
+            # Raw follower counts are counts, not continuous measurements.
+            # Reject fractional raw counts instead of silently rounding them.
+            if not fanbase.is_integer():
+                advisory_invalid_metrics.append("FANBASE(K)")
+                fanbase = None
+            else:
+                fanbase /= 1000
+                converted_fanbase_rows.append(r)
+        row = Row(
             idx=len(rows), excel_row=r,
             campaign=current_campaign, no=cell_str(get("no")), name=name,
             type_raw=cell_str(get("type")), level_raw=cell_str(get("level")),
-            fanbase_k=fanbase_k,
+            fanbase_k=fanbase,
             post_date=to_date(get("postdate")),
             post_link=link.strip(),
-            impression=to_int(get("impression")), like=to_int(get("like")),
-            collection=to_int(get("collection")),
-            comment=to_int(get("comment")),
-            ttl_engagement=to_int(get("ttlengagement")),
-            price=to_float(get("price")),
-            cpm_src=to_float(get("cpm")), cpe_src=to_float(get("cpe")),
-        ))
-    if raw_fanbase_rows:
+            impression=count_value("impression"), like=count_value("like"),
+            collection=count_value("collection"),
+            comment=count_value("comment"),
+            ttl_engagement=count_value("ttlengagement"),
+            price=amount_value("price"),
+            cpm_src=amount_value("cpm", blocking=False),
+            cpe_src=amount_value("cpe", blocking=False),
+            invalid_metrics=invalid_metrics,
+            advisory_invalid_metrics=advisory_invalid_metrics,
+        )
+        rows.append(row)
+    if converted_fanbase_rows:
         findings.append(Finding(
-            "V12", "WARN",
-            f"FAN BASE ≥{FANBASE_RAW_CUTOFF:,} on {len(raw_fanbase_rows)} "
-            "row(s) — read as a raw follower count and divided by 1,000 "
-            "(e.g. 450,000 → 450K). Values up to a few thousand are taken "
-            "as thousands (130 → 130K). Verify the units.",
-            raw_fanbase_rows))
+            "V13", "WARN",
+            "FAN BASE unit configured as raw followers on "
+            f"{len(converted_fanbase_rows)} valid row(s) — divided by 1,000 "
+            "before tiering.",
+            converted_fanbase_rows))
     meta = {"sheet": ws.title, "header_row": header_row, "rows": len(rows),
             "campaigns": sorted({r.campaign for r in rows if r.campaign})}
     return rows, findings, meta
@@ -211,14 +314,12 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
 # ----------------------------------------------------------- classification
 
 def tier_from_fanbase(fb: float, cfg: ReportConfig) -> str:
-    """Follower-count tier ladder: ≤200K KOC · 200–400K BOT · 400–1000K MID
-    · 1M+ TOP. A value exactly on a boundary belongs to the band below it
-    (200K → KOC), except the top: exactly 1000K is TOP ("1M+")."""
+    """Follower-count tier ladder using inclusive configured lower bounds."""
     if fb >= cfg.fanbase_top_k:
         return "TOP"
-    if fb > cfg.fanbase_mid_k:
+    if fb >= cfg.fanbase_mid_k:
         return "MID"
-    if fb > cfg.fanbase_bot_k:
+    if fb >= cfg.fanbase_bot_k:
         return "BOT"
     return "KOC"
 
@@ -227,12 +328,11 @@ def classify(rows: list[Row], cfg: ReportConfig,
              findings: list[Finding]) -> None:
     """COOP from TYPE (substring — 报备图文/软植图文/bare 报备 all classify);
     TIER from LEVEL (label mode merges 尾部+底部 into BOT) or from fan base
-    thresholds (fanbase mode). In label mode a missing/unclear LEVEL falls
-    back to the FAN BASE ladder (reported as V11); rows with neither stay
-    unclassified — never guessed."""
+    thresholds (fanbase mode). In label mode, only blank/approved placeholder
+    LEVEL values fall back to FAN BASE (V12); unexpected labels remain V7."""
     bad_types: dict[str, list[int]] = {}
     bad_levels: dict[str, list[int]] = {}
-    fallback_levels: dict[str, list[int]] = {}
+    fallback_rows: list[int] = []
     for r in rows:
         t = nfkc(r.type_raw)
         if "报备" in t:
@@ -253,20 +353,20 @@ def classify(rows: list[Row], cfg: ReportConfig,
             else:
                 r.tier = tier_from_fanbase(fb, cfg)
         else:
-            lvl = nfkc(r.level_raw)
+            lvl = nfkc(r.level_raw).strip()
+            lvl_key = lvl.casefold()
             if "头部" in lvl:
                 r.tier = "TOP"
             elif "腰部" in lvl:
                 r.tier = "MID"
             elif "尾部" in lvl or "底部" in lvl:
                 r.tier = "BOT"   # deliberate merge — see V8
-            elif "koc" in lvl.casefold():
+            elif "koc" in lvl_key:
                 r.tier = "KOC"
-            elif r.fanbase_k is not None:
-                # LEVEL missing/unclear → follower-count fallback (V11)
+            elif (lvl_key in LEVEL_FALLBACK_PLACEHOLDERS
+                  and r.fanbase_k is not None):
                 r.tier = tier_from_fanbase(r.fanbase_k, cfg)
-                fallback_levels.setdefault(
-                    r.level_raw or "(blank)", []).append(r.excel_row)
+                fallback_rows.append(r.excel_row)
             else:
                 r.tier = ""
                 bad_levels.setdefault(r.level_raw or "(blank)", []).append(r.excel_row)
@@ -281,12 +381,13 @@ def classify(rows: list[Row], cfg: ReportConfig,
             "V7", "WARN",
             f"Unclassified LEVEL value {value!r} on {len(rws)} row(s) — "
             "excluded from groups, counted in totals.", rws))
-    for value, rws in fallback_levels.items():
+    if fallback_rows:
         findings.append(Finding(
-            "V11", "WARN",
-            f"LEVEL value {value!r} missing/unclear on {len(rws)} row(s) — "
-            "tiered by FAN BASE instead (≤200K KOC · 200–400K BOT · "
-            "400–1000K MID · 1M+ TOP). Verify the assignment.", rws))
+            "V12", "WARN",
+            f"{len(fallback_rows)} row(s) with blank/placeholder LEVEL were "
+            "tiered by FAN BASE using configured thresholds. Verify the "
+            "assignments.",
+            fallback_rows))
 
 
 # --------------------------------------------------------------- validation
@@ -297,8 +398,45 @@ def _eng(r: Row) -> Optional[int]:
 
 def validate(rows: list[Row], cfg: ReportConfig,
              findings: list[Finding]) -> None:
+    if cfg.tier_mode == "fanbase":
+        for row in rows:
+            if "FANBASE(K)" in row.advisory_invalid_metrics:
+                row.invalid_metrics.append("FAN BASE（K)")
+
+    # Invalid numeric domains are blocking.  Counts must be whole,
+    # non-negative and finite; monetary/rate fields must be non-negative and
+    # finite.  Excluding the rows prevents diagnostic metrics from carrying
+    # nonsense values even though no deck will be generated.
+    invalid_rows = [r for r in rows if r.invalid_metrics]
+    if invalid_rows:
+        for r in invalid_rows:
+            r.excluded = True
+        details = sorted({name for r in invalid_rows for name in r.invalid_metrics})
+        findings.append(Finding(
+            "V11", "ERROR",
+            f"{len(invalid_rows)} row(s) contain invalid numeric values "
+            "(counts must be whole; all values must be finite and "
+            f"non-negative) in: {', '.join(details)}.",
+            [r.excel_row for r in invalid_rows]))
+
+    advisory: dict[str, list[int]] = {}
+    for row in rows:
+        for name in row.advisory_invalid_metrics:
+            if name == "FANBASE(K)" and cfg.tier_mode == "fanbase":
+                continue
+            label = "FAN BASE（K)" if name == "FANBASE(K)" else name
+            advisory.setdefault(label, []).append(row.excel_row)
+    if advisory:
+        fields = ", ".join(sorted(advisory))
+        excel_rows = sorted({r for values in advisory.values() for r in values})
+        findings.append(Finding(
+            "V11", "WARN",
+            f"{len(excel_rows)} row(s) contain invalid diagnostics-only "
+            f"numeric values in {fields} — those source values were ignored.",
+            excel_rows))
+
     # V2 — missing metric values
-    missing_rows = [r for r in rows if any(
+    missing_rows = [r for r in rows if not r.invalid_metrics and any(
         getattr(r, col) is None for col in METRIC_COLS)]
     if missing_rows:
         if cfg.missing_row_policy == "block":
@@ -447,9 +585,8 @@ def compute_metrics(rows: list[Row], cfg: ReportConfig) -> dict:
             prices = [r.price for r in g]
             impr_rows = [r for r in g if (r.impression or 0) > 0]
             eng_rows = [r for r in g if (_eng(r) or 0) > 0]
-            spend_impr = sum(r.price for r in impr_rows)
+            spend = sum(prices)
             impr = sum(r.impression for r in impr_rows)
-            spend_eng = sum(r.price for r in eng_rows)
             eng = sum(r.ttl_engagement for r in eng_rows)
             top2 = sorted((r.impression or 0 for r in g), reverse=True)[:2]
             conc = (sum(top2) / impr * 100) if impr else None
@@ -458,13 +595,13 @@ def compute_metrics(rows: list[Row], cfg: ReportConfig) -> dict:
                 "n": len(g),
                 "share": round(len(g) / total_rows * 100, cfg.share_decimals),
                 "avg_price": _mean(prices),
-                "cpm_pooled": spend_impr / impr * 1000 if impr else None,
-                "cpe_pooled": spend_eng / eng if eng else None,
+                "cpm_pooled": spend / impr * 1000 if impr else None,
+                "cpe_pooled": spend / eng if eng else None,
                 "cpm_perpost": _mean([r.price / r.impression * 1000
                                       for r in impr_rows]),
                 "cpe_perpost": _mean([r.price / r.ttl_engagement
                                       for r in eng_rows]),
-                "spend": sum(prices),
+                "spend": spend,
                 "impressions": sum(r.impression or 0 for r in g),
                 "engagements": sum(_eng(r) or 0 for r in g),
                 "concentration_pct": conc,
@@ -501,14 +638,15 @@ def compute_metrics_pandas(rows: list[Row], cfg: ReportConfig) -> dict:
     for gname, g in df[df["group"] != ""].groupby("group"):
         gi = g[g["impression"] > 0]
         ge = g[g["engagement"] > 0]
+        spend = float(g["price"].sum())
+        impressions = float(g["impression"].sum())
+        engagements = float(g["engagement"].sum())
         out[gname] = {
             "n": int(len(g)),
             "share": round(len(g) / len(df) * 100, cfg.share_decimals),
             "avg_price": float(g["price"].mean()),
-            "cpm_pooled": float(gi["price"].sum() / gi["impression"].sum() * 1000)
-            if len(gi) else None,
-            "cpe_pooled": float(ge["price"].sum() / ge["engagement"].sum())
-            if len(ge) else None,
+            "cpm_pooled": spend / impressions * 1000 if impressions else None,
+            "cpe_pooled": spend / engagements if engagements else None,
             "cpm_perpost": float((gi["price"] / gi["impression"] * 1000).mean())
             if len(gi) else None,
             "cpe_perpost": float((ge["price"] / ge["engagement"]).mean())
@@ -550,6 +688,10 @@ def verify_reconciliation(rows: list[Row], metrics: dict,
     if abs(spend_sum - totals["spend"]) > 1e-6:
         raise VerificationError(
             f"Σ group spend ({spend_sum}) != total spend ({totals['spend']})")
+    # Empty/all-excluded input is a user validation failure, handled before
+    # this internal verifier.  Keeping this guard makes direct callers safe.
+    if totals["rows"] == 0:
+        raise ValueError("V2: workbook contains no analyzable efficiency rows.")
     share_sum = sum(g["share"] for g in groups.values()) + totals["unclassified_share"]
     # Each slice is rounded to `share_decimals` BEFORE summing, so legitimate
     # drift grows with the slice count: up to half an ulp per slice (e.g. 9
@@ -579,17 +721,19 @@ def build_insights(metrics: dict, cfg: ReportConfig,
     cpe_key = "cpe_pooled" if basis == "pooled" else "cpe_perpost"
 
     price_bullets: list[str] = []
-    premiums, inversions = [], []
+    premiums, inversions, ties = [], [], []
     for tier in TIERS:
         paid, soft = groups.get(f"{tier} PAID"), groups.get(f"{tier} SOFT")
         if not (paid and soft):
             continue
         delta = paid["avg_price"] - soft["avg_price"]
-        if delta >= 0:
+        if round(delta / 1000, 1) == 0:
+            ties.append(tier)
+        elif delta > 0:
             premiums.append(f"{tier} +{_fmt_k(delta)}")
         else:
             inversions.append(f"{tier} {_fmt_k(delta)}")
-    if premiums and not inversions:
+    if premiums and not inversions and not ties:
         price_bullets.append(
             "PAID CARRIES A PREMIUM IN EVERY TIER — "
             + " / ".join(premiums) + " VS SOFT")
@@ -599,6 +743,8 @@ def build_insights(metrics: dict, cfg: ReportConfig,
         if inversions:
             price_bullets.append(
                 "PRICE INVERSION — SOFT PRICED ABOVE PAID: " + " / ".join(inversions))
+    if ties:
+        price_bullets.append("PRICE TIE: " + " / ".join(ties))
 
     eff_bullets: list[str] = []
     cpm_parts, cpe_parts = [], []
@@ -607,25 +753,39 @@ def build_insights(metrics: dict, cfg: ReportConfig,
         if not (paid and soft) or paid[cpm_key] is None or soft[cpm_key] is None:
             pass
         else:
-            winner = "PAID" if paid[cpm_key] <= soft[cpm_key] else "SOFT"
-            lower, higher = sorted((paid[cpm_key], soft[cpm_key]))
-            cpm_parts.append(
-                f"{tier}: {winner} ¥{lower:.0f} VS ¥{higher:.0f}"
-            )
+            paid_text, soft_text = f"{paid[cpm_key]:.0f}", f"{soft[cpm_key]:.0f}"
+            if paid_text == soft_text:
+                cpm_parts.append(f"{tier}: TIE ¥{paid_text}")
+            else:
+                winner = "PAID" if paid[cpm_key] < soft[cpm_key] else "SOFT"
+                lower, higher = sorted((paid[cpm_key], soft[cpm_key]))
+                cpm_parts.append(
+                    f"{tier}: {winner} ¥{lower:.0f} VS ¥{higher:.0f}")
         if not (paid and soft) or paid[cpe_key] is None or soft[cpe_key] is None:
             continue
-        winner = "PAID" if paid[cpe_key] <= soft[cpe_key] else "SOFT"
-        lower, higher = sorted((paid[cpe_key], soft[cpe_key]))
-        cpe_parts.append(
-            f"{tier}: {winner} ¥{lower:.1f} VS ¥{higher:.1f}"
-        )
+        paid_text, soft_text = f"{paid[cpe_key]:.1f}", f"{soft[cpe_key]:.1f}"
+        if paid_text == soft_text:
+            cpe_parts.append(f"{tier}: TIE ¥{paid_text}")
+        else:
+            winner = "PAID" if paid[cpe_key] < soft[cpe_key] else "SOFT"
+            lower, higher = sorted((paid[cpe_key], soft[cpe_key]))
+            cpe_parts.append(
+                f"{tier}: {winner} ¥{lower:.1f} VS ¥{higher:.1f}")
     if cpm_parts:
-        eff_bullets.append("CPM WINNER — " + " · ".join(cpm_parts))
+        eff_bullets.append("CPM COMPARISON — " + " · ".join(cpm_parts))
     if cpe_parts:
-        eff_bullets.append("CPE WINNER — " + " · ".join(cpe_parts))
+        eff_bullets.append("CPE COMPARISON — " + " · ".join(cpe_parts))
 
     caveats: list[str] = []
     for f in findings:
+        if f.code == "V12":
+            caveats.append(
+                f"V12: FAN BASE FALLBACK USED FOR {len(f.rows)} POST(S) — "
+                "VERIFY TIER ASSIGNMENTS")
+        if f.code == "V13":
+            caveats.append(
+                "V13: FAN BASE UNIT RAW FOLLOWERS — VALUES DIVIDED BY 1,000 "
+                "BEFORE TIERING")
         if f.code == "V9":
             gname = f.message.split(":")[0]
             n = groups[gname]["n"] if gname in groups else "?"
@@ -665,8 +825,22 @@ def build_insights(metrics: dict, cfg: ReportConfig,
             f"n = {metrics['totals']['rows']} posts: "
             + " · ".join(f"{t} {tier_n[t]}" for t in TIERS if tier_n[t]))
 
-    return {"price": price_bullets, "efficiency": eff_bullets,
-            "caveats": caveats, "footnote": footnote}
+    # The HTML layer can translate dynamic English diagnostics at render time,
+    # but deck text is embedded directly.  Translate the complete insight
+    # payload here when a Chinese slide was requested.
+    td = make_td(cfg.language)
+
+    def localized(text: str) -> str:
+        rendered = td(text)
+        if cfg.language == "zh":
+            rendered = (rendered.replace(": TIE ", "：持平 ")
+                        .replace(" VS ¥", "，对比 ¥"))
+        return rendered
+
+    return {"price": [localized(x) for x in price_bullets],
+            "efficiency": [localized(x) for x in eff_bullets],
+            "caveats": [localized(x) for x in caveats],
+            "footnote": localized(footnote)}
 
 
 # ---------------------------------------------------------------- pipeline
@@ -677,9 +851,21 @@ def analyze(path_or_file, cfg: Optional[ReportConfig] = None) -> dict:
     cross-checks; ERROR findings block downstream generation (caller checks).
     """
     cfg = cfg or ReportConfig()
-    rows, findings, meta = parse_report(path_or_file)
+    rows, findings, meta = parse_report(path_or_file, cfg.fanbase_unit)
     classify(rows, cfg, findings)
     validate(rows, cfg, findings)
+
+    if not any(not r.excluded for r in rows):
+        invalid = [r for r in rows if r.invalid_metrics]
+        if invalid:
+            fields = sorted({name for r in invalid for name in r.invalid_metrics})
+            excel_rows = ", ".join(str(r.excel_row) for r in invalid[:20])
+            suffix = "…" if len(invalid) > 20 else ""
+            raise ValueError(
+                "V11: workbook contains no analyzable rows because invalid "
+                f"numeric values occur in {', '.join(fields)} on Excel rows "
+                f"{excel_rows}{suffix}.")
+        raise ValueError("V2: workbook contains no analyzable efficiency rows.")
 
     blocked = any(f.severity == "ERROR" for f in findings)
     metrics = compute_metrics(rows, cfg)

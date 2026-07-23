@@ -9,6 +9,7 @@ import zipfile
 from xml.etree import ElementTree
 
 import pytest
+from defusedxml.common import DefusedXmlException
 from fastapi import FastAPI, UploadFile
 from openpyxl import Workbook, load_workbook
 from starlette import formparsers
@@ -280,6 +281,46 @@ def test_validate_xlsx_archive_caps_populated_cells():
             max_uncompressed_bytes=1_000_000,
             max_entries=100,
             max_cells=1,
+        )
+
+
+def test_validate_xlsx_archive_caps_worksheet_count():
+    data = io.BytesIO()
+    workbook = Workbook()
+    workbook.create_sheet("second")
+    workbook.save(data)
+
+    with pytest.raises(UploadLimitError, match="worksheets"):
+        validate_xlsx_archive(
+            data.getvalue(),
+            max_uncompressed_bytes=1_000_000,
+            max_entries=100,
+            max_cells=100,
+            max_sheets=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("coordinate", "kwargs", "message"),
+    [
+        ("A1001", {"max_row_index": 1000}, "row-index limit"),
+        ("XFD1", {"max_column_index": 256}, "column-index limit"),
+    ],
+)
+def test_validate_xlsx_archive_caps_sparse_dimensions(
+        coordinate, kwargs, message):
+    data = io.BytesIO()
+    workbook = Workbook()
+    workbook.active[coordinate] = "sparse tail"
+    workbook.save(data)
+
+    with pytest.raises(UploadLimitError, match=message):
+        validate_xlsx_archive(
+            data.getvalue(),
+            max_uncompressed_bytes=1_000_000,
+            max_entries=100,
+            max_cells=10,
+            **kwargs,
         )
 
 
@@ -678,3 +719,32 @@ def test_cancelled_gate_waiter_cannot_leak_or_release_permit_early(
     asyncio.run(exercise())
     assert gate.acquire(blocking=False)
     gate.release()
+
+
+def test_archive_metadata_rejects_dtd_and_entities():
+    source = io.BytesIO()
+    workbook = Workbook()
+    workbook.active["A1"] = "safe"
+    workbook.save(source)
+
+    hostile = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(source.getvalue())) as source_archive,
+        zipfile.ZipFile(hostile, "w", zipfile.ZIP_DEFLATED) as output_archive,
+    ):
+        for info in source_archive.infolist():
+            member = source_archive.read(info)
+            if info.filename == "[Content_Types].xml":
+                member = (
+                    b'<!DOCTYPE Types [<!ENTITY xxe SYSTEM '
+                    b'"file:///etc/passwd">]>' + member
+                )
+            output_archive.writestr(info, member)
+
+    with pytest.raises(DefusedXmlException):
+        validate_xlsx_archive(
+            hostile.getvalue(),
+            max_uncompressed_bytes=1_000_000,
+            max_entries=100,
+            max_cells=100,
+        )

@@ -11,6 +11,7 @@ and the model is instructed not to use them as a decision signal.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Callable, Optional
 
 from pydantic import BaseModel, Field, ValidationError
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field, ValidationError
 from .. import config
 from ..core import llm
 from .domain import LINK_ERROR, MATCH, REVIEW, Verdict
+
+logger = logging.getLogger(__name__)
 
 
 class Adjudication(BaseModel):
@@ -157,9 +160,17 @@ def _adjudicate_chunk(client, chunk: list[tuple[Verdict, dict]],
                 f"{schema_hint}. Re-answer with JSON only.\n\nRows:\n"
                 + json.dumps(questions, ensure_ascii=False, indent=1)
             )
-        except Exception as e:  # API/network failure must not kill the run
+        except Exception:  # API/network failure must not kill the run
+            logger.info(
+                "LLM adjudication provider request failed; keeping rows for "
+                "human review",
+                exc_info=True,
+            )
             for v, _ in chunk:
-                v.notes.append(f"LLM adjudication unavailable: {e}")
+                v.notes.append(
+                    "LLM adjudication unavailable: provider request failed — "
+                    "kept for human review."
+                )
             return
 
     if not batch:
@@ -219,5 +230,6 @@ def summarize_run(verdicts: list[Verdict], counts: dict, warnings: list[str],
             if isinstance(data, dict) and data.get("zh") and data.get("en"):
                 return {"zh": str(data["zh"]), "en": str(data["en"])}
     except Exception:
-        pass
+        logger.info("LLM run summary failed; using deterministic fallback",
+                    exc_info=True)
     return fallback

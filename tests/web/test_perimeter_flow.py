@@ -146,21 +146,78 @@ def test_cached_upload_keeps_run_filename_and_retry_does_not_promote(
 
 
 def test_preview_offers_editable_export_window(client, tmp_path):
-    import tempfile, os
-    from tests import fixtures
-    fd, pp = tempfile.mkstemp(suffix=".xlsx"); os.close(fd)
-    fd, dp = tempfile.mkstemp(suffix=".xlsx"); os.close(fd)
-    fixtures.build_plog(pp)
-    fixtures.build_dmr(dp)
-    mime = ("application/vnd.openxmlformats-officedocument"
-            ".spreadsheetml.sheet")
-    r = client.post("/upload", files={
-        "plog": ("p.xlsx", open(pp, "rb").read(), mime),
-        "dmr": ("d.xlsx", open(dp, "rb").read(), mime)})
-    os.unlink(pp); os.unlink(dp)
+    r = _upload_without_perimeter(client, tmp_path)
     assert r.status_code == 200
     body = r.text
     # date inputs exist and are prefilled with the metadata-detected window
     assert 'name="window_from"' in body and 'name="window_to"' in body
     assert 'value="2026-01-01"' in body and 'value="2026-07-20"' in body
     assert "Clear either date to disable the window checks" in body
+
+
+def test_run_cannot_start_when_its_perimeter_snapshot_is_missing(
+        client, tmp_path, monkeypatch):
+    from app.core import db
+
+    plog = tmp_path / "missing-p.xlsx"
+    dmr = tmp_path / "missing-d.xlsx"
+    fixtures.build_plog(str(plog))
+    fixtures.build_dmr(str(dmr))
+    db.run_create(
+        "missing-perim", plog_path=str(plog), dmr_path=str(dmr),
+        perimeter_hash="not-in-cache", perimeter_uploaded=False,
+        perimeter_name="gone.xlsx",
+    )
+    started = []
+    monkeypatch.setattr(runs, "start_run", lambda run_id: started.append(run_id))
+    response = client.post("/runs/missing-perim/start", data={})
+    assert response.status_code == 409
+    assert not started
+    assert db.run_get("missing-perim")["status"] == "pending"
+    db.run_update("missing-perim", status="error", phase="error")
+    retry = client.post("/runs/missing-perim/start", data={})
+    assert retry.status_code == 409
+    assert db.run_get("missing-perim")["status"] == "error"
+
+
+@pytest.mark.parametrize("window_from,window_to", [
+    ("not-a-date", "2026-07-20"),
+    ("2026-01-01", "2026-99-99"),
+    ("2026-07-20", "2026-01-01"),
+])
+def test_run_rejects_invalid_window_before_queueing(
+        client, tmp_path, monkeypatch, window_from, window_to):
+    from app.core import db
+
+    response = _upload_without_perimeter(client, tmp_path)
+    run_id = _run_id(response)
+    started = []
+    monkeypatch.setattr(runs, "start_run", lambda rid: started.append(rid))
+
+    response = client.post(
+        f"/runs/{run_id}/start",
+        data={"window_from": window_from, "window_to": window_to},
+        follow_redirects=False,
+    )
+    assert response.status_code == 422
+    assert started == []
+    assert db.run_get(run_id)["status"] == "pending"
+
+
+def test_clearing_one_window_bound_disables_both(
+        client, tmp_path, monkeypatch):
+    from app.core import db
+
+    response = _upload_without_perimeter(client, tmp_path)
+    run_id = _run_id(response)
+    monkeypatch.setattr(runs, "start_run", lambda _rid: None)
+
+    response = client.post(
+        f"/runs/{run_id}/start",
+        data={"window_from": "", "window_to": "2026-07-20"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    options = db.run_get(run_id)["options_json"]
+    assert '"window_from": ""' in options
+    assert '"window_to": ""' in options

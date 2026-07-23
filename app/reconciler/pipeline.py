@@ -11,6 +11,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
+import logging
 from typing import Callable, Optional
 
 from .. import config
@@ -23,25 +24,74 @@ from .domain import (ENGAGEMENT_CAVEAT, LINK_ERROR, MATCH,  # noqa: F401
                      NO_BLOGGER_NOT_IN_PERIMETER, NO_POST,
                      NO_POST_IN_PERIMETER, REVIEW, S_TEXT,
                      Candidate, Verdict)
-from .links import Resolution, ensure_author, resolve_link
+from .links import Resolution, ensure_author, normalize_url, resolve_link
+
+logger = logging.getLogger(__name__)
+
+
+# Hard ceiling on Python-level name-ladder pair comparisons per run. Exact
+# note/author joins never consume this budget. Once exhausted, ambiguous rows
+# remain REVIEW/LINK_ERROR without suggestions instead of attempting a
+# user-controlled PLOG×DMR Cartesian product.
+MAX_NAME_SCAN_COMPARISONS = 2_000_000
 
 
 @dataclass
 class DmrIndexes:
     by_post_id: dict[str, DmrRow]
     by_author_id: dict[str, list[DmrRow]]
+    duplicate_post_ids: dict[str, list[DmrRow]]
+    username_present: bool
+    username_complete: bool
     rows: list[DmrRow]
+
+
+@dataclass
+class NameScanBudget:
+    rows: list[DmrRow]
+    remaining: int = MAX_NAME_SCAN_COMPARISONS
+
+    def __post_init__(self) -> None:
+        self.cache: dict[str, tuple[list[tuple[DmrRow, str]], bool]] = {}
+
+    def lookup(self, plog_name: str) -> tuple[list[tuple[DmrRow, str]], bool]:
+        key = norm(plog_name)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached
+        cost = len(self.rows)
+        if cost > self.remaining:
+            result = ([], False)
+        else:
+            self.remaining -= cost
+            result = (scan_by_name(plog_name, self.rows), True)
+        self.cache[key] = result
+        return result
 
 
 def build_indexes(dmr: DmrParse) -> DmrIndexes:
     by_post_id: dict[str, DmrRow] = {}
     by_author_id: dict[str, list[DmrRow]] = {}
+    post_rows: dict[str, list[DmrRow]] = {}
     for r in dmr.rows:
-        if r.post_id and r.post_id not in by_post_id:
-            by_post_id[r.post_id] = r
-        if r.username:
-            by_author_id.setdefault(r.username, []).append(r)
-    return DmrIndexes(by_post_id=by_post_id, by_author_id=by_author_id, rows=dmr.rows)
+        post_id = (r.post_id or "").strip().lower()
+        author_id = (r.username or "").strip().lower()
+        if post_id:
+            post_rows.setdefault(post_id, []).append(r)
+        if author_id:
+            by_author_id.setdefault(author_id, []).append(r)
+    duplicates = {post_id: rows for post_id, rows in post_rows.items()
+                  if len(rows) > 1}
+    by_post_id = {post_id: rows[0] for post_id, rows in post_rows.items()
+                  if len(rows) == 1}
+    return DmrIndexes(
+        by_post_id=by_post_id,
+        by_author_id=by_author_id,
+        duplicate_post_ids=duplicates,
+        username_present=bool(by_author_id),
+        username_complete=bool(dmr.rows) and all(r.username for r in dmr.rows),
+        rows=dmr.rows,
+    )
 
 
 # ------------------------------------------------------------- name matching
@@ -83,7 +133,7 @@ def rank_candidates(prow: PlogRow, hits: list[tuple[DmrRow, str]],
         ))
     cands.sort(key=lambda c: (c.date_delta_days is None,
                               abs(c.date_delta_days or 0)))
-    return cands
+    return cands[:config.MAX_CANDIDATES_PER_VERDICT]
 
 
 # -------------------------------------------------------- perimeter split
@@ -121,6 +171,13 @@ def apply_perimeter(v: Verdict, prow: PlogRow, perim) -> None:
 
         hits = perim.scan_name(prow.name)
         v.status = NO_BLOGGER_NOT_IN_PERIMETER
+        if perim.last_scan_skipped:
+            v.perimeter_note = (
+                "Perimeter name suggestions omitted after the per-run safety "
+                "budget was exhausted; REDBOOK_ID non-membership is unchanged."
+            )
+            v.notes.append(v.perimeter_note)
+            return
         if len(hits) == 1:
             row, method = hits[0]
             _fill_perimeter_evidence(v, row, method)
@@ -152,6 +209,13 @@ def apply_perimeter(v: Verdict, prow: PlogRow, perim) -> None:
 
     if v.status == LINK_ERROR:
         hits = perim.scan_name(prow.name)
+        if perim.last_scan_skipped:
+            v.perimeter_note = (
+                "Perimeter name suggestions omitted after the per-run safety "
+                "budget was exhausted; link-error verdict unchanged."
+            )
+            v.notes.append(v.perimeter_note)
+            return
         if hits:
             v.perimeter_candidates = [
                 f"{r.get('name') or r.get('namebis')} "
@@ -182,14 +246,14 @@ def _fill_match_evidence(v: Verdict, prow: PlogRow, drow: DmrRow) -> None:
 
 def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
               window: tuple[Optional[date], Optional[date]],
-              sibling_authors: Optional[dict[str, set[str]]] = None) -> Verdict:
-    """Tiers 1–3 for one PLOG row, given its (attempted) link resolution.
+              name_scans: Optional[NameScanBudget] = None
+              ) -> Verdict:
+    """Tiers 1–3 for one PLOG row, given its attempted link resolution.
 
-    sibling_authors maps norm(NAME) → author ids established deterministically
-    by OTHER rows of the same blogger (their link resolution, or the Username
-    of their Tier-1-joined DMR row). When this row's note resolved but its
-    detail is dead/blocked, a unique sibling author id still lets Tier 2
-    decide 无博主/无帖子 — same tracker, same NAME, same KOL."""
+    Display names are never promoted to account identity. They are mutable and
+    non-unique, so only a note-id join or this row's resolved author id may
+    produce a deterministic verdict.
+    """
     v = Verdict(
         campaign=prow.campaign, no=prow.no, name=prow.name,
         post_date=prow.post_date.isoformat() if prow.post_date else None,
@@ -204,17 +268,46 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             f"{wf}..{wt} — an absent post is expected-missing, not a DMR gap."
         )
 
-    v.resolved_note_id = res.note_id
-    v.resolved_author_id = res.author_id
+    note_id = (res.note_id or "").strip().lower()
+    author_id = (res.author_id or "").strip().lower()
+    v.resolved_note_id = note_id
+    v.resolved_author_id = author_id
     v.resolved_author_name = res.author_name
     v.resolution_source = res.source
     v.resolution_error = res.error
 
-    name_hits = scan_by_name(prow.name, idx.rows)
+    name_lookup: Optional[tuple[list[tuple[DmrRow, str]], bool]] = None
+
+    def name_hits() -> list[tuple[DmrRow, str]]:
+        nonlocal name_lookup
+        if name_lookup is None:
+            name_lookup = (name_scans.lookup(prow.name) if name_scans
+                           else (scan_by_name(prow.name, idx.rows), True))
+            if not name_lookup[1]:
+                v.notes.append(
+                    "Name-candidate scan skipped after the per-run safety "
+                    "budget was exhausted; deterministic ID evidence is "
+                    "unchanged, but no heuristic suggestions are shown."
+                )
+        return name_lookup[0]
 
     # ---- Tier 1: exact post match via resolved note id
     if res.ok:
-        drow = idx.by_post_id.get(res.note_id)
+        duplicate_rows = idx.duplicate_post_ids.get(note_id)
+        if duplicate_rows:
+            v.status = REVIEW
+            v.tier = "1:duplicate-post-id"
+            v.review_reason = (
+                "DMR包含重复PostID / DMR contains duplicate rows for the "
+                "resolved note id; no row was selected automatically"
+            )
+            v.candidates = rank_candidates(
+                prow, [(row, "duplicate-post-id") for row in duplicate_rows],
+                keep_out_of_window=True,
+            )
+            return v
+
+        drow = idx.by_post_id.get(note_id)
         if drow is not None:
             v.status = MATCH
             v.tier = "1:note-id-join"
@@ -227,24 +320,8 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 )
             return v
 
-        # Note resolved but detail unavailable (dead/WAF-blocked note): a
-        # unique author id from a sibling row of the same blogger is still a
-        # deterministic Tier-2 signal.
-        author_via_sibling = False
-        if not res.author_id and sibling_authors:
-            sib = sibling_authors.get(norm(prow.name)) or set()
-            if len(sib) == 1:
-                res.author_id = next(iter(sib))
-                v.resolved_author_id = res.author_id
-                author_via_sibling = True
-                v.notes.append(
-                    "Author id established from another PLOG row of the same "
-                    "blogger (identical NAME) — this row's note detail is "
-                    "dead/blocked, but blogger presence is still decidable."
-                )
-
         # ---- Tier 2: blogger presence via author id
-        if res.author_id and not idx.by_author_id:
+        if author_id and not idx.username_present:
             # The DMR file has no usable Username column at all — a blanket
             # 无博主 for every row would be a schema artifact, not a finding.
             v.status = REVIEW
@@ -253,26 +330,27 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                 "DMR缺少Username列，无法判定无博主/无帖子 / DMR has no usable "
                 "Username column; blogger presence cannot be decided"
             )
-            v.candidates = rank_candidates(prow, name_hits)
+            v.candidates = rank_candidates(prow, name_hits())
             return v
-        if res.author_id:
-            author_rows = idx.by_author_id.get(res.author_id)
+        if author_id:
+            author_rows = idx.by_author_id.get(author_id)
             if author_rows:
                 v.status = NO_POST
-                v.tier = "2:author-id-sibling" if author_via_sibling else "2:author-id"
+                v.tier = "2:author-id"
                 v.notes.append(
-                    f"DMR tracks author {res.author_id} "
+                    f"DMR tracks author {author_id} "
                     f"({author_rows[0].blogger!r}, {len(author_rows)} post(s)) but "
-                    f"this note {res.note_id} is not among them."
+                    f"this note {note_id} is not among them."
                 )
                 # Cross-check: name scan should not point at a different author.
                 foreign = [
-                    (r, m) for r, m in name_hits
-                    if r.username and r.username != res.author_id
+                    (r, m) for r, m in name_hits()
+                    if r.username and r.username != author_id
                     and ((m == METHOD_CJK and len(cjk(prow.name)) >= 2)
                          or (m == METHOD_NORM and len(norm(prow.name)) >= 4))
                 ]
-                if foreign and not any(r.username == res.author_id for r, _ in name_hits):
+                if foreign and not any(r.username == author_id
+                                       for r, _ in name_hits()):
                     v.status = REVIEW
                     v.tier = "2:author-id+name-conflict"
                     v.review_reason = (
@@ -281,17 +359,27 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
                         "different Username"
                     )
                 v.candidates = rank_candidates(
-                    prow, [(r, m) for r, m in name_hits] or
+                    prow, name_hits() or
                     [(r, "same-author") for r in author_rows]
                 )
                 return v
             # author absent from DMR
+            if not idx.username_complete:
+                v.status = REVIEW
+                v.tier = "2:partial-username-column"
+                v.review_reason = (
+                    "DMR部分行缺少Username，无法可靠判定无博主 / DMR Username "
+                    "index is incomplete, so absence from it cannot prove the "
+                    "blogger is untracked"
+                )
+                v.candidates = rank_candidates(prow, name_hits())
+                return v
             v.status = NO_BLOGGER
-            v.tier = "2:author-id-sibling" if author_via_sibling else "2:author-id"
+            v.tier = "2:author-id"
             # Cross-check: high-precision name hit contradicts "no blogger".
             # Length floors keep 1-char CJK / short norm names from flipping
             # correct verdicts to REVIEW via coincidental substrings.
-            strong = [(r, m) for r, m in name_hits
+            strong = [(r, m) for r, m in name_hits()
                       if (m == METHOD_CJK and len(cjk(prow.name)) >= 2)
                       or (m == METHOD_NORM and len(norm(prow.name)) >= 4)]
             if strong:
@@ -317,13 +405,13 @@ def match_row(prow: PlogRow, idx: DmrIndexes, res: Resolution,
             "链接已解析但无法获取作者ID（TikHub不可用）/ note resolved but author id "
             "unavailable, cannot decide 无博主 vs 无帖子"
         )
-        v.candidates = rank_candidates(prow, name_hits)
+        v.candidates = rank_candidates(prow, name_hits())
         return v
 
     # ---- Link never resolved → LINK_ERROR + Tier 3 candidates
     v.status = LINK_ERROR
     v.tier = "3:name-heuristic"
-    v.candidates = rank_candidates(prow, name_hits)
+    v.candidates = rank_candidates(prow, name_hits())
     if v.candidates:
         c = v.candidates[0]
         v.name_method = c.name_method
@@ -358,50 +446,49 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
     done = 0
     report("resolve", 0, f"Resolving links 0/{total}…")
 
-    def _resolve(i_row: tuple[int, PlogRow]) -> tuple[int, Resolution]:
-        i, prow = i_row
+    grouped: dict[str, list[tuple[int, PlogRow]]] = {}
+    for i, prow in enumerate(plog.rows):
+        grouped.setdefault(normalize_url(prow.post_link), []).append((i, prow))
+
+    def _resolve(item: tuple[str, list[tuple[int, PlogRow]]]
+                 ) -> tuple[list[int], Resolution]:
+        _url_key, rows = item
+        prow = rows[0][1]
         res = resolve_link(prow.post_link, run_counter=tikhub_counter,
                            retry_failed=retry_failed_links)
         # Fetch author detail only when the note-id join is going to miss —
         # this is the money case (无帖子 vs 无博主) and needs TikHub once.
-        if res.ok and res.note_id not in idx.by_post_id:
+        resolved_note_id = (res.note_id or "").strip().lower()
+        if (res.ok and resolved_note_id not in idx.by_post_id
+                and resolved_note_id not in idx.duplicate_post_ids):
             res = ensure_author(prow.post_link, res, run_counter=tikhub_counter,
                                 retry_failed=retry_failed_links)
-        return i, res
+        return [i for i, _ in rows], res
 
     with ThreadPoolExecutor(max_workers=config.TIKHUB_CONCURRENCY) as pool:
-        for i, res in pool.map(_resolve, enumerate(plog.rows)):
-            resolutions[i] = res
-            done += 1
+        for indexes, res in pool.map(_resolve, grouped.items()):
+            for i in indexes:
+                resolutions[i] = res
+            done += len(indexes)
             report("resolve", done, f"Resolving links {done}/{total}…")
-
-    # Deterministic author ids per blogger name, established by any row's
-    # resolution or Tier-1 join — lets Tier 2 decide rows whose own note
-    # detail is dead/blocked (sibling inference).
-    sibling_authors: dict[str, set[str]] = {}
-    for i, prow in enumerate(plog.rows):
-        res = resolutions[i]
-        if not res.ok:
-            continue
-        key = norm(prow.name)
-        if not key:
-            continue
-        if res.author_id:
-            sibling_authors.setdefault(key, set()).add(res.author_id)
-        drow = idx.by_post_id.get(res.note_id)
-        if drow is not None and drow.username:
-            sibling_authors.setdefault(key, set()).add(drow.username)
 
     # Phase 2: tiered matching (fast, in order). A bug on one row must not
     # take down the run — degrade that row to REVIEW with the error attached.
     verdicts: list[Verdict] = []
+    name_scans = NameScanBudget(
+        idx.rows, remaining=MAX_NAME_SCAN_COMPARISONS
+    )
     for i, prow in enumerate(plog.rows):
         try:
             v = match_row(prow, idx, resolutions[i], window,
-                          sibling_authors=sibling_authors)
+                          name_scans=name_scans)
             apply_perimeter(v, prow, perimeter)
             verdicts.append(v)
         except Exception as e:
+            logger.exception(
+                "matching failed for campaign=%r row=%s",
+                prow.campaign, prow.excel_row,
+            )
             v = Verdict(
                 campaign=prow.campaign, no=prow.no, name=prow.name,
                 post_date=prow.post_date.isoformat() if prow.post_date else None,
@@ -409,33 +496,73 @@ def run_pipeline(plog: PlogParse, dmr: DmrParse,
                 status=REVIEW, tier="error",
                 review_reason=f"内部错误 / internal error: {type(e).__name__}",
             )
-            v.notes.append(f"match_row failed: {e}")
+            v.notes.append(
+                "An internal matching error was recorded in server logs; "
+                "this row was not classified automatically."
+            )
             verdicts.append(v)
         report("match", i + 1, f"Matching rows {i + 1}/{total}…")
     return verdicts
 
 
 def matched_post_ids(verdicts: list[Verdict]) -> set[str]:
-    return {v.matched_post_id for v in verdicts if v.matched_post_id}
+    return {
+        v.matched_post_id.strip().lower()
+        for v in verdicts
+        if v.matched_post_id and v.matched_post_id.strip()
+    }
 
 
 def resolved_author_ids(verdicts: list[Verdict]) -> set[str]:
-    return {v.resolved_author_id for v in verdicts if v.resolved_author_id}
+    return {
+        v.resolved_author_id.strip().lower()
+        for v in verdicts
+        if v.resolved_author_id and v.resolved_author_id.strip()
+    }
 
 
-def status_counts(verdicts: list[Verdict]) -> dict[str, int]:
+def status_counts(verdicts: list[Verdict] | list[dict]) -> dict[str, int]:
+    def value(v, key, default=None):
+        return v.get(key, default) if isinstance(v, dict) else getattr(v, key, default)
+
     counts: dict[str, int] = {}
     for v in verdicts:
-        counts[v.status] = counts.get(v.status, 0) + 1
-    if any(v.name_mislabel for v in verdicts):
-        counts["MATCH_name_mislabel"] = sum(1 for v in verdicts if v.name_mislabel)
+        status = value(v, "status", REVIEW)
+        counts[status] = counts.get(status, 0) + 1
+    if any(value(v, "name_mislabel", False) for v in verdicts):
+        counts["MATCH_name_mislabel"] = sum(
+            1 for v in verdicts if value(v, "name_mislabel", False)
+        )
     return counts
 
 
-def summary_buckets(counts: dict[str, int]) -> dict[str, int]:
+def summary_buckets(verdicts: list[Verdict] | list[dict]) -> dict[str, int]:
     """The actionable grouping when a perimeter is in play: genuine DMR gaps
     (missed posts + in-perimeter absent bloggers) vs out-of-scope bloggers."""
+    if isinstance(verdicts, dict):
+        raise TypeError(
+            "summary_buckets requires row verdicts so out-of-window rows can "
+            "be excluded; aggregate counts are insufficient"
+        )
+    def value(v, key, default=None):
+        return v.get(key, default) if isinstance(v, dict) else getattr(v, key, default)
+
     return {
-        "dmr_gaps": counts.get(NO_POST, 0) + counts.get(NO_POST_IN_PERIMETER, 0),
-        "outside_perimeter": counts.get(NO_BLOGGER_NOT_IN_PERIMETER, 0),
+        "dmr_gaps": sum(
+            value(v, "status") in {NO_POST, NO_POST_IN_PERIMETER}
+            and not value(v, "out_of_window", False)
+            for v in verdicts
+        ),
+        "expected_missing": sum(
+            value(v, "status") in {
+                NO_POST, NO_BLOGGER, NO_POST_IN_PERIMETER,
+                NO_BLOGGER_NOT_IN_PERIMETER,
+            } and value(v, "out_of_window", False)
+            for v in verdicts
+        ),
+        "outside_perimeter": sum(
+            value(v, "status") == NO_BLOGGER_NOT_IN_PERIMETER
+            and not value(v, "out_of_window", False)
+            for v in verdicts
+        ),
     }

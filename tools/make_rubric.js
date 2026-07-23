@@ -4,11 +4,18 @@ const {
   LevelFormat, PageBreak,
 } = require("docx");
 const fs = require("fs");
+const path = require("path");
 
 const INK = "111111";
 const MUTED = "6b6b6b";
 const LINE = "d9d6d0";
 const WASH = "f5f4f1";
+const BODY_FONT = {
+  ascii: "Calibri",
+  hAnsi: "Calibri",
+  eastAsia: "Arial Unicode MS",
+  cs: "Calibri",
+};
 
 const bullets = {
   config: [{
@@ -20,8 +27,12 @@ const bullets = {
   }],
 };
 
-const en = (t, opts = {}) => new TextRun({ text: t, size: 20, color: INK, ...opts });
-const zh = (t, opts = {}) => new TextRun({ text: t, size: 20, color: MUTED, ...opts });
+const en = (t, opts = {}) => new TextRun({
+  text: t, size: 20, color: INK, font: BODY_FONT, ...opts,
+});
+const zh = (t, opts = {}) => new TextRun({
+  text: t, size: 20, color: MUTED, font: BODY_FONT, ...opts,
+});
 
 function para(children, opts = {}) { return new Paragraph({ children, spacing: { after: 80 }, ...opts }); }
 function bullet(enText, zhText) {
@@ -61,7 +72,7 @@ function headCell(width, text) {
 
 // column-spec table: Column | Required | Rule (EN over ZH)
 function specTable(rows) {
-  const W = [1750, 1300, 6310];
+  const W = [1750, 1500, 6110];
   return new Table({
     columnWidths: W,
     width: { size: 9360, type: WidthType.DXA },
@@ -80,7 +91,7 @@ function specTable(rows) {
 
 const doc = new Document({
   numbering: bullets,
-  styles: { default: { document: { run: { font: "Calibri", size: 20 } } } },
+  styles: { default: { document: { run: { font: BODY_FONT, size: 20 } } } },
   sections: [{
     properties: { page: { margin: { top: 1080, bottom: 1080, left: 1080, right: 1080 } } },
     children: [
@@ -107,8 +118,8 @@ const doc = new Document({
              "表头行可在前 15 行内的任意位置——上方可以有说明行。每张工作表只放一个表头、一张表。"),
       bullet("Never merge two records into one row, and never split one record across two rows.",
              "不要把两条记录并进一行，也不要把一条记录拆成两行。"),
-      bullet("A file in a different layout will still be accepted, but it triggers a manual column-mapping review — following this rubric skips that step.",
-             "格式不符的文件也能上传，但会多出一步人工列映射审核——按本规范来就能跳过。"),
+      bullet("A different layout enters manual column mapping only when the uploader explicitly consents, Claude is configured, and an administrator approves the proposal; otherwise it is rejected. Following this rubric skips that flow.",
+             "格式不同时，只有上传者明确同意、系统已配置 Claude、且管理员审核通过建议后，才会进入人工列映射流程；否则文件会被拒绝。按本规范来可跳过该流程。"),
 
       h1("1. PLOG tracker · PLOG 投放追踪表"),
       para([en("Sheet name: ", { bold: true }), new TextRun({ text: "MASTER KOL LIST", size: 20, font: "Courier New" }),
@@ -130,11 +141,11 @@ const doc = new Document({
          "Must begin with 报备 (declared/paid) or 软植 (soft placement) — e.g. 报备图文, 软植图文, 报备视频.",
          "必须以「报备」或「软植」开头——如 报备图文、软植图文、报备视频。"],
         ["LEVEL", "YES 必填",
-         "One of: 头部 / 腰部 / 尾部 / 底部 / KOC. If left blank, the tool tiers the row by FAN BASE instead (≤200K KOC · 200–400K BOT · 400K–1M MID · 1M+ TOP) and flags it for review.",
-         "只能填：头部 / 腰部 / 尾部 / 底部 / KOC。留空时工具会按粉丝量自动分层（≤200K KOC · 200–400K BOT · 400K–1M MID · 1M+ TOP）并标注提醒。"],
+         "One of: 头部 / 腰部 / 尾部 / 底部 / KOC. Blank, 待定, and ? fall back to FAN BASE (≥1000K TOP · ≥400K MID · ≥200K BOT · otherwise KOC) and are flagged as V12. Any other label stays unclassified.",
+         "只能填：头部 / 腰部 / 尾部 / 底部 / KOC。留空、待定或 ? 时按粉丝量回退分层（≥1000K TOP · ≥400K MID · ≥200K BOT · 其余 KOC），并以 V12 提醒；其他标签保持未分类。"],
         ["FAN BASE（K)", "YES 必填",
-         "Follower count in THOUSANDS: write 130 for 130,000 followers; 1741 for 1.74 million. Do not write the raw count (130000).",
-         "粉丝量，单位为「千」：13 万粉写 130；174 万粉写 1741。不要写原始数（130000）。"],
+         "Use ONE unit for the entire workbook and choose the same unit on the report form. Recommended: thousands (130 means 130,000). Raw mode is also supported (130000 means 130,000). Never mix units row by row.",
+         "整份工作簿只能使用一种单位，并在报告表单中选择相同单位。建议用「千」（130 表示 13 万）；也支持原始粉丝数模式（130000 表示 13 万）。绝不能逐行混用单位。"],
         ["POST DATE", "YES 必填",
          "The date the post went live, as a real Excel date cell (preferred) or text like 2026-06-25. Four-digit years, please. Never a bare number.",
          "发帖日期。最好用 Excel 日期格式，文字形式请写 2026-06-25。年份写四位。不要填纯数字。"],
@@ -147,7 +158,7 @@ const doc = new Document({
         ["PRICE", "YES 必填",
          "Collaboration price in CNY, number only (23000, not ¥23,000元).",
          "合作价格（人民币），只填数字（23000，不要写 ¥ 或 元）。"],
-        ["NO / CAMPAIGN / MCN", "Recommended 建议",
+        ["NO / CAMPAIGN / MCN", "Suggested 建议",
          "NO restarts from 1 within each campaign. CAMPAIGN may be written once at the top of its section — rows below inherit it.",
          "NO 在每个 campaign 内从 1 重新编号。CAMPAIGN 可只在段落首行填写，下面的行自动沿用。"],
         ["CPM / CPE", "Optional 选填",
@@ -183,7 +194,7 @@ const doc = new Document({
         ["Likes_Retweet / Share_Favorites / Engagement / Comments", "YES 必填",
          "First-crawl engagement snapshot, whole numbers. (These are context only — the tool never uses engagement to decide a match.)",
          "首次抓取的互动快照，整数。（仅作参考——工具绝不用互动数判断匹配。）"],
-        ["Link", "Recommended 建议",
+        ["Link", "Suggested 建议",
          "The post URL; a hyperlink whose target embeds the note id is ideal (used as a cross-check against PostID).",
          "帖子链接；最好是内嵌笔记 ID 的超链接（用于和 PostID 交叉校验）。"],
         ["Export window 导出窗口", "YES 必须",
@@ -202,20 +213,29 @@ const doc = new Document({
       bullet("Headers match this rubric word-for-word.", "表头与本规范逐字一致。"),
       bullet("PLOG: every row has NAME + POST LINK; no two rows share a link.", "PLOG：每行都有 NAME 和 POST LINK；没有两行共用同一链接。"),
       bullet("PLOG: TTL ENGAGEMENT = LIKE + COLLECTION + COMMENT on every row.", "PLOG：每行 TTL ENGAGEMENT 等于三项互动之和。"),
-      bullet("PLOG: FAN BASE is in thousands; TYPE starts with 报备/软植; LEVEL uses the five allowed labels.", "PLOG：粉丝量以千为单位；TYPE 以报备/软植开头；LEVEL 只用五个规定标签。"),
+      bullet("PLOG: FAN BASE uses one declared workbook unit; TYPE starts with 报备/软植; LEVEL uses the five allowed labels or an approved fallback placeholder.", "PLOG：整份表的粉丝量使用同一个已声明单位；TYPE 以报备/软植开头；LEVEL 只用五个规定标签或允许回退的占位值。"),
       bullet("DMR: PostID column formatted as Text, 24-hex values intact; Username column present and filled.", "DMR：PostID 列为文本格式、24 位十六进制完整；Username 列存在且有值。"),
       bullet("DMR: the From/To window line is present and covers the campaign dates.", "DMR：From/To 窗口行存在，且覆盖投放日期范围。"),
 
       new Paragraph({
         spacing: { before: 300 },
         border: { top: { style: BorderStyle.SINGLE, size: 4, color: LINE, space: 6 } },
-        children: [zh("Questions or a source system that cannot match this layout? Upload the file anyway — the tool will propose a column mapping for human approval — and tell the team so this rubric can be extended.  如有疑问，或源系统实在无法输出此格式：文件仍可直接上传（工具会给出列映射建议、经人工审核后使用），同时请告知团队，以便扩充本规范。", { size: 17 })],
+        children: [zh("Questions or a source system that cannot match this layout? Ask an administrator whether the consent-gated mapping flow is configured; the file is rejected unless the uploader opts in, Claude is available, and an administrator approves the proposal. Tell the team so this rubric can be extended.  如有疑问，或源系统实在无法输出此格式：请先让管理员确认受同意机制保护的列映射流程已配置；只有上传者明确同意、Claude 可用且管理员审核通过建议后，文件才会被接受。也请告知团队，以便扩充本规范。", { size: 17 })],
       }),
     ],
   }],
 });
 
-Packer.toBuffer(doc).then((buf) => {
-  fs.writeFileSync(process.argv[2] || "rubric.docx", buf);
-  console.log("written");
-});
+const outputPath = path.resolve(
+  process.argv[2] || path.join(__dirname, "..", "docs", "DMR_Reconciler_File_Rubric.docx"),
+);
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+Packer.toBuffer(doc)
+  .then((buf) => {
+    fs.writeFileSync(outputPath, buf);
+    console.log(`written to ${outputPath}`);
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

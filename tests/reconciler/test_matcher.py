@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.reconciler.pipeline import (LINK_ERROR, MATCH, NAME_MISLABEL, NO_BLOGGER, NO_POST,
-                         REVIEW, run_pipeline)
+                         REVIEW, run_pipeline, summary_buckets)
 from app.reconciler.parsers import parse_dmr, parse_plog
 from app.reconciler.reverse_audit import reverse_audit
 from tests import fixtures
@@ -92,6 +92,9 @@ def test_out_of_window_warns_but_does_not_flag(verdicts):
     v = by[("PLOG #001", "6")]  # 冬日限定, 2025-12-01
     assert v.out_of_window
     assert "预期缺失" in v.column_s()
+    buckets = summary_buckets(verdicts[-1])
+    assert buckets["expected_missing"] == 1
+    assert buckets["dmr_gaps"] == 1
 
 
 def test_duplicate_blogger_across_campaigns(verdicts):
@@ -103,16 +106,15 @@ def test_duplicate_blogger_across_campaigns(verdicts):
     assert v3.matched_post_id == fixtures.N_DUP_C3
 
 
-def test_sibling_author_inference(verdicts):
-    """A note that resolves but whose detail is dead/blocked still gets a
-    deterministic Tier-2 verdict when a sibling row of the same blogger
-    established the author id."""
+def test_display_name_is_not_promoted_to_author_identity(verdicts):
+    """A mutable/non-unique display name cannot establish account identity
+    for a different row whose own author detail is unavailable."""
     by, *_ = verdicts
     v = by[("PLOG #003", "2")]
-    assert v.status == NO_POST
-    assert v.tier == "2:author-id-sibling"
-    assert v.resolved_author_id == fixtures.U_MOCHI
-    assert v.column_s() == "无帖子"
+    assert v.status == REVIEW
+    assert v.tier == "1:resolved-no-author"
+    assert not v.resolved_author_id
+    assert v.column_s().startswith("人工复核")
 
 
 def test_reverse_audit_finds_untracked_post(verdicts):

@@ -4,3 +4,4 @@ __pycache__/
 data/
 .pytest_cache/
 dmr_reconciler.egg-info/
+tools/node_modules/

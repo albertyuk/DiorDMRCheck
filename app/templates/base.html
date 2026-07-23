@@ -25,9 +25,14 @@
               text-align:center; white-space:nowrap; }
   .headnav { grid-column:3; justify-self:end; font-size:.68rem;
              letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
-  .headnav a { color:var(--ink); text-decoration:none; margin-left:1.2rem;
-               border-bottom:1px solid transparent; padding-bottom:2px; }
-  .headnav a:hover { border-bottom-color:var(--ink); }
+  .headnav form { display:inline; margin:0; }
+  .headnav a, .headnav .nav-action {
+      color:var(--ink); text-decoration:none; margin-left:1.2rem;
+      border:0; border-bottom:1px solid transparent; padding:0 0 2px;
+      background:none; font:inherit; letter-spacing:inherit;
+      text-transform:inherit; line-height:inherit; }
+  .headnav a:hover, .headnav .nav-action:hover {
+      background:none; color:var(--ink); border-bottom-color:var(--ink); }
   .langtoggle { grid-column:1; justify-self:start; font-size:.68rem;
                 letter-spacing:.14em; text-transform:uppercase; }
   .langtoggle a { color:var(--ink); text-decoration:none;
@@ -224,7 +229,9 @@
     {% if cu %}
       <span>{{ cu.display or cu.username }}</span>
       <a href="/team">{{ t("Team") }}</a>
-      <a href="/logout">{{ t("Sign out") }}</a>
+      <form method="post" action="/logout">
+        <button type="submit" class="nav-action">{{ t("Sign out") }}</button>
+      </form>
     {% endif %}
   </nav>
   <div class="tagline">{{ t("PLOG · DMR · Xiaohongshu") }}</div>

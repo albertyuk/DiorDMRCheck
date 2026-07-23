@@ -12,6 +12,7 @@ import io
 import json
 import threading
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -91,7 +92,7 @@ def client(tmp_path, monkeypatch):
     _clear_mapping_cache()
 
 
-def _upload_run(client, plog_bytes):
+def _upload_run(client, plog_bytes, *, allow_header_ai=True):
     from tests import fixtures
     import tempfile
     import os
@@ -105,7 +106,8 @@ def _upload_run(client, plog_bytes):
     return client.post("/upload", files={
         "plog": ("cn_tracker.xlsx", plog_bytes, mime),
         "dmr": ("dmr.xlsx", dmr_bytes, mime),
-    }, follow_redirects=False)
+    }, data={"allow_header_ai": "1" if allow_header_ai else "0"},
+        follow_redirects=False)
 
 
 # ----------------------------------------------------------------- invariants
@@ -116,6 +118,27 @@ def test_canonical_headers_roundtrip_through_header_key():
     for kind, fields in schema_map.FIELDS.items():
         for text, key, _req, _desc in fields:
             assert header_key(text) == key, (kind, text, key)
+
+
+def test_mapper_logs_provider_detail_without_exposing_it(
+        monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("secret-provider-detail")
+
+    monkeypatch.setattr(schema_map, "_call_llm", fail)
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(schema_map.SchemaMapError) as caught:
+            schema_map.propose({"sheets": []}, "plog")
+
+    assert str(caught.value) == (
+        "LLM header mapping failed because the provider request failed."
+    )
+    assert "secret-provider-detail" not in str(caught.value)
+    assert "secret-provider-detail" in caplog.text
 
 
 def test_field_descriptions_have_chinese_translations():
@@ -164,6 +187,89 @@ def test_apply_mapping_decollides_duplicate_canonical_headers():
     assert ws2.cell(row=1, column=1).value == "(original) NAME"
 
 
+def test_apply_mapping_preserves_formula_cached_values():
+    """A remap must not clear formula results needed by data_only parsers."""
+    from lxml import etree
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws.append(["昵称", "链接", "价格"])
+    ws.append(["right", "https://x/1", "=1+1"])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    # openpyxl cannot author a cached result, so model the Excel-produced XML.
+    source = io.BytesIO(buf.getvalue())
+    cached = io.BytesIO()
+    ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(cached, "w") as zout:
+        for info in zin.infolist():
+            payload = zin.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                root = etree.fromstring(payload)
+                cell = root.find(f".//{{{ns}}}c[@r='C2']")
+                value = cell.find(f"{{{ns}}}v")
+                value.text = "2"
+                payload = etree.tostring(root, xml_declaration=True,
+                                         encoding="UTF-8")
+            zout.writestr(info, payload)
+
+    out = schema_map.apply_mapping(
+        cached.getvalue(), "plog", "S", 1, {"name": 1, "postlink": 2})
+    formula_ws = load_workbook(io.BytesIO(out), data_only=False)["S"]
+    values_ws = load_workbook(io.BytesIO(out), data_only=True)["S"]
+    assert formula_ws["C2"].value == "=1+1"
+    assert values_ws["C2"].value == 2
+
+
+def test_model_sample_excludes_hidden_sheets():
+    wb = Workbook()
+    visible = wb.active
+    visible.title = "Visible"
+    visible.append(["public layout"])
+    hidden = wb.create_sheet("Hidden secrets")
+    hidden.sheet_state = "hidden"
+    hidden.append(["CLIENT-SECRET-SHOULD-NOT-LEAVE"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    sample = schema_map.build_sample(buf.getvalue())
+    assert [sheet["name"] for sheet in sample["sheets"]] == ["Visible"]
+    assert "CLIENT-SECRET" not in json.dumps(sample)
+
+
+def test_cache_candidates_use_same_visible_sheet_window_as_model_sample():
+    wb = Workbook()
+    first = wb.active
+    first.title = "Hidden 1"
+    hidden = [first]
+    for index in range(2, 7):
+        hidden.append(wb.create_sheet(f"Hidden {index}"))
+    target = wb.create_sheet("Visible target")
+    target.append(["昵称", "链接"])
+    for sheet in hidden:
+        sheet.sheet_state = "hidden"
+        sheet.append(["lookup"])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    sample = schema_map.build_sample(buf.getvalue())
+    candidates = schema_map.candidate_signatures(buf.getvalue())
+
+    assert [sheet["name"] for sheet in sample["sheets"]] == ["Visible target"]
+    assert any(sheet == "Visible target" for sheet, _row, _sig in candidates)
+    assert not any(sheet.startswith("Hidden")
+                   for sheet, _row, _sig in candidates)
+
+
+def test_mapper_xml_parser_does_not_resolve_external_entities(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("XXE-SHOULD-NOT-BE-READ")
+    xml = (f'<!DOCTYPE root [<!ENTITY xxe SYSTEM "{secret.as_uri()}">]>'
+           '<root>&xxe;</root>').encode()
+    root = schema_map._safe_xml(xml)
+    assert "XXE-SHOULD-NOT-BE-READ" not in "".join(root.itertext())
+
+
 def test_propose_drops_out_of_range_and_duplicate_columns(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
     bad = dict(CN_PLOG_PROPOSAL,
@@ -183,6 +289,7 @@ def test_run_flow_audit_then_approve(client):
     r = _upload_run(client, build_cn_plog_bytes())
     assert r.status_code == 303 and r.headers["location"].startswith("/remap/")
     token = r.headers["location"].rsplit("/", 1)[1]
+    sig = remap_service.PENDING_MAPS[token]["audits"]["plog"]["sig"]
 
     page = client.get(f"/remap/{token}")
     assert page.status_code == 200
@@ -200,6 +307,17 @@ def test_run_flow_audit_then_approve(client):
     assert "Parse preview" in r2.text
     assert "Headers remapped" in r2.text           # audit trail on preview
     assert "cn_tracker.xlsx" in r2.text or "WAVE #1" in r2.text
+    assert f"/remap/cache/plog/{sig}/delete" in r2.text
+    assert "Revoke mapping" in r2.text
+    assert schema_map.cache_get("plog", sig) is not None
+
+    revoked = client.post(
+        f"/remap/cache/plog/{sig}/delete",
+        data={"next_path": "/"},
+        follow_redirects=False,
+    )
+    assert revoked.status_code == 303 and revoked.headers["location"] == "/"
+    assert schema_map.cache_get("plog", sig) is None
 
 
 def test_run_flow_required_field_missing_bounces_back(client):
@@ -246,6 +364,54 @@ def test_no_api_key_keeps_plain_error(client, monkeypatch):
     assert "PLOG parse failed" in r.text
 
 
+def test_remap_inspection_does_not_mask_cache_outages(monkeypatch):
+    def cache_outage(*_args, **_kwargs):
+        raise RuntimeError("sqlite unavailable")
+
+    monkeypatch.setattr(schema_map, "cache_get_many", cache_outage)
+
+    with pytest.raises(RuntimeError, match="sqlite unavailable"):
+        remap_service.inspect_remap("plog", build_cn_plog_bytes())
+
+
+def test_efficiency_cache_outage_is_logged_generic_500(client, monkeypatch,
+                                                        caplog):
+    def cache_outage(*_args, **_kwargs):
+        raise RuntimeError("sensitive sqlite path")
+
+    monkeypatch.setattr(schema_map, "cache_get_many", cache_outage)
+    response = client.post(
+        "/efficiency",
+        files={"report": (
+            "cn_wave.xlsx", build_cn_plog_bytes(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={},
+    )
+
+    assert response.status_code == 500
+    assert "Unexpected server error" in response.text
+    assert "sensitive sqlite path" not in response.text
+    assert "unexpected efficiency header-mapping failure" in caplog.text
+
+
+def test_reconciler_requires_explicit_consent_before_header_sample_egress(
+        client, monkeypatch):
+    called = False
+
+    def unexpected_call(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Claude must not be called without opt-in")
+
+    monkeypatch.setattr(schema_map, "_call_llm", unexpected_call)
+    response = _upload_run(
+        client, build_cn_plog_bytes(), allow_header_ai=False
+    )
+    assert response.status_code == 422
+    assert "not explicitly allowed" in response.text
+    assert not called
+
+
 # ----------------------------------------------------------- efficiency flow
 
 CN_EFF_PROPOSAL = {
@@ -258,6 +424,57 @@ CN_EFF_PROPOSAL = {
 }
 
 
+def test_efficiency_unfamiliar_headers_require_explicit_external_opt_in(
+        client, monkeypatch):
+    calls = 0
+
+    def forbidden_model_call(*_args):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("model must not be called without consent")
+
+    monkeypatch.setattr(schema_map, "_call_llm", forbidden_model_call)
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", build_cn_plog_bytes(),
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={"allow_header_ai": "0"}, follow_redirects=False)
+    assert response.status_code == 422
+    assert "No workbook sample was sent externally" in response.text
+    assert calls == 0
+
+
+def test_efficiency_model_call_is_not_run_under_workbook_gate(client,
+                                                               monkeypatch):
+    from app.efficiency import routes as eff_routes
+    gated_functions = []
+    real_runner = eff_routes.run_upload_task
+    real_propose = schema_map.propose
+
+    async def recording_runner(request, func, *args, **kwargs):
+        gated_functions.append(func)
+        return await real_runner(request, func, *args, **kwargs)
+
+    def checked_propose(*args, **kwargs):
+        assert schema_map.propose not in gated_functions
+        return real_propose(*args, **kwargs)
+
+    monkeypatch.setattr(eff_routes, "run_upload_task", recording_runner)
+    monkeypatch.setattr(schema_map, "propose", checked_propose)
+    monkeypatch.setattr(
+        schema_map, "_call_llm",
+        lambda *_args: json.dumps(CN_EFF_PROPOSAL, ensure_ascii=False))
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", build_cn_plog_bytes(),
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={"allow_header_ai": "1"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert schema_map.propose not in gated_functions
+
+
 def test_efficiency_flow_audit_then_approve_stays_in_memory(client, tmp_path,
                                                             monkeypatch):
     monkeypatch.setattr(
@@ -268,7 +485,7 @@ def test_efficiency_flow_audit_then_approve_stays_in_memory(client, tmp_path,
     r = client.post("/efficiency",
                     files={"report": ("cn_wave.xlsx", build_cn_plog_bytes(),
                                       mime)},
-                    data={}, follow_redirects=False)
+                    data={"allow_header_ai": "1"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("/remap/")
     token = r.headers["location"].rsplit("/", 1)[1]
     assert client.get(f"/remap/{token}").status_code == 200
@@ -282,6 +499,117 @@ def test_efficiency_flow_audit_then_approve_stays_in_memory(client, tmp_path,
     # privacy: nothing about this workbook ever lands on disk
     uploads = config.UPLOAD_DIR
     assert not uploads.exists() or not any(uploads.rglob("*cn_wave*"))
+
+
+def test_invalid_efficiency_mapping_is_not_cached(client, monkeypatch):
+    monkeypatch.setattr(
+        schema_map, "_call_llm",
+        lambda *_args: json.dumps(CN_EFF_PROPOSAL, ensure_ascii=False))
+    data = build_cn_plog_bytes()
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", data,
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={"allow_header_ai": "1"}, follow_redirects=False)
+    token = response.headers["location"].rsplit("/", 1)[1]
+    sig = remap_service.PENDING_MAPS[token]["audits"]["eff"]["sig"]
+    form = {f"eff:{key}": str(value)
+            for key, value in CN_EFF_PROPOSAL["columns"].items()}
+    form["eff:price"] = "2"  # valid offered column, wrong semantic field
+    applied = client.post(f"/remap/{token}/apply", data=form)
+    assert applied.status_code == 422
+    assert schema_map.cache_get("eff", sig) is None
+
+
+def test_blocked_diagnostic_report_does_not_promote_mapping(client,
+                                                            monkeypatch):
+    monkeypatch.setattr(
+        schema_map, "_call_llm",
+        lambda *_args: json.dumps(CN_EFF_PROPOSAL, ensure_ascii=False))
+    source = build_cn_plog_bytes()
+    wb = load_workbook(io.BytesIO(source))
+    wb["达人列表"].cell(row=3, column=16).value = -1
+    modified = io.BytesIO()
+    wb.save(modified)
+
+    response = client.post(
+        "/efficiency",
+        files={"report": (
+            "mixed-validity.xlsx", modified.getvalue(),
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet")},
+        data={"allow_header_ai": "1"}, follow_redirects=False)
+    token = response.headers["location"].rsplit("/", 1)[1]
+    sig = remap_service.PENDING_MAPS[token]["audits"]["eff"]["sig"]
+    form = {f"eff:{key}": str(value)
+            for key, value in CN_EFF_PROPOSAL["columns"].items()}
+
+    applied = client.post(f"/remap/{token}/apply", data=form)
+
+    assert applied.status_code == 200
+    assert "Deck not generated" in applied.text
+    assert "not saved for reuse" in applied.text
+    assert "Revoke mapping" not in applied.text
+    assert schema_map.cache_get("eff", sig) is None
+
+
+def test_cached_efficiency_mapping_survives_row_validation_failure(client):
+    data = build_cn_plog_bytes()
+    sig = schema_map.header_signature(data, "达人列表", 2)
+    wrong = dict(CN_EFF_PROPOSAL["columns"])
+    wrong["price"] = 2
+    schema_map.cache_put("eff", sig, "达人列表", 2, wrong, "admin")
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", data,
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={}, follow_redirects=False)
+    assert response.status_code == 422
+    assert schema_map.cache_get("eff", sig) is not None
+
+
+def test_cached_efficiency_mapping_is_revoked_on_schema_failure(client):
+    data = build_cn_plog_bytes()
+    sig = schema_map.header_signature(data, "达人列表", 2)
+    # This corrupt legacy cache entry cannot create the required schema.
+    incomplete = {"name": 6, "postlink": 10}
+    schema_map.cache_put("eff", sig, "达人列表", 2, incomplete, "admin")
+
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", data,
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={}, follow_redirects=False)
+
+    assert response.status_code == 422
+    assert "has been revoked" in response.text
+    assert schema_map.cache_get("eff", sig) is None
+
+
+def test_cached_efficiency_mapping_is_revoked_when_apply_fails(
+        client, monkeypatch):
+    data = build_cn_plog_bytes()
+    sig = schema_map.header_signature(data, "达人列表", 2)
+    schema_map.cache_put(
+        "eff", sig, "达人列表", 2, CN_EFF_PROPOSAL["columns"], "admin")
+
+    def fail_apply(*_args, **_kwargs):
+        raise ValueError("stale cached worksheet mapping")
+
+    monkeypatch.setattr(schema_map, "apply_mapping", fail_apply)
+    response = client.post(
+        "/efficiency",
+        files={"report": ("cn_wave.xlsx", data,
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")},
+        data={}, follow_redirects=False)
+
+    assert response.status_code == 422
+    assert "has been revoked" in response.text
+    assert schema_map.cache_get("eff", sig) is None
 
 
 def test_expired_mapping_token_404s(client):
@@ -313,6 +641,37 @@ def test_reconciler_parse_failure_removes_staging(client):
     })
     assert r.status_code == 422
     assert not config.UPLOAD_DIR.exists() or not any(config.UPLOAD_DIR.iterdir())
+
+
+def test_reconciler_schema_probe_does_not_duplicate_full_parse(
+        client, tmp_path, monkeypatch):
+    from tests import fixtures
+
+    plog_path = tmp_path / "normal-plog.xlsx"
+    dmr_path = tmp_path / "normal-dmr.xlsx"
+    fixtures.build_plog(str(plog_path))
+    fixtures.build_dmr(str(dmr_path))
+    real_plog = reconciler_routes.parse_plog
+    real_dmr = reconciler_routes.parse_dmr
+    calls = {"plog": 0, "dmr": 0}
+
+    def counted_plog(path):
+        calls["plog"] += 1
+        return real_plog(path)
+
+    def counted_dmr(path):
+        calls["dmr"] += 1
+        return real_dmr(path)
+
+    monkeypatch.setattr(reconciler_routes, "parse_plog", counted_plog)
+    monkeypatch.setattr(reconciler_routes, "parse_dmr", counted_dmr)
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    response = client.post("/upload", files={
+        "plog": ("p.xlsx", plog_path.read_bytes(), mime),
+        "dmr": ("d.xlsx", dmr_path.read_bytes(), mime),
+    })
+    assert response.status_code == 200
+    assert calls == {"plog": 1, "dmr": 1}
 
 
 def test_concurrent_xlsx_exports_use_unique_outputs_and_clean_streaming_leases(
@@ -469,10 +828,16 @@ def test_xlsx_export_stream_admission_is_bounded(client, monkeypatch):
 
 def test_cached_mapping_failure_is_422_and_removes_staging(client,
                                                             monkeypatch):
-    cached = {**CN_PLOG_PROPOSAL, "approved_by": "reviewer"}
+    stale_sig = "f" * 64
+    cached = {**CN_PLOG_PROPOSAL, "approved_by": "reviewer",
+              "sig": stale_sig}
+    schema_map.cache_put(
+        "plog", stale_sig, cached["sheet"], cached["header_row"],
+        cached["columns"], "reviewer",
+    )
     monkeypatch.setattr(
         reconciler_routes,
-        "attempt_remap",
+        "inspect_remap",
         lambda _kind, _data: remap_service.RemapOutcome(
             "cached", mapping=cached
         ),
@@ -489,7 +854,32 @@ def test_cached_mapping_failure_is_422_and_removes_staging(client,
 
     assert response.status_code == 422
     assert "Header mapping also failed" in response.text
+    assert schema_map.cache_get("plog", stale_sig) is None
     assert not config.UPLOAD_DIR.exists() or not any(config.UPLOAD_DIR.iterdir())
+
+
+def test_cached_mapping_is_evicted_when_remapped_parser_rejects(
+        client, monkeypatch):
+    stale_sig = "e" * 64
+    cached = {**CN_PLOG_PROPOSAL, "approved_by": "reviewer",
+              "sig": stale_sig}
+    schema_map.cache_put(
+        "plog", stale_sig, cached["sheet"], cached["header_row"],
+        cached["columns"], "reviewer",
+    )
+    monkeypatch.setattr(
+        reconciler_routes, "inspect_remap",
+        lambda _kind, _data: remap_service.RemapOutcome(
+            "cached", mapping=cached
+        ),
+    )
+    # Simulate a syntactically successful rewrite that leaves an invalid
+    # deterministic schema. The route must validate before trusting/caching.
+    monkeypatch.setattr(schema_map, "apply_mapping",
+                        lambda data, *_args, **_kwargs: data)
+    response = _upload_run(client, build_cn_plog_bytes())
+    assert response.status_code == 422
+    assert schema_map.cache_get("plog", stale_sig) is None
 
 
 def _put_pending_plog(flow: str = "test") -> str:
@@ -502,7 +892,10 @@ def _put_pending_plog(flow: str = "test") -> str:
                 "columns": {"name": 1, "postlink": 2},
                 "confidence": {}, "warnings": [],
             },
-            "choices": [], "sig": "test-signature",
+            "choices": [
+                {"col": 1, "letter": "A", "header": "Name", "samples": []},
+                {"col": 2, "letter": "B", "header": "Link", "samples": []},
+            ], "sig": "test-signature",
         }},
     })
 
@@ -536,11 +929,35 @@ def test_full_mapping_store_returns_503_for_efficiency(client, monkeypatch):
     response = client.post(
         "/efficiency",
         files={"report": ("cn_wave.xlsx", build_cn_plog_bytes(), mime)},
+        data={"allow_header_ai": "1"},
         follow_redirects=False,
     )
 
     assert response.status_code == 503
     assert "Too many mapping audits" in response.text
+
+
+@pytest.mark.parametrize("bad", ["not-a-number", "3", "0", "-1"])
+def test_mapping_apply_rejects_columns_not_offered_by_audit(client, bad):
+    token = _put_pending_plog()
+    response = client.post(
+        f"/remap/{token}/apply",
+        data={"plog:name": bad, "plog:postlink": "2"})
+    assert response.status_code == 422
+    assert "Invalid column selected for NAME" in response.text
+    assert token in remap_service.PENDING_MAPS
+
+
+def test_open_mode_can_revoke_cached_mapping(client):
+    sig = "a" * 32
+    schema_map.cache_put("eff", sig, "S", 1, {"name": 1}, "operator")
+    assert schema_map.cache_get("eff", sig) is not None
+    response = client.post(
+        f"/remap/cache/eff/{sig}/delete",
+        data={"next_path": "/efficiency"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/efficiency"
+    assert schema_map.cache_get("eff", sig) is None
 
 
 def test_apply_claim_allows_only_one_concurrent_handler(client, monkeypatch):

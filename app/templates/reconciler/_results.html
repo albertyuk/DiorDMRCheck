@@ -3,6 +3,8 @@
     {% for k, v in counts.items() %}<span class="stat"><b>{{ v }}</b> {{ k }}</span>{% endfor %}
     <span class="stat muted">{{ t("TikHub calls:") }} {{ run.tikhub_calls or 0 }}</span>
     <span class="stat muted">{{ t("LLM calls:") }} {{ run.llm_calls or 0 }}</span>
+    {% if buckets.expected_missing %}<span class="stat" style="border-color:#a06a00"><b>{{ buckets.expected_missing }}</b>
+      {{ t("outside-window expected missing — not actionable") }}</span>{% endif %}
   </div>
   {% if perimeter_meta %}
   <div class="counts">
@@ -15,12 +17,14 @@
   </div>
   {% endif %}
   {% if perimeter_warning %}<div class="warn">{{ td(perimeter_warning) }}</div>{% endif %}
+  {% if perimeter_meta %}{% for w in perimeter_meta.warnings %}<div class="warn">{{ t("Perimeter:") }} {{ td(w) }}</div>{% endfor %}{% endif %}
   <p>
     <a class="btn" href="/runs/{{ run_id }}/export.xlsx">{{ t("Download annotated .xlsx") }}</a>
     <a class="btn secondary" href="/runs/{{ run_id }}/export.json">{{ t("JSON audit log") }}</a>
   </p>
   {% if summary.zh or summary.en %}
     <div class="warn" style="background:#f2f7f2;border-color:#cfe3cf">
+      {% if has_overrides %}<b>{{ t("Pipeline summary before human overrides") }}</b><br>{% endif %}
       <b>摘要</b> {{ summary.zh }}<br><b>Summary</b> {{ summary.en }}
     </div>
   {% endif %}
@@ -79,8 +83,10 @@
           <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
           {% if v.name_mislabel %}<br><span class="caveat">名字标注错误</span>{% endif %}
         </td>
-        <td>{% if v.override %}<b>{{ v.override.status }}</b>
+        <td>{% if v.override and not v.override_invalid %}<b>{{ v.column_s }}</b>
             <span class="caveat">{{ t("(") }}{{ t("override") }}{% if v.override.updated_by %} · {{ v.override.updated_by }}{% endif %}{{ t(")") }}</span>
+            {% elif v.override_invalid %}{{ v.column_s }}
+            <span class="caveat">{{ t("Invalid legacy override ignored") }}</span>
             {% else %}{{ v.column_s }}{% endif %}</td>
         <td>
           {% if v.matched_post_id %}
@@ -94,6 +100,7 @@
             <summary>{{ t("tier {n}", n=v.tier or "—") }}</summary>
             <dl>
               <dt>{{ t("Decided by") }}</dt><dd>{{ v.tier }}</dd>
+              {% if v.override and not v.override_invalid %}<dt>{{ t("Pipeline status") }}</dt><dd>{{ v.pipeline_status }} · {{ v.pipeline_column_s }}</dd>{% endif %}
               <dt>{{ t("Resolved note") }}</dt><dd>{{ v.resolved_note_id or "—" }}</dd>
               <dt>{{ t("Resolved author") }}</dt><dd>{{ v.resolved_author_id or "—" }}
                 {% if v.resolved_author_name %}({{ v.resolved_author_name }}){% endif %}</dd>
@@ -142,8 +149,6 @@
         <td>
           <form hx-post="/runs/{{ run_id }}/override" hx-target="#run-body" hx-swap="innerHTML">
             <input type="hidden" name="excel_row" value="{{ v.excel_row }}">
-            <input type="hidden" name="campaign" value="{{ v.campaign }}">
-            <input type="hidden" name="no" value="{{ v.no }}">
             <select name="status" onchange="this.form.requestSubmit()">
               {% for choice in override_choices %}
                 <option value="{{ choice }}"
@@ -161,11 +166,11 @@
   <div id="tab-reverse" class="tab-panel tablewrap">
     <p class="muted">{{ t("DMR posts inside the campaign window by bloggers this campaign resolved, whose PostID matched no PLOG row — extra posts DMR captured that PLOG doesn't track.") }}</p>
     <table>
-      <tr><th>Blogger</th><th>Username</th><th>PostID</th><th>PostDate</th>
+      <tr><th>{{ t("Campaign") }}</th><th>Blogger</th><th>Username</th><th>PostID</th><th>PostDate</th>
           <th>Likes_Retweet</th><th>Engagement</th><th>{{ t("DMR row") }}</th></tr>
       {% for r in reverse_rows %}
       <tr>
-        <td>{{ r.blogger }}</td><td><code style="font-size:.7rem">{{ r.username }}</code></td>
+        <td>{{ r.campaigns | join(", ") }}</td><td>{{ r.blogger }}</td><td><code style="font-size:.7rem">{{ r.username }}</code></td>
         <td><code style="font-size:.7rem">{{ r.post_id }}</code></td>
         <td>{{ r.post_date or "" }}</td>
         <td>{{ r.likes_retweet if r.likes_retweet is not none else "" }}</td>
@@ -173,7 +178,7 @@
         <td>{{ r.dmr_row }}</td>
       </tr>
       {% endfor %}
-      {% if not reverse_rows %}<tr><td colspan="7" class="muted">{{ t("Nothing found.") }}</td></tr>{% endif %}
+      {% if not reverse_rows %}<tr><td colspan="8" class="muted">{{ t("Nothing found.") }}</td></tr>{% endif %}
     </table>
   </div>
 </div>

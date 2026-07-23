@@ -8,7 +8,7 @@
   <h1>{{ t("Unfamiliar headers — review the proposed mapping") }}</h1>
   <p class="muted">{{ t("This file's headers don't match the format the pipeline knows. Claude looked at the sheet names and the first rows only, and proposed the mapping below — it maps columns, it never touches your data.") }}
      <b>{{ t("Nothing runs until you approve.") }}</b>
-     {{ t("Applying rewrites only the header cells to the canonical names; every data cell stays byte-identical, and the deterministic pipeline runs unchanged. Approved mappings are remembered, so this format is audited once.") }}</p>
+     {{ t("Applying patches only the selected header cells to the canonical names; data cells, formulas, cached formula values, and hyperlinks stay unchanged. Approved mappings are remembered, so this format is audited once.") }}</p>
   {% if error %}<div class="warn"><b>{{ error }}</b></div>{% endif %}
 
   <form method="post" action="/remap/{{ token }}/apply" data-busy>

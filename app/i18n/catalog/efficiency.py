@@ -1,4 +1,4 @@
-"""Efficiency-report strings: demo card, V1-V10 findings, insights.
+"""Efficiency-report strings: demo card, V1-V13 findings, insights.
 Merged into the app-wide catalog by app.i18n — see that module for the
 translation contract (English-source keys, whole-message patterns).
 """
@@ -16,28 +16,37 @@ ZH: dict[str, str] = {
 }
 
 ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^FAN BASE ≥([\d,]+) on (\d+) row\(s\) — read as a raw "
-                r"follower count and divided by 1,000 \(e\.g\. 450,000 → "
-                r"450K\)\. Values up to a few thousand are taken as thousands "
-                r"\(130 → 130K\)\. Verify the units\.$"),
-     r"共 \2 行的 FAN BASE ≥\1——按原始粉丝数处理，已除以 1,000"
-     r"（如 450,000 → 450K）。几千以内的数值按「千」计（130 → 130K）。请核实单位。"),
-    (re.compile(r"^LEVEL value (.+) missing/unclear on (\d+) row\(s\) — "
-                r"tiered by FAN BASE instead \(≤200K KOC · 200–400K BOT · "
-                r"400–1000K MID · 1M\+ TOP\)\. Verify the assignment\.$"),
-     r"LEVEL 值 \1 缺失或无法识别，共 \2 行——已按 FAN BASE 粉丝量自动分层"
-     r"（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP）。请核实分层结果。"),
+    (re.compile(r"^FAN BASE unit configured as raw followers on (\d+) valid "
+                r"row\(s\) — divided by 1,000 before tiering\.$"),
+     r"FAN BASE 已统一设为原始粉丝数；共 \1 个有效行在分层前除以 1,000。"),
+    (re.compile(r"^(\d+) row\(s\) with blank/placeholder LEVEL were tiered "
+                r"by FAN BASE using configured thresholds\. Verify the "
+                r"assignments\.$"),
+     r"共 \1 行的 LEVEL 为空或占位值——已按配置的 FAN BASE 阈值分层，请核实结果。"),
     # V1 sheet/columns errors (analysis.py parse_report)
-    (re.compile(r"^V1: no header row containing NAME and POST LINK found in "
-                r"sheet (.+)\.$"),
-     r"V1：工作表 \1 中找不到包含「NAME」和「POST LINK」的表头行。"),
+    (re.compile(r"^V1: no complete efficiency-report header row found in "
+                r"sheet (.+) within the first 15 rows\.$"),
+     r"V1：工作表 \1 的前 15 行中找不到完整的效率报告表头。"),
+    (re.compile(r"^V1: workbook contains more than ([\d,]+) efficiency rows\.$"),
+     r"V1：工作簿的效率数据行数超过 \1 行上限。"),
+    (re.compile(r"^V2: workbook contains no analyzable efficiency rows\.$"),
+     r"V2：工作簿中没有可分析的效率数据行。"),
+    (re.compile(r"^V11: workbook contains no analyzable rows because invalid "
+                r"numeric values occur in (.+) on Excel rows (.+)\.$"),
+     r"V11：工作簿没有可分析的数据行；Excel 第 \2 行的 \1 含有无效数值。"),
     (re.compile(r"^V1: required columns missing after header normalization: (.+)$",
                 re.S),
      r"V1：表头标准化后仍缺少必需列：\1"),
-    # efficiency-report validation findings (effreport.py V1–V10) -----------
+    # efficiency-report validation findings (effreport.py V1–V13) -----------
     (re.compile(r"^Sheet 'MASTER KOL LIST' not found — using first sheet "
                 r"(.+)\.$"),
      r"未找到「MASTER KOL LIST」工作表——改用第一个工作表 \1。"),
+    (re.compile(r"^Sheet 'MASTER KOL LIST' not found — using "
+                r"schema-compatible sheet (.+)\.$"),
+     r"未找到「MASTER KOL LIST」工作表——改用表头结构兼容的工作表 \1。"),
+    (re.compile(r"^Sheet 'MASTER KOL LIST' lacks the required schema — using "
+                r"schema-compatible sheet (.+)\.$"),
+     r"「MASTER KOL LIST」工作表缺少必需结构——改用表头结构兼容的工作表 \1。"),
     (re.compile(r"^Unclassified TYPE value (.+) on (\d+) row\(s\) — excluded "
                 r"from groups, counted in totals\.$"),
      r"无法识别的 TYPE 值 \1，共 \2 行——不计入分组，仍计入总量。"),
@@ -57,6 +66,13 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(\d+) row\(s\) with TTL ENGAGEMENT=0 — excluded from CPE "
                 r"ratios only\.$"),
      r"\1 行 TTL ENGAGEMENT=0——仅从 CPE 计算中排除。"),
+    (re.compile(r"^(\d+) row\(s\) contain invalid numeric values \(counts must "
+                r"be whole; all values must be finite and non-negative\) in: "
+                r"(.+)\.$"),
+     r"\1 行在以下字段中含有无效数值（计数必须为整数；所有数值必须有限且非负）：\2。"),
+    (re.compile(r"^(\d+) row\(s\) contain invalid diagnostics-only numeric "
+                r"values in (.+) — those source values were ignored\.$"),
+     r"\1 行的以下仅诊断用数值无效：\2；这些源值已忽略。"),
     (re.compile(r"^TTL ENGAGEMENT ≠ LIKE\+COLLECTION\+COMMENT on (\d+) "
                 r"row\(s\)\.$"),
      r"共 \1 行 TTL ENGAGEMENT ≠ LIKE+COLLECTION+COMMENT。"),
@@ -89,14 +105,21 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
      r"\1：曝光最高的 \2 篇帖子占了组内 \3% 的曝光——合并口径 CPM 被极值拉低；"
      r"实际规划请按单篇平均 ≈\4，而不是合并口径的 \5。已在幻灯片上加注。"),
     # efficiency-report insight bullets / footnote (effreport.py) -----------
+    (re.compile(r"^V12: FAN BASE FALLBACK USED FOR (\d+) POST\(S\) — VERIFY "
+                r"TIER ASSIGNMENTS$"),
+     r"V12：\1 篇帖子使用 FAN BASE 回退分层——请核实层级"),
+    (re.compile(r"^V13: FAN BASE UNIT RAW FOLLOWERS — VALUES DIVIDED BY 1,000 "
+                r"BEFORE TIERING$"),
+     r"V13：FAN BASE 单位为原始粉丝数——分层前统一除以 1,000"),
     (re.compile(r"^PAID CARRIES A PREMIUM IN EVERY TIER — (.+) VS SOFT$"),
      r"PAID 在每个层级都有溢价——\1（相对 SOFT）"),
     (re.compile(r"^PAID PREMIUM: (.+) VS SOFT$"),
      r"PAID 溢价：\1（相对 SOFT）"),
     (re.compile(r"^PRICE INVERSION — SOFT PRICED ABOVE PAID: (.+)$"),
      r"价格倒挂——SOFT 报价高于 PAID：\1"),
-    (re.compile(r"^CPM WINNER — (.+)$"), r"CPM 更优——\1"),
-    (re.compile(r"^CPE WINNER — (.+)$"), r"CPE 更优——\1"),
+    (re.compile(r"^PRICE TIE: (.+)$"), r"价格持平：\1"),
+    (re.compile(r"^CPM COMPARISON — (.+)$"), r"CPM 对比——\1"),
+    (re.compile(r"^CPE COMPARISON — (.+)$"), r"CPE 对比——\1"),
     (re.compile(r"^(.+) = (\d+|\?) POST\(S\) ONLY — NOT A BENCHMARK$"),
      r"\1 仅 \2 篇——样本过小，不可作为基准"),
     (re.compile(r"^CAUTION: (.+) CARRIED BY (\d+) VIRAL POSTS \((\d+)% OF "
