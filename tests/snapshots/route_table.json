@@ -110,6 +110,13 @@
    "Route"
   ],
   [
+   "/remap/cache/{kind}/{sig}/delete",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
    "/remap/{token}",
    [
     "GET"

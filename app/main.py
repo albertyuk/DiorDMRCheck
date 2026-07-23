@@ -9,12 +9,14 @@ assembles.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, i18n
@@ -30,6 +32,15 @@ from .remap.service import PENDING_MAPS
 
 _FORM_BODY_LIMIT = 1024 * 1024
 _MULTIPART_OVERHEAD = 64 * 1024
+logger = logging.getLogger(__name__)
+_maintenance_task: asyncio.Task | None = None
+_maintenance_state = {
+    "last_success": 0.0,
+    "consecutive_failures": 0,
+    "last_error": "",
+    "data_bytes": 0,
+    "db_logical_bytes": 0,
+}
 
 
 def _request_body_limit(method: str, path: str) -> int:
@@ -46,7 +57,20 @@ def _is_upload_request(method: str, path: str) -> bool:
     return method == "POST" and path in {"/upload", "/efficiency"}
 
 
-def _cleanup_uploads() -> None:
+def _tree_bytes(root: Path) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _cleanup_uploads() -> dict[str, int]:
     def removable(path: Path) -> bool:
         pending = {
             Path(entry["run_dir"]).name
@@ -67,36 +91,69 @@ def _cleanup_uploads() -> None:
         config.UPLOAD_RETENTION_HOURS * 3600,
         **kwargs,
     )
+    # SQLite/WAL/cache and uploads share one volume. Reserve the bytes already
+    # occupied by SQLite rather than pretending the upload subdirectory owns
+    # the entire disk budget.
+    available_upload_bytes = max(
+        0, config.DATA_MAX_TOTAL_BYTES - db.database_storage_bytes()
+    )
     cleanup_over_budget(
         config.UPLOAD_DIR,
-        config.UPLOAD_MAX_TOTAL_BYTES,
+        min(config.UPLOAD_MAX_TOTAL_BYTES, available_upload_bytes),
         **kwargs,
     )
+    maintenance = db.database_maintenance(
+        allow_full_vacuum=(not active_upload_names()
+                           and db.active_run_count() == 0)
+    )
+    maintenance.update({
+        "data_bytes": _tree_bytes(config.DATA_DIR),
+        "db_logical_bytes": db.database_logical_bytes(),
+    })
+    return maintenance
+
+
+def _maintenance_once() -> None:
+    PENDING_MAPS.discard_expired()
+    EFF_REPORTS.discard_expired()
+    stats = _cleanup_uploads()
+    _maintenance_state.update(stats)
+    _maintenance_state.update({
+        "last_success": time.monotonic(),
+        "consecutive_failures": 0,
+        "last_error": "",
+    })
 
 
 async def _maintenance_loop() -> None:
     while True:
         await asyncio.sleep(config.MAINTENANCE_INTERVAL_SECONDS)
-        PENDING_MAPS.discard_expired()
-        EFF_REPORTS.discard_expired()
-        await asyncio.to_thread(_cleanup_uploads)
+        try:
+            await asyncio.to_thread(_maintenance_once)
+        except Exception as exc:
+            _maintenance_state["consecutive_failures"] += 1
+            _maintenance_state["last_error"] = type(exc).__name__
+            logger.exception("maintenance cycle failed")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _maintenance_task
     config.validate_runtime()
     config.ensure_dirs()
     runs.recover_orphans()
-    PENDING_MAPS.discard_expired()
-    EFF_REPORTS.discard_expired()
-    await asyncio.to_thread(_cleanup_uploads)
-    maintenance = asyncio.create_task(_maintenance_loop())
+    await asyncio.to_thread(_maintenance_once)
+    maintenance = asyncio.create_task(
+        _maintenance_loop(), name="retention-maintenance"
+    )
+    _maintenance_task = maintenance
     try:
         yield
     finally:
         maintenance.cancel()
         with suppress(asyncio.CancelledError):
             await maintenance
+        _maintenance_task = None
 
 
 app = FastAPI(title="DMR Reconciler", lifespan=lifespan)
@@ -111,7 +168,19 @@ app.add_middleware(RequestBodyLimitMiddleware,
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True}
+    age = time.monotonic() - _maintenance_state["last_success"]
+    stale_after = max(180, config.MAINTENANCE_INTERVAL_SECONDS * 3)
+    task_alive = _maintenance_task is not None and not _maintenance_task.done()
+    storage_ok = (
+        _maintenance_state["data_bytes"] <= config.DATA_MAX_TOTAL_BYTES
+        and _maintenance_state["db_logical_bytes"] <= config.DB_MAX_TOTAL_BYTES
+    )
+    ok = bool(task_alive and age <= stale_after and storage_ok
+              and db.healthcheck())
+    return JSONResponse(
+        {"ok": ok, "maintenance": "ok" if ok else "degraded"},
+        status_code=200 if ok else 503,
+    )
 
 
 @app.get("/lang/{code}")

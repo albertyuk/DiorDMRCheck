@@ -44,7 +44,8 @@
     <label class="field"><span>{{ t("Display name (optional)") }}</span>
       <input type="text" name="display"></label>
     <label class="field"><span>{{ t("Initial password (min 8 characters)") }}</span>
-      <input type="text" name="password" minlength="8" required></label>
+      <input type="password" name="password" minlength="8"
+             autocomplete="new-password" required></label>
     <input type="hidden" name="is_admin" value="0">
     <p><label><input type="checkbox" name="is_admin" value="1">
       {{ t("Administrator (can manage accounts)") }}</label></p>

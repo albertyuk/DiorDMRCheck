@@ -1,16 +1,22 @@
 """Regression tests for adversarially-verified review findings."""
 from __future__ import annotations
 
-from datetime import datetime
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 
 import httpx
 from openpyxl import Workbook
 
 from app.reconciler.name_match import name_contains, name_ladder
 from app.core.xlsx import to_date as _to_date, to_int as _to_int
-from app.reconciler.parsers import parse_dmr, parse_plog
+from app.reconciler.domain import REVIEW, Verdict
+from app.reconciler.parsers import (DmrParse, DmrRow, PlogParse, PlogRow,
+                                    parse_dmr, parse_plog)
 from app.reconciler.links import (_extract_note_fields, _normalize_url,
-                                  _note_id_from_url, _retry_after_seconds)
+                                  _note_id_from_url, _retry_after_seconds,
+                                  Resolution)
 from tests import fixtures
 
 
@@ -142,6 +148,57 @@ def test_unparseable_post_date_warns(tmp_path):
     assert any("POST DATE" in w for w in parsed.warnings)
 
 
+def test_parsers_do_not_drop_data_after_200_blank_rows(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(fixtures.PLOG_HEADERS)
+    ws.append([1, "", "C", "", "", "before", 1, datetime(2026, 1, 1), "",
+               "https://xhslink.com/o/a", 1, 1, 1, 1, 3, 1, 1, 1])
+    ws.cell(row=250, column=1, value=2)
+    ws.cell(row=250, column=3, value="C")
+    ws.cell(row=250, column=6, value="after")
+    ws.cell(row=250, column=10, value="https://xhslink.com/o/b")
+    path = tmp_path / "spaced.xlsx"
+    wb.save(path)
+    assert [row.name for row in parse_plog(str(path)).rows] == ["before", "after"]
+
+
+def test_sparse_final_row_does_not_force_million_row_scan(tmp_path):
+    from openpyxl.styles import PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(fixtures.PLOG_HEADERS)
+    ws.append([1, "", "C", "", "", "real", 1, None, "",
+               "https://xhslink.com/o/a", 1, 1, 1, 1, 3, 1, 1, 1])
+    ws.cell(row=1_048_576, column=18).fill = PatternFill(
+        fill_type="solid", fgColor="FFFFFF"
+    )
+    path = tmp_path / "sparse-tail.xlsx"
+    wb.save(path)
+    parsed = parse_plog(str(path))
+    assert len(parsed.rows) == 1 and parsed.rows[0].name == "real"
+
+
+def test_plog_logical_row_limit_is_enforced(tmp_path, monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "MAX_PLOG_ROWS", 1)
+    wb = Workbook()
+    ws = wb.active
+    ws.append(fixtures.PLOG_HEADERS)
+    for number in (1, 2):
+        ws.append([number, "", "C", "", "", f"n{number}", 1,
+                   datetime(2026, 1, number), "",
+                   f"https://xhslink.com/o/{number}", 1, 1, 1, 1, 3, 1, 1, 1])
+    path = tmp_path / "too_many.xlsx"
+    wb.save(path)
+    import pytest
+    with pytest.raises(ValueError, match="more than 1 data rows"):
+        parse_plog(str(path))
+
+
 # --------------------------------------------------------- matcher findings
 
 def test_ladder_rejects_short_dmr_ascii():
@@ -153,6 +210,180 @@ def test_ladder_rejects_short_dmr_ascii():
 def test_all_emoji_name_never_flags_mislabel():
     assert name_contains("🥚🥚", "anything at all")
     assert name_contains("", "gungunnnnn")
+
+
+def _dmr_row(*, post_id: str, username: str, blogger: str = "blogger",
+             excel_row: int = 2, post_date: datetime | None = None) -> DmrRow:
+    return DmrRow(
+        blogger=blogger, username=username, post_id=post_id,
+        post_id_raw=post_id, post_date=post_date or datetime(2026, 1, 2),
+        likes_retweet=1, share_favorites=1, engagement=2, comments=0,
+        link_target="", link_embedded_post_id="", excel_row=excel_row,
+    )
+
+
+def _plog_row(*, name: str = "blogger", link: str = "https://xhslink.com/o/x",
+              campaign: str = "C", excel_row: int = 2) -> PlogRow:
+    return PlogRow(
+        campaign=campaign, no=str(excel_row), name=name,
+        post_date=date(2026, 1, 2), post_link=link, like=1, collection=1,
+        comment=0, impression=1, ttl_engagement=2, excel_row=excel_row,
+    )
+
+
+def test_author_ids_are_case_insensitive_and_canonical():
+    from app.reconciler.pipeline import build_indexes, match_row
+
+    author = "5F00000000000000000000A1"
+    dmr = DmrParse("S", 1, {}, rows=[
+        _dmr_row(post_id="6a0000000000000000000001", username=author.lower())
+    ])
+    verdict = match_row(
+        _plog_row(), build_indexes(dmr),
+        Resolution(status="ok", note_id="6A0000000000000000000002",
+                   author_id=author),
+        (date(2026, 1, 1), date(2026, 1, 31)),
+    )
+    assert verdict.status == "NO_POST"
+    assert verdict.resolved_author_id == author.lower()
+
+
+def test_partial_username_index_never_proves_no_blogger():
+    from app.reconciler.pipeline import build_indexes, match_row
+
+    dmr = DmrParse("S", 1, {}, rows=[
+        _dmr_row(post_id="6a0000000000000000000001",
+                 username="5f0000000000000000000001"),
+        _dmr_row(post_id="6a0000000000000000000002", username="",
+                 excel_row=3),
+    ])
+    verdict = match_row(
+        _plog_row(name="unknown"), build_indexes(dmr),
+        Resolution(status="ok", note_id="6a0000000000000000000003",
+                   author_id="5f0000000000000000000099"),
+        (date(2026, 1, 1), date(2026, 1, 31)),
+    )
+    assert verdict.status == REVIEW
+    assert verdict.tier == "2:partial-username-column"
+
+
+def test_duplicate_post_id_is_manual_review():
+    from app.reconciler.pipeline import build_indexes, match_row
+
+    note = "6a0000000000000000000001"
+    dmr = DmrParse("S", 1, {}, rows=[
+        _dmr_row(post_id=note, username="5f0000000000000000000001"),
+        _dmr_row(post_id=note, username="5f0000000000000000000002",
+                 blogger="other", excel_row=3),
+    ])
+    verdict = match_row(
+        _plog_row(), build_indexes(dmr),
+        Resolution(status="ok", note_id=note),
+        (date(2026, 1, 1), date(2026, 1, 31)),
+    )
+    assert verdict.status == REVIEW
+    assert verdict.tier == "1:duplicate-post-id"
+    assert len(verdict.candidates) == 2
+
+
+def test_run_pipeline_resolves_each_normalized_url_once(monkeypatch):
+    import app.reconciler.pipeline as pipeline
+
+    note = "6a0000000000000000000001"
+    plog = PlogParse("P", 1, {}, rows=[
+        _plog_row(link="xhslink.com/o/shared", excel_row=2),
+        _plog_row(link="http://xhslink.com/o/shared", excel_row=3),
+    ])
+    dmr = DmrParse("D", 1, {}, rows=[
+        _dmr_row(post_id=note, username="5f0000000000000000000001")
+    ])
+    calls = 0
+
+    def fake_resolve(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return Resolution(status="ok", note_id=note)
+
+    monkeypatch.setattr(pipeline, "resolve_link", fake_resolve)
+    verdicts = pipeline.run_pipeline(plog, dmr)
+    assert calls == 1
+    assert [v.status for v in verdicts] == ["MATCH", "MATCH"]
+
+
+def test_name_scan_budget_prevents_cartesian_work(monkeypatch):
+    import app.reconciler.pipeline as pipeline
+
+    plog = PlogParse("P", 1, {}, rows=[_plog_row(name="unique")])
+    dmr = DmrParse("D", 1, {}, rows=[
+        _dmr_row(post_id=f"{i + 1:024x}", username=f"{i + 10:024x}",
+                 blogger=f"other-{i}", excel_row=i + 2)
+        for i in range(3)
+    ])
+    monkeypatch.setattr(pipeline, "MAX_NAME_SCAN_COMPARISONS", 2)
+    monkeypatch.setattr(
+        pipeline, "resolve_link",
+        lambda *_args, **_kwargs: Resolution(status="failed", error="dead"),
+    )
+    monkeypatch.setattr(
+        pipeline, "scan_by_name",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("full DMR scan should be skipped")
+        ),
+    )
+    (verdict,) = pipeline.run_pipeline(plog, dmr)
+    assert verdict.status == "LINK_ERROR"
+    assert any("safety budget" in note for note in verdict.notes)
+
+
+def test_candidate_lists_are_bounded(monkeypatch):
+    from app import config
+    from app.reconciler.pipeline import rank_candidates
+
+    monkeypatch.setattr(config, "MAX_CANDIDATES_PER_VERDICT", 2)
+    rows = [
+        (_dmr_row(post_id=f"{i:024x}", username=f"{i + 100:024x}",
+                  excel_row=i + 2), "same-name")
+        for i in range(10)
+    ]
+    assert len(rank_candidates(_plog_row(), rows, keep_out_of_window=True)) == 2
+
+
+def test_reverse_audit_uses_campaign_windows_and_requires_date_and_post_id():
+    from app.reconciler.reverse_audit import reverse_audit
+
+    author = "5f0000000000000000000001"
+    january = _plog_row(campaign="JAN", excel_row=2)
+    december = _plog_row(campaign="DEC", excel_row=3)
+    december.post_date = date(2026, 12, 1)
+    plog = PlogParse("P", 1, {}, rows=[january, december],
+                     campaigns=["JAN", "DEC"])
+    verdicts = [
+        Verdict("JAN", "1", "n", "2026-01-02", "", 2,
+                resolved_author_id=author),
+        Verdict("DEC", "1", "n", "2026-12-01", "", 3,
+                resolved_author_id=author),
+    ]
+    dmr = DmrParse("D", 1, {}, rows=[
+        _dmr_row(post_id="6a0000000000000000000001", username=author,
+                 post_date=datetime(2026, 1, 2)),
+        _dmr_row(post_id="6a0000000000000000000002", username=author,
+                 post_date=datetime(2026, 6, 1), excel_row=3),
+        _dmr_row(post_id="", username=author,
+                 post_date=datetime(2026, 1, 2), excel_row=4),
+        _dmr_row(post_id="6a0000000000000000000003", username=author,
+                 post_date=None, excel_row=5),
+    ])
+    # Dataclass helper supplies a default date; explicitly clear the final row.
+    dmr.rows[-1].post_date = None
+    rows = reverse_audit(plog, dmr, verdicts)
+    assert [(row["post_id"], row["campaigns"]) for row in rows] == [
+        ("6a0000000000000000000001", ["JAN"])
+    ]
+
+    # A resolved PLOG note still represents the post when duplicate DMR rows
+    # force REVIEW rather than MATCH; it must not reappear as an "extra".
+    verdicts[0].resolved_note_id = "6a0000000000000000000001"
+    assert reverse_audit(plog, dmr, verdicts) == []
 
 
 # -------------------------------------------------------- resolver findings
@@ -172,8 +403,8 @@ def test_note_id_only_from_note_urls():
 
 
 def test_normalize_url_schemeless():
-    assert _normalize_url("xhslink.com/o/abc") == "http://xhslink.com/o/abc"
-    assert _normalize_url("http://xhslink.com/o/abc") == "http://xhslink.com/o/abc"
+    assert _normalize_url("xhslink.com/o/abc") == "https://xhslink.com/o/abc"
+    assert _normalize_url("http://xhslink.com/o/abc") == "https://xhslink.com/o/abc"
     assert _normalize_url("随便写的字") == "随便写的字"  # stays; rejected later
 
 
@@ -245,7 +476,7 @@ def test_direct_resolve_rejects_redirect_to_private_host(monkeypatch):
 
     monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
     assert resolver_mod.direct_resolve("http://xhslink.com/o/x") is None
-    assert seen == ["http://xhslink.com/o/x"]
+    assert seen == ["https://xhslink.com/o/x"]
 
 
 def test_direct_fetch_rejects_redirect_to_private_host(monkeypatch):
@@ -266,6 +497,108 @@ def test_direct_fetch_rejects_redirect_to_private_host(monkeypatch):
     monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
     assert resolver_mod.direct_fetch_note_detail("https://xhslink.com/o/x") == {}
     assert seen == ["https://xhslink.com/o/x"]
+
+
+def test_direct_fetch_rejects_embedded_different_note(monkeypatch):
+    import app.reconciler.links as resolver_mod
+
+    expected = "6a0000000000000000000001"
+    wrong = "6a0000000000000000000002"
+    state = {
+        "noteData": {"data": {"noteData": {
+            "noteId": wrong,
+            "user": {"userId": "5f0000000000000000000001"},
+            "interactInfo": {"likedCount": 1},
+        }}}
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        html = f"<script>window.__INITIAL_STATE__ = {json.dumps(state)}</script>"
+        return httpx.Response(200, text=html, request=request)
+
+    real_client = httpx.Client
+
+    def patched_client(**kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(resolver_mod.httpx, "Client", patched_client)
+    url = f"https://www.xiaohongshu.com/explore/{expected}"
+    assert resolver_mod.direct_fetch_note_detail(url, expected) == {}
+
+
+def test_resolve_link_singleflight_across_concurrent_runs(tmp_path, monkeypatch):
+    from app import config
+    from app.reconciler import links as resolver_mod
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "singleflight.sqlite3")
+    note = "6a0000000000000000000001"
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def fake_direct(_url):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(2)
+        return note
+
+    monkeypatch.setattr(resolver_mod, "direct_resolve", fake_direct)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(resolver_mod.resolve_link,
+                                "http://xhslink.com/o/shared")
+        assert entered.wait(1)
+        second = executor.submit(resolver_mod.resolve_link,
+                                 "xhslink.com/o/shared")
+        release.set()
+        results = [first.result(2), second.result(2)]
+    assert calls == 1
+    assert all(result.note_id == note for result in results)
+    assert not resolver_mod._url_flights
+
+
+def test_ensure_author_singleflight_rechecks_enriched_cache(tmp_path,
+                                                             monkeypatch):
+    from app import config
+    from app.core import db
+    from app.reconciler import links as resolver_mod
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "author-flight.sqlite3")
+    url = "https://xhslink.com/o/shared"
+    note = "6a0000000000000000000001"
+    author = "5f0000000000000000000001"
+    db.cache_put(url, status="ok", note_id=note, source="direct")
+    monkeypatch.setattr(resolver_mod, "direct_fetch_note_detail",
+                        lambda *_args, **_kwargs: {})
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def fake_tikhub(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(2)
+        return {"data": {"note_id": note,
+                         "user": {"user_id": author}}}
+
+    monkeypatch.setattr(resolver_mod, "tikhub_fetch_note", fake_tikhub)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            resolver_mod.ensure_author, url,
+            Resolution(status="ok", note_id=note, source="direct"),
+        )
+        assert entered.wait(1)
+        second = executor.submit(
+            resolver_mod.ensure_author, url,
+            Resolution(status="ok", note_id=note, source="direct"),
+        )
+        release.set()
+        results = [first.result(2), second.result(2)]
+    assert calls == 1
+    assert all(result.author_id == author for result in results)
+    assert not resolver_mod._url_flights
 
 
 # ------------------------------------------------------ adjudicator findings

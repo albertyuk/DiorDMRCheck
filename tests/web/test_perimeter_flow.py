@@ -143,3 +143,28 @@ def test_cached_upload_keeps_run_filename_and_retry_does_not_promote(
     assert started == [first_id, second_id, second_id]
     assert pm.current_meta()["hash"] == newer_meta["hash"]
     assert pm.current_meta()["filename"] == "newest.xlsx"
+
+
+def test_run_cannot_start_when_its_perimeter_snapshot_is_missing(
+        client, tmp_path, monkeypatch):
+    from app.core import db
+
+    plog = tmp_path / "missing-p.xlsx"
+    dmr = tmp_path / "missing-d.xlsx"
+    fixtures.build_plog(str(plog))
+    fixtures.build_dmr(str(dmr))
+    db.run_create(
+        "missing-perim", plog_path=str(plog), dmr_path=str(dmr),
+        perimeter_hash="not-in-cache", perimeter_uploaded=False,
+        perimeter_name="gone.xlsx",
+    )
+    started = []
+    monkeypatch.setattr(runs, "start_run", lambda run_id: started.append(run_id))
+    response = client.post("/runs/missing-perim/start", data={})
+    assert response.status_code == 409
+    assert not started
+    assert db.run_get("missing-perim")["status"] == "pending"
+    db.run_update("missing-perim", status="error", phase="error")
+    retry = client.post("/runs/missing-perim/start", data={})
+    assert retry.status_code == 409
+    assert db.run_get("missing-perim")["status"] == "error"

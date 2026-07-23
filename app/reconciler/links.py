@@ -19,9 +19,11 @@ explicit request. Partial failure never raises out of resolve_link().
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
+from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -32,6 +34,8 @@ from .. import config
 from ..core import db
 from .domain import is_hex24
 
+logger = logging.getLogger(__name__)
+
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
@@ -39,6 +43,31 @@ MOBILE_UA = (
 
 # Global TikHub throttle: ≤ TIKHUB_CONCURRENCY requests in flight at once.
 _tikhub_semaphore = threading.BoundedSemaphore(config.TIKHUB_CONCURRENCY)
+
+# Process-wide, per-normalized-URL single-flight. The refcounted entries are
+# removed when the last waiter leaves, so attacker-controlled unique URLs
+# cannot grow a permanent lock registry.
+_url_flights_guard = threading.Lock()
+_url_flights: dict[str, tuple[threading.Lock, int]] = {}
+
+
+@contextmanager
+def _url_singleflight(url: str):
+    with _url_flights_guard:
+        lock, refs = _url_flights.get(url, (threading.Lock(), 0))
+        _url_flights[url] = (lock, refs + 1)
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        with _url_flights_guard:
+            current = _url_flights.get(url)
+            if current and current[0] is lock:
+                if current[1] <= 1:
+                    _url_flights.pop(url, None)
+                else:
+                    _url_flights[url] = (lock, current[1] - 1)
 
 
 @dataclass
@@ -97,7 +126,7 @@ def _allowed_link_url(url: str) -> bool:
         return False
     host = (parsed.host or "").rstrip(".").lower()
     return (
-        parsed.scheme in ("http", "https")
+        parsed.scheme == "https"
         and parsed.port in _WEB_PORTS
         and any(host == root or host.endswith("." + root)
                 for root in _LINK_HOSTS)
@@ -162,7 +191,7 @@ def direct_fetch_note_detail(url: str, expected_note_id: str = "") -> dict:
     XHS serves the full page to this IP — degrade to {} on any failure; the
     TikHub path remains authoritative."""
     try:
-        current = url
+        current = normalize_url(url)
         with httpx.Client(follow_redirects=False,
                           timeout=config.DIRECT_HTTP_TIMEOUT * 2,
                           headers={"User-Agent": MOBILE_UA}) as client:
@@ -190,6 +219,14 @@ def direct_fetch_note_detail(url: str, expected_note_id: str = "") -> dict:
         note = _note_object_from_state(json.loads(blob))
         if not note:
             return {}
+        embedded_note_id = str(note.get("noteId") or note.get("note_id") or "")
+        if expected_note_id:
+            # The final URL is insufficient proof: WAF/interstitial/home pages
+            # can contain a different note object in __INITIAL_STATE__. Never
+            # attach that object's author to the requested note.
+            if (not is_hex24(embedded_note_id)
+                    or embedded_note_id.lower() != expected_note_id.lower()):
+                return {}
         user = note.get("user") or {}
         author_id = str(user.get("userId") or "")
         if not is_hex24(author_id):
@@ -203,7 +240,7 @@ def direct_fetch_note_detail(url: str, expected_note_id: str = "") -> dict:
             except (OverflowError, OSError, ValueError):
                 ptime = str(ptime)
         return {
-            "note_id": (note.get("noteId") or final_note or expected_note_id or "").lower(),
+            "note_id": embedded_note_id.lower(),
             "author_id": author_id,
             "author_name": str(user.get("nickname") or user.get("nickName") or ""),
             "likes": _to_int_or_none(interact.get("likedCount") or interact.get("liked_count")),
@@ -224,7 +261,7 @@ def direct_resolve(url: str) -> Optional[str]:
     """
     for attempt in range(config.DIRECT_HTTP_RETRIES + 1):
         try:
-            current = url
+            current = normalize_url(url)
             with httpx.Client(
                 follow_redirects=False,
                 timeout=config.DIRECT_HTTP_TIMEOUT,
@@ -432,14 +469,28 @@ def tikhub_fetch_note(share_url: str = "", note_id: str = "",
 
 # ----------------------------------------------------------- main entrypoint
 
-def _normalize_url(url: str) -> str:
+def normalize_url(url: str) -> str:
     """Accept scheme-less cells like 'xhslink.com/o/abc' — resolvable in any
-    browser and by TikHub's share_text."""
+    browser and by TikHub's share_text. Always upgrade an initial XHS URL to
+    HTTPS; redirect hops are validated separately and may not downgrade."""
     url = (url or "").strip()
     if url and not url.lower().startswith(("http://", "https://")):
         if re.match(r"^[\w.-]+\.[a-zA-Z]{2,}(/|$)", url):
-            return "http://" + url
+            url = "https://" + url
+    try:
+        parsed = httpx.URL(url)
+        host = (parsed.host or "").rstrip(".").lower()
+        if (parsed.scheme == "http"
+                and any(host == root or host.endswith("." + root)
+                        for root in _LINK_HOSTS)):
+            return str(parsed.copy_with(scheme="https", port=None))
+    except (TypeError, httpx.InvalidURL):
+        pass
     return url
+
+
+# Backward-compatible internal name used by older callers/tests.
+_normalize_url = normalize_url
 
 
 def resolve_link(url: str, run_counter: Optional[Callable[[], None]] = None,
@@ -450,16 +501,25 @@ def resolve_link(url: str, run_counter: Optional[Callable[[], None]] = None,
     Successful resolutions are cached permanently (a resolved note id never
     changes); failures are cached and retried only after a TTL or on request.
     """
-    try:
-        return _resolve_link_inner(url, run_counter, retry_failed)
-    except Exception as e:  # absolute backstop: a resolver bug must not kill a run
-        return Resolution(status="failed",
-                          error=f"internal resolver error: {type(e).__name__}: {e}")
+    normalized_url = normalize_url(url)
+    with _url_singleflight(normalized_url):
+        try:
+            # Cache is rechecked by the inner function only after this caller
+            # owns the key, so concurrent runs cannot both observe a miss.
+            return _resolve_link_inner(
+                normalized_url, run_counter, retry_failed
+            )
+        except Exception as e:  # absolute backstop: never kill a run
+            logger.exception("internal link resolver failure")
+            return Resolution(
+                status="failed",
+                error=f"internal resolver error ({type(e).__name__})",
+            )
 
 
 def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
                         retry_failed: bool) -> Resolution:
-    url = _normalize_url(url)
+    url = normalize_url(url)
     if not url:
         return Resolution(status="failed", error="empty link")
     if not _allowed_link_url(url):
@@ -491,7 +551,10 @@ def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
         raw_body = tikhub_fetch_note(share_url=url, counter=run_counter)
         fields = _extract_note_fields(raw_body)
     except TikHubError as e:
-        err = str(e)
+        logger.info("TikHub note lookup failed", exc_info=True)
+        err = ("TIKHUB_API_KEY not configured"
+               if "not configured" in str(e)
+               else "TikHub note lookup failed")
         db.cache_put(url, status="failed", error=err[:500])
         return Resolution(status="failed", error=err)
 
@@ -523,14 +586,28 @@ def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
 def ensure_author(url: str, res: Resolution,
                   run_counter: Optional[Callable[[], None]] = None,
                   retry_failed: bool = False) -> Resolution:
+    if res.author_id or not res.ok:
+        return res
+    normalized_url = normalize_url(url)
+    with _url_singleflight(normalized_url):
+        cached = db.cache_get(normalized_url)
+        if cached and cached.get("status") == "ok":
+            cached_res = _res_from_cache(cached)
+            if (cached_res.note_id.lower() == res.note_id.lower()
+                    and cached_res.author_id):
+                return cached_res
+        return _ensure_author_inner(
+            normalized_url, res, run_counter, retry_failed
+        )
+
+
+def _ensure_author_inner(url: str, res: Resolution,
+                         run_counter: Optional[Callable[[], None]],
+                         retry_failed: bool) -> Resolution:
     """Make sure *res* carries an author_id, fetching from TikHub by note_id
     when the fast path resolved the note without author detail. Author-fetch
     failures are cached with the same TTL as link failures so a permanently
     broken enrichment is not re-billed on every run. Never raises."""
-    if res.author_id or not res.ok:
-        return res
-    url = _normalize_url(url)
-
     # Free first try: the note page's SSR state carries the author id. This
     # runs even when a previous enrichment failed (it costs nothing) — the
     # failure TTL below only gates the paid TikHub call.
@@ -563,7 +640,12 @@ def ensure_author(url: str, res: Resolution,
     try:
         body = tikhub_fetch_note(note_id=res.note_id, counter=run_counter)
         fields = _extract_note_fields(body)
-        if fields.get("author_id"):
+        returned_note_id = fields.get("note_id") or ""
+        if returned_note_id != res.note_id.lower():
+            res.error = "TikHub author response could not verify the requested note identity"
+            db.cache_merge(url, author_failed_at=time.time(),
+                           error=res.error)
+        elif fields.get("author_id"):
             res.author_id = fields["author_id"]
             res.author_name = fields.get("author_name") or res.author_name
             res.likes = fields.get("likes") if fields.get("likes") is not None else res.likes
@@ -587,8 +669,13 @@ def ensure_author(url: str, res: Resolution,
             db.cache_merge(url, author_failed_at=time.time(),
                            error=res.error[:500])
     except TikHubError as e:
-        res.error = res.error or str(e)
-        db.cache_merge(url, author_failed_at=time.time(), error=str(e)[:500])
+        logger.info("TikHub author lookup failed", exc_info=True)
+        public_error = ("TIKHUB_API_KEY not configured"
+                        if "not configured" in str(e)
+                        else "TikHub author lookup failed")
+        res.error = res.error or public_error
+        db.cache_merge(url, author_failed_at=time.time(), error=public_error)
     except Exception as e:  # same backstop as resolve_link
-        res.error = res.error or f"internal enrichment error: {type(e).__name__}: {e}"
+        logger.exception("internal author enrichment failure")
+        res.error = res.error or f"internal enrichment error ({type(e).__name__})"
     return res

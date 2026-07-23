@@ -11,7 +11,7 @@ chase 100% agreement): 兔子糖糖公主Rinrin (2026-06-26) and 宅鱼日常
 (2026-06-29) are marked 无博主 by the human but exist in the DMR file with
 exact-date posts. The correct behavior is to match them; this harness lists
 them as *expected* disagreements and excludes them from the acceptance gate
-(≥ 99/101 agreement after excusing the two noisy labels).
+(all rows must agree after excusing only those two explicit noisy labels).
 
 Usage:
     python tools/evaluate.py PLOG_DMR_CHECK.xlsx YTD_DMR_MICRO_0720.xlsx \
@@ -37,11 +37,15 @@ from app.reconciler.export import S_COL
 from app.reconciler.parsers import PLOG_REQUIRED, parse_dmr, parse_plog
 from app.reconciler.pipeline import run_pipeline
 
-# (blogger name, PLOG post date ISO) → why it is excused
+# (stable row identity: blogger name + PLOG date + matched note-id prefix,
+# reviewed reference class, reviewed pipeline class) → why that exact
+# transition is excused. A different row or failure is not label noise.
 KNOWN_LABEL_NOISE = {
-    ("兔子糖糖公主Rinrin", "2026-06-26"):
+    ("兔子糖糖公主Rinrin", "2026-06-26", "6a3e4f7a",
+     S_TEXT[NO_BLOGGER], "MATCH"):
         "human wrote 无博主 but DMR has an exact-date post (PostID 6a3e4f7a…)",
-    ("宅鱼日常", "2026-06-29"):
+    ("宅鱼日常", "2026-06-29", "6a421ff9",
+     S_TEXT[NO_BLOGGER], "MATCH"):
         "human wrote 无博主 but DMR has an exact-date post (PostID 6a421ff9…)",
 }
 
@@ -66,8 +70,37 @@ def classify(text: str) -> str:
     return t
 
 
-def load_reference(path: str) -> dict[tuple[str, str], str]:
-    """Reference column-S annotations keyed by (CAMPAIGN, NO)."""
+def _index_occurrences(rows, value_for) -> dict[tuple[str, str, int], object]:
+    """Index duplicate business keys without silently overwriting rows."""
+    seen: Counter[tuple[str, str]] = Counter()
+    out = {}
+    for row in rows:
+        base = (row.campaign, row.no)
+        seen[base] += 1
+        out[(row.campaign, row.no, seen[base])] = value_for(row)
+    return out
+
+
+def _comparison_keys(reference: dict, ours: dict) -> list:
+    """Union is intentional: missing *and* unexpected rows must fail."""
+    return sorted(set(reference) | set(ours))
+
+
+def _known_noise_reason(verdict, want: str, got: str) -> str:
+    if verdict is None:
+        return ""
+    note_id = str(getattr(verdict, "matched_post_id", "") or "").casefold()
+    for identity, reason in KNOWN_LABEL_NOISE.items():
+        name, post_date, note_prefix, expected_want, expected_got = identity
+        if ((verdict.name, verdict.post_date or "", want, got)
+                == (name, post_date, expected_want, expected_got)
+                and note_id.startswith(note_prefix)):
+            return reason
+    return ""
+
+
+def load_reference(path: str) -> dict[tuple[str, str, int], str]:
+    """Reference annotations keyed by (CAMPAIGN, NO, occurrence)."""
     ref = parse_plog(path)  # same row identity logic as the pipeline
     wb = load_workbook(path, data_only=True)
     ws = None
@@ -75,11 +108,12 @@ def load_reference(path: str) -> dict[tuple[str, str], str]:
         if find_header_row(candidate, PLOG_REQUIRED):
             ws = candidate
             break
-    assert ws is not None
-    out = {}
-    for row in ref.rows:
-        out[row.key] = cell_str(ws.cell(row=row.excel_row, column=S_COL).value)
-    return out
+    if ws is None:
+        raise ValueError("reference workbook has no PLOG header row")
+    return _index_occurrences(
+        ref.rows,
+        lambda row: cell_str(ws.cell(row=row.excel_row, column=S_COL).value),
+    )
 
 
 def main() -> int:
@@ -149,34 +183,28 @@ def main() -> int:
             print(f"    {v.name}{extra}")
 
     reference = load_reference(args.reference)
-    ours = {(v.campaign, v.no): v for v in verdicts}
+    ours = _index_occurrences(verdicts, lambda verdict: verdict)
 
     confusion: Counter[tuple[str, str]] = Counter()
-    disagreements, excused, id_proven = [], [], []
-    for key, ref_text in reference.items():
+    disagreements, excused = [], []
+    all_keys = _comparison_keys(reference, ours)
+    for key in all_keys:
+        ref_text = reference.get(key)
         v = ours.get(key)
         got = classify(v.column_s()) if v else "(row missing)"
-        want = classify(ref_text)
+        want = classify(ref_text) if ref_text is not None else "(unexpected row)"
         confusion[(want, got)] += 1
         if got != want:
             name = v.name if v else "?"
             pdate = v.post_date if v else "?"
-            noise_key = (name, pdate or "")
-            entry = (key, name, pdate, want, got,
-                     KNOWN_LABEL_NOISE.get(noise_key, ""))
-            if noise_key in KNOWN_LABEL_NOISE:
+            reason = _known_noise_reason(v, want, got)
+            entry = (key, name, pdate, want, got, reason)
+            if reason:
                 excused.append(entry)
-            elif v is not None and v.tier.startswith("1:note-id-join"):
-                # The pipeline can PROVE this row via the exact note-id join —
-                # the strongest signal in the system. A disagreement here is
-                # almost always reference label noise (typically the blogger
-                # renamed their account, so the human's name-based DMR search
-                # came up empty). Listed with evidence for spot-checking.
-                id_proven.append(entry)
             else:
                 disagreements.append(entry)
 
-    total = len(reference)
+    total = len(all_keys)
     agree = sum(n for (w, g), n in confusion.items() if w == g)
 
     print("\n=== Confusion matrix (reference → pipeline) ===")
@@ -195,17 +223,6 @@ def main() -> int:
         print("\n=== Expected disagreements (known reference label noise) ===")
         for key, name, pdate, want, got, why in excused:
             print(f"  {key} {name} {pdate}: reference={want!r} pipeline={got!r} — {why}")
-    if id_proven:
-        print("\n=== ID-proven disagreements (probable reference label noise) ===")
-        print("  The exact note-id join found these posts in DMR even though the")
-        print("  reference marks them missing/broken — usually a renamed account.")
-        for key, name, pdate, want, got, _ in id_proven:
-            v = ours[key]
-            delta = (f"Δ={v.date_delta_days:+d}d" if v.date_delta_days is not None
-                     else "Δ=?")
-            print(f"  {key} {name} {pdate}: reference={want!r} pipeline={got!r}"
-                  f" — DMR has PostID {v.matched_post_id} as "
-                  f"{v.matched_blogger!r} ({v.matched_post_date}, {delta})")
     if disagreements:
         print("\n=== Unexplained disagreements ===")
         for key, name, pdate, want, got, _ in disagreements:
@@ -214,12 +231,12 @@ def main() -> int:
                   f" [tier={v.tier if v else '?'}"
                   f" note={v.notes[0][:100] if v and v.notes else ''}]")
 
-    # ID-proven rows count as agreement-with-ground-truth: the note-id join is
-    # the system's strongest signal and each is listed above with evidence.
-    effective = agree + len(excused) + len(id_proven)
-    ok = effective >= total - 2
-    print(f"\nAcceptance (≥ {total - 2}/{total} after excusing known noise and "
-          f"ID-proven rows): {'PASS' if ok else 'FAIL'} ({effective}/{total}; "
+    # Only individually reviewed, explicit allow-list entries may be excused.
+    # The pipeline's own tier/status can never validate itself.
+    effective = agree + len(excused)
+    ok = effective == total
+    print(f"\nAcceptance (all rows after explicit known-noise exceptions): "
+          f"{'PASS' if ok else 'FAIL'} ({effective}/{total}; "
           f"{len(disagreements)} unexplained)")
     return 0 if ok else 1
 

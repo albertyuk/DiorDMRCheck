@@ -174,3 +174,33 @@ def test_run_concurrency_must_be_positive(monkeypatch, value):
     monkeypatch.setenv("RUN_MAX_CONCURRENT", value)
     with pytest.raises(ValueError, match=r"RUN_MAX_CONCURRENT must be >= 1"):
         config._positive_int_env("RUN_MAX_CONCURRENT", "2")
+
+
+def test_run_result_size_limit_is_enforced(pool, monkeypatch):
+    from datetime import date
+    from app.core import db
+    from app.reconciler.domain import Verdict
+    from app.reconciler.parsers import DmrParse, PlogParse, PlogRow
+
+    plog = PlogParse("P", 1, {}, rows=[
+        PlogRow("C", "1", "n", date(2026, 1, 1),
+                "https://xhslink.com/o/x", 1, 1, 1, 1, 1, 2)
+    ], campaigns=["C"])
+    dmr = DmrParse("D", 1, {})
+    huge = Verdict("C", "1", "n", "2026-01-01",
+                   "https://xhslink.com/o/x", 2,
+                   notes=["x" * (2 * 1024 * 1024)])
+
+    db.run_create("large", plog_path="p", dmr_path="d")
+    db.run_update("large", options_json='{"use_llm": false}', status="queued")
+    monkeypatch.setattr(config, "MAX_RESULT_MB", 1)
+    monkeypatch.setattr(config, "MAX_RESULT_BYTES", 1024 * 1024)
+    monkeypatch.setattr(runs, "parse_plog", lambda _path: plog)
+    monkeypatch.setattr(runs, "parse_dmr", lambda _path: dmr)
+    monkeypatch.setattr(runs, "run_pipeline", lambda *_args, **_kwargs: [huge])
+
+    runs._run("large")
+    stored = db.run_get("large")
+    assert stored["status"] == "error"
+    assert "configured limits" in stored["message"]
+    assert not stored.get("result_json")

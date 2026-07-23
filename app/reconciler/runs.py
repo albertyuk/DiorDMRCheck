@@ -11,6 +11,7 @@ file-level parse failures abort a run.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import traceback
 from collections import deque
@@ -24,6 +25,8 @@ from .domain import ENGAGEMENT_CAVEAT
 from .pipeline import run_pipeline, status_counts, summary_buckets
 from .parsers import parse_dmr, parse_plog
 from .reverse_audit import reverse_audit
+
+logger = logging.getLogger(__name__)
 
 
 def recover_orphans() -> None:
@@ -166,15 +169,19 @@ def _run(run_id: str) -> None:
         result = {
             "verdicts": [v.to_dict() for v in verdicts],
             "counts": counts,
-            "buckets": summary_buckets(counts),
+            "buckets": summary_buckets(verdicts),
             # document-level context: DMR engagement numbers in the rows are
             # early-crawl snapshots, never a matching signal
             "engagement_caveat": ENGAGEMENT_CAVEAT,
             "perimeter_meta": ({
                 "filename": perim.filename,
+                "hash": perim.file_hash,
                 "extraction_date": perim.extraction_date,
                 "rows": len(perim.rows),
                 "redbook_count": len(perim.by_redbook),
+                "rows_scanned": perim.rows_scanned,
+                "china_filter": perim.china_filter,
+                "warnings": perim.warnings,
             } if perim else None),
             "perimeter_warning": perim_warning,
             "reverse_audit": reverse_rows,
@@ -192,13 +199,39 @@ def _run(run_id: str) -> None:
                 "warnings": dmr.warnings,
             },
         }
+        result_json = json.dumps(result, ensure_ascii=False, default=str)
+        max_result_bytes = config.MAX_RESULT_MB * 1024 * 1024
+        result_bytes = len(result_json.encode("utf-8"))
+        if result_bytes > max_result_bytes:
+            raise ValueError(
+                f"Run result is {result_bytes / (1024 * 1024):.1f} MiB, above "
+                f"the {config.MAX_RESULT_MB} MiB persistence limit. Split the "
+                "PLOG into smaller runs."
+            )
         db.run_update(
             run_id, status="done", phase="done",
             message="Run complete.",
-            result_json=json.dumps(result, ensure_ascii=False, default=str),
+            result_json=result_json,
             summary_json=json.dumps(summary, ensure_ascii=False),
         )
-    except Exception as e:
+    except db.StorageLimitError:
+        logger.info("run %s exceeded a storage limit", run_id, exc_info=True)
+        db.run_update(
+            run_id, status="error", phase="error",
+            message=("Run output exceeds a configured storage limit. "
+                     "Split the input into smaller runs."),
+            error=traceback.format_exc()[:8000],
+        )
+    except ValueError:
+        logger.info("run %s rejected invalid input", run_id, exc_info=True)
         db.run_update(run_id, status="error", phase="error",
-                      message=f"Run failed: {e}",
+                      message=("Run input or output failed validation. Check "
+                               "the workbook preview and configured limits."),
                       error=traceback.format_exc()[:8000])
+    except Exception:
+        logger.exception("run %s failed", run_id)
+        db.run_update(
+            run_id, status="error", phase="error",
+            message="Run failed because of an internal error. Retry or contact an administrator.",
+            error=traceback.format_exc()[:8000],
+        )

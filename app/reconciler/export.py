@@ -18,13 +18,12 @@ from ..core.xlsx import find_header_row
 from .parsers import PLOG_REQUIRED
 from dataclasses import fields as dataclass_fields
 
-from .domain import ENGAGEMENT_CAVEAT, Candidate, Verdict
+from .domain import (ENGAGEMENT_CAVEAT, Candidate, Verdict,
+                     effective_verdict_dict)
+from .domain import OVERRIDE_MATCH_BLANK as OVERRIDE_MATCH_BLANK
+from .pipeline import status_counts, summary_buckets
 
 S_COL = 19  # column S
-# The reference uses "已匹配/blank" for matched rows; this sentinel lets a human
-# override force a blank S cell (asserting MATCH) rather than clearing the
-# override.
-OVERRIDE_MATCH_BLANK = "已匹配（清空S）"
 EVIDENCE_HEADERS = [
     ("T", "STATUS"),
     ("U", "TIER"),
@@ -75,9 +74,39 @@ def _candidates_text(v: Verdict) -> str:
     return " ; ".join(parts)
 
 
+def _safe_excel_value(value):
+    """Prevent text copied from uploads, users, or models becoming a formula."""
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+def _write_perimeter_provenance(wb, metadata: Optional[dict],
+                                warning: Optional[str]) -> None:
+    if not metadata and not warning:
+        return
+    base = "_DMR_AUDIT_META"
+    title = base
+    suffix = 2
+    while title in wb.sheetnames:
+        title = f"{base}_{suffix}"
+        suffix += 1
+    ws = wb.create_sheet(title)
+    ws.sheet_state = "hidden"
+    ws.append(["FIELD", "VALUE"])
+    for key, value in (metadata or {}).items():
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        ws.append([_safe_excel_value(str(key)), _safe_excel_value(value)])
+    if warning:
+        ws.append(["warning", _safe_excel_value(warning)])
+
+
 def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
                          header_row: int, sheet_name: Optional[str] = None,
-                         overrides: Optional[dict] = None) -> None:
+                         overrides: Optional[dict] = None,
+                         perimeter_meta: Optional[dict] = None,
+                         perimeter_warning: Optional[str] = None) -> None:
     """Copy the PLOG workbook and add column S (+ evidence T..).
 
     The workbook is loaded without data_only so formulas and formats in A–R
@@ -105,15 +134,17 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
     for v in verdicts:
         r = v.excel_row
         ov = overrides.get(r)
-        if ov:
-            s_text = "" if ov["status"] == OVERRIDE_MATCH_BLANK else ov["status"]
-        else:
-            s_text = v.column_s()
-        status = f"{v.status}{' (override)' if ov else ''}"
+        effective = effective_verdict_dict(v.to_dict(), ov)
+        valid_override = bool(ov) and not effective.get("override_invalid")
+        s_text = effective["column_s"]
+        status = effective["status"]
+        if valid_override:
+            status = f"{status} (human override; pipeline {v.status})"
         rationale = " / ".join(x for x in (v.llm_rationale_zh, v.llm_rationale_en) if x)
         llm = (f"{v.llm_verdict} ({v.llm_confidence:.0%})"
                if v.llm_verdict and v.llm_confidence is not None else v.llm_verdict)
-        ws.cell(row=r, column=S_COL, value=s_text or None)
+        ws.cell(row=r, column=S_COL,
+                value=_safe_excel_value(s_text) if s_text else None)
         values = [
             status,
             v.tier,
@@ -132,33 +163,42 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
             " | ".join(v.notes + ([ov["note"]] if ov and ov.get("note") else [])) or None,
         ]
         for col_idx, value in enumerate(values, start=EVIDENCE_START_COL):
-            ws.cell(row=r, column=col_idx, value=value)
+            ws.cell(row=r, column=col_idx, value=_safe_excel_value(value))
 
+    _write_perimeter_provenance(wb, perimeter_meta, perimeter_warning)
     wb.save(out_path)
 
 
 def build_audit_json(run: dict, verdicts: list[Verdict], counts: dict,
                      plog_meta: dict, dmr_meta: dict,
                      reverse_rows: list[dict],
-                     overrides: Optional[dict] = None) -> str:
+                     overrides: Optional[dict] = None,
+                     perimeter_meta: Optional[dict] = None,
+                     perimeter_warning: Optional[str] = None) -> str:
     overrides = overrides or {}
+    effective_verdicts = [
+        effective_verdict_dict(v.to_dict(), overrides.get(v.excel_row))
+        for v in verdicts
+    ]
+    effective_counts = status_counts(effective_verdicts)
     doc = {
         "run_id": run.get("id"),
         "created_at": run.get("created_at"),
         "files": {"plog": run.get("plog_name"), "dmr": run.get("dmr_name")},
         "plog": plog_meta,
         "dmr": dmr_meta,
-        "counts": counts,
+        "counts": effective_counts,
+        "pipeline_counts": counts,
+        "buckets": summary_buckets(effective_verdicts),
         "engagement_caveat": ENGAGEMENT_CAVEAT,
         "tikhub_calls": run.get("tikhub_calls"),
         "llm_calls": run.get("llm_calls"),
         "summary": json.loads(run["summary_json"]) if run.get("summary_json") else None,
-        "verdicts": [
-            {**v.to_dict(),
-             "override": overrides.get(v.excel_row)}
-            for v in verdicts
-        ],
+        "summary_basis": "pipeline_before_human_overrides",
+        "verdicts": effective_verdicts,
         "reverse_audit": reverse_rows,
+        "perimeter": perimeter_meta,
+        "perimeter_warning": perimeter_warning,
     }
     return json.dumps(doc, ensure_ascii=False, indent=2, default=str)
 

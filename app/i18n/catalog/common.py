@@ -41,6 +41,8 @@ ZH: dict[str, str] = {
         "上传的文件无法按 .xlsx 读取：{e}",
     "Could not read the uploaded file as .xlsx: {e}":
         "上传的文件无法按 .xlsx 读取：{e}",
+    "Could not read the uploaded file as .xlsx.":
+        "上传的文件无法按 .xlsx 读取。",
     "Could not read the perimeter file: {e}":
         "Perimeter 文件无法读取：{e}",
     "Internal cross-check failed — report not generated: {e}":
@@ -93,8 +95,8 @@ ZH: dict[str, str] = {
     "This file's headers don't match the format the pipeline knows. Claude looked at the sheet names and the first rows only, and proposed the mapping below — it maps columns, it never touches your data.":
         "该文件的表头与流水线已知的格式不匹配。Claude 只看了工作表名和前几行，给出下面的映射建议——它只负责列的对应，绝不改动你的数据。",
     "Nothing runs until you approve.": "你批准之前不会运行任何处理。",
-    "Applying rewrites only the header cells to the canonical names; every data cell stays byte-identical, and the deterministic pipeline runs unchanged. Approved mappings are remembered, so this format is audited once.":
-        "应用映射只是把表头单元格改写为标准名称；所有数据单元格保持原样，确定性流水线照常运行。批准过的映射会被记住——同一格式只需审核一次。",
+    "Applying patches only the selected header cells to the canonical names; data cells, formulas, cached formula values, and hyperlinks stay unchanged. Approved mappings are remembered, so this format is audited once.":
+        "应用时只把选中的表头单元格改为标准名称；数据单元格、公式、公式缓存值和超链接均保持不变。批准过的映射会被记住——同一格式只需审核一次。",
     "header row": "表头行",
     "Model warning:": "模型提示：",
     "Canonical field": "标准字段",
@@ -107,6 +109,15 @@ ZH: dict[str, str] = {
     "e.g.": "如",
     "check this one": "请核对",
     "Approve mapping & continue": "批准映射并继续",
+    "Only administrators can approve shared header mappings.":
+        "只有管理员可以批准全局共享的表头映射。",
+    "Only administrators can revoke shared header mappings.":
+        "只有管理员可以撤销全局共享的表头映射。",
+    "Header mapping not found.": "找不到该表头映射。",
+    "Revoke mapping": "撤销映射",
+    "Revoke this shared mapping and require another audit?":
+        "撤销此共享映射并要求重新审核？",
+    "Invalid column selected for {field}.": "为 {field} 选择的列无效。",
     "Each dropdown shows the column letter, its original header, and example values from that column — correct anything the model got wrong before approving.":
         "每个下拉框都显示列号、原表头和该列的示例值——批准前请把模型映射错的地方改过来。",
     "Headers remapped": "表头已重映射",
@@ -115,11 +126,33 @@ ZH: dict[str, str] = {
     "Applied automatically — this exact format was approved by":
         "已自动应用——该格式此前已获批准，批准人：",
     "Approved just now by": "刚刚批准，批准人：",
+    "This mapping was not saved for reuse because validation blocked the deck.":
+        "验证错误阻止了幻灯片生成，因此本次映射未保存供后续复用。",
     "Only header names were rewritten; data cells are untouched.":
         "只改写了表头名称；数据单元格未做任何改动。",
     "Header mapping also failed: {e}": "表头映射也失败了：{e}",
+    "The headers are unfamiliar. No workbook sample was sent externally; enable the disclosed Claude header-mapping option and upload again.":
+        "表头格式无法识别。工作簿样本尚未发送到外部；如需使用 Claude 表头映射，请勾选已披露的数据发送选项后重新上传。",
+    "Unexpected server error — report not generated.":
+        "服务器发生意外错误——未生成报告。",
+    "Unexpected server error.": "服务器发生意外错误。",
+    "An .xlsx report file is required.": "必须上传 .xlsx 报告文件。",
+    "Could not parse the upload form.": "无法解析上传表单。",
+    "Internal cross-check failed — report not generated.":
+        "内部交叉校验失败——未生成报告。",
+    "outside-window expected missing — not actionable":
+        "超出导出窗口的预期缺失——无需处理",
+    "Invalid legacy override ignored": "已忽略无效的旧版人工覆写",
+    "Pipeline status": "流水线原始状态",
+    "Pipeline summary before human overrides": "人工覆写前的流水线汇总",
+    "If headers are unfamiliar, allow a bounded sample of visible worksheet cells to be sent to Claude to propose a column mapping. No sample is sent unless this is checked.":
+        "若表头无法识别，允许向 Claude 发送受限的可见工作表单元格样本以建议列映射。未勾选时不会发送任何样本。",
     "Too many mapping audits are active. Try again shortly.":
         "当前正在处理的表头映射审核过多，请稍后重试。",
+    "Too many efficiency reports are active. Try again shortly.":
+        "当前正在处理的效率报告过多，请稍后重试。",
+    "The saved header mapping was invalid and has been revoked. Upload the workbook again to review a new mapping.":
+        "已保存的表头映射无效，现已撤销。请重新上传工作簿并审核新的映射。",
     "This mapping session has expired — upload the file again.":
         "该映射会话已过期——请重新上传文件。",
     "Required field {field} has no column selected.":
@@ -172,8 +205,8 @@ ZH: dict[str, str] = {
     "DMR file (e.g.": "DMR 文件（例如",
     "ERROR": "错误",
     "WARN": "警告",
-    "<b>Deck not generated</b> — a validation error below is blocking (missing_row_policy=block). Fix the source data or re-run with the default policy.":
-        "<b>未生成幻灯片</b>——下方有一条阻断性的校验错误（missing_row_policy=block）。请修正源数据，或改用默认策略重新生成。",
+    "<b>Deck not generated</b> — an ERROR validation finding below is blocking. Fix the source data and run again.":
+        "<b>未生成幻灯片</b>——下方 ERROR 级校验问题已阻止生成。请修正源数据后重新运行。",
     "ANTHROPIC_API_KEY is not configured — Tier-4 adjudication and the bilingual summary are skipped; ambiguous rows stay 人工复核.":
         "未配置 ANTHROPIC_API_KEY——将跳过 Tier-4 复核和双语摘要；存疑行会停在「人工复核」。",
     "APP_PASSWORD is not configured on the server, so authentication is disabled and no accounts are needed.":
@@ -337,6 +370,12 @@ ZH: dict[str, str] = {
         "会读取「Date of extraction」说明行来提示名单新旧。只使用中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）。",
     "Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.":
         "表头或版式不一样（比如中文表头的追踪表）？直接上传即可——Claude 会给出列映射建议，你在审核页批准之前不会开始任何处理。",
+    "Different headers or layout (e.g. a Chinese-headed tracker)? Opt in above if you want Claude to propose a column mapping; nothing is applied until an administrator approves it on the audit screen.":
+        "表头或版式不一样（比如中文表头的追踪表）？如需 Claude 提议列映射，请先在上方明确同意；管理员在审核页批准之前不会应用任何映射。",
+    "If the headers are unfamiliar, send a bounded structural sample to Claude for mapping":
+        "若表头无法识别，向 Claude 发送受限的结构样本以生成映射",
+    "Opt-in disclosure: only visible sheet names and at most the first 15 rows × 24 columns (cell text truncated to 60 characters) are sent to Anthropic. Hidden sheets are excluded. Leave unchecked to keep all workbook content local; unfamiliar headers will then be rejected.":
+        "主动同意说明：只会向 Anthropic 发送可见工作表名称及最多前 15 行 × 24 列（每个单元格文本截断为 60 个字符）；隐藏工作表不会发送。不勾选则所有工作簿内容仅在本地处理，无法识别的表头会被拒绝。",
     "Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
         "Excel .xlsx，最大 25 MB，一张 PLOG 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
     "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — or switch tier assignment to FAN BASE thresholds above. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
@@ -404,7 +443,7 @@ ZH: dict[str, str] = {
     "download and an HTML view. Nothing is stored: the workbook is analyzed in memory and the report expires after two hours.":
         "下载，以及 HTML 网页版。任何数据都不落盘：工作簿只在内存中分析，报告两小时后自动过期。",
     "engagements": "总互动",
-    "excluded (V2)": "条因 V2 排除",
+    "excluded (V2/V11)": "条因 V2/V11 排除",
     "extracted {date}": "提取于 {date}",
     "extraction: {date}": "提取日期：{date}",
     "fanbase": "FAN BASE 阈值",

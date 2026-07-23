@@ -48,7 +48,9 @@ def test_group_metrics_hand_computed(analysis):
 def test_zero_impression_row_excluded_from_cpm_only(analysis):
     bs = analysis["metrics"]["groups"]["BOT SOFT"]
     assert bs["n"] == 2                       # still counted in share/n
-    assert bs["cpm_pooled"] == pytest.approx(50.0)   # 5000/100000*1000
+    # Both posts incurred spend.  The zero-impression post is excluded only
+    # from per-post ratios, not from the pooled campaign numerator.
+    assert bs["cpm_pooled"] == pytest.approx(100.0)  # 10000/100000*1000
     assert bs["cpe_pooled"] == pytest.approx(10.0)   # both rows have eng
     assert "V3" in _codes(analysis)
 
@@ -118,6 +120,169 @@ def test_v1_missing_columns_raises():
     buf.seek(0)
     with pytest.raises(ValueError, match="V1"):
         analyze(buf)
+
+
+def test_parse_report_closes_workbook_when_validation_raises(monkeypatch):
+    from app.efficiency import analysis as analysis_module
+
+    wb = Workbook()
+    wb.active.append(["NAME", "POST LINK"])
+    closed = False
+    real_close = wb.close
+
+    def record_close():
+        nonlocal closed
+        closed = True
+        real_close()
+
+    monkeypatch.setattr(wb, "close", record_close)
+    monkeypatch.setattr(analysis_module, "load_workbook",
+                        lambda *_args, **_kwargs: wb)
+
+    with pytest.raises(ValueError, match="V1"):
+        analysis_module.parse_report(io.BytesIO())
+    assert closed
+
+
+def test_header_probe_skips_early_partial_header():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(["NAME", "POST LINK"])
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    buf = io.BytesIO()
+    wb.save(buf)
+    result = analyze(io.BytesIO(buf.getvalue()))
+    assert result["meta"]["header_row"] == 2
+
+
+def test_report_finds_complete_schema_on_later_worksheet():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    wb.active.title = "Instructions"
+    wb.active.append(["Read me first"])
+    ws = wb.create_sheet("Campaign data")
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()))
+
+    assert result["meta"]["sheet"] == "Campaign data"
+    assert result["rows_total"] == 1
+
+
+@pytest.mark.parametrize("field", ["CPM", "CPE"])
+def test_invalid_diagnostics_only_values_warn_without_blocking(field):
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index(field)] = "Infinity"
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()))
+
+    assert not result["blocked"]
+    assert result["metrics"]["totals"]["rows"] == 1
+    assert any(f["code"] == "V11" and f["severity"] == "WARN"
+               for f in result["findings"])
+
+
+def test_invalid_fanbase_does_not_block_label_mode():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index("FAN BASE（K)")] = -1
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = analyze(io.BytesIO(buf.getvalue()), ReportConfig(tier_mode="label"))
+
+    assert not result["blocked"]
+    assert result["metrics"]["groups"]["KOC PAID"]["n"] == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("IMPRESSION", -1),
+    ("LIKE", 1.5),
+    ("PRICE", -500),
+    ("PRICE", "NaN"),
+    ("PRICE", "Infinity"),
+])
+def test_invalid_numeric_domains_block_with_row_and_field(field, value):
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    row = _eff_row(1, EFF_PAID, "KOC", "x", 20, "https://x/1",
+                   100, 5, 2, 1, 8, 10)
+    row[EFF_HEADERS.index(field)] = value
+    ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    with pytest.raises(ValueError, match=rf"V11:.*{field}.*Excel rows 2"):
+        analyze(io.BytesIO(buf.getvalue()))
+
+
+def test_empty_and_all_missing_workbooks_are_user_validation_errors():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    for add_row in (False, True):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "MASTER KOL LIST"
+        ws.append(EFF_HEADERS)
+        if add_row:
+            ws.append(_eff_row(1, EFF_PAID, "KOC", "x", 20,
+                               "https://x/1", None, None, None, None,
+                               None, None))
+        buf = io.BytesIO()
+        wb.save(buf)
+        with pytest.raises(ValueError, match="V2:.*no analyzable"):
+            analyze(io.BytesIO(buf.getvalue()))
+
+
+def test_efficiency_row_limit_is_enforced(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MAX_EFFICIENCY_ROWS", 1)
+    with pytest.raises(ValueError, match="more than 1 efficiency rows"):
+        analyze(io.BytesIO(build_eff_bytes()))
+
+
+def test_data_after_more_than_200_blank_rows_is_not_silently_dropped():
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    ws.append(_eff_row(1, EFF_PAID, "KOC", "first", 20, "https://x/1",
+                       100, 5, 2, 1, 8, 10))
+    for _ in range(205):
+        ws.append([])
+    ws.append(_eff_row(2, EFF_PAID, "KOC", "later", 20, "https://x/2",
+                       100, 5, 2, 1, 8, 10))
+    # A far-away styled cell must not turn this into a million-row loop.
+    ws.cell(row=1_000_000, column=30).number_format = "0.00"
+    buf = io.BytesIO()
+    wb.save(buf)
+    result = analyze(io.BytesIO(buf.getvalue()))
+    assert result["rows_total"] == 2
 
 
 # ----------------------------------------------------------------- insights
@@ -210,10 +375,95 @@ def test_chart_cache_catches_tampering(analysis):
         assert_chart_cache(pptx, tampered)
 
 
+def _rewrite_chart(pptx: bytes, chart_number: int, mutate) -> bytes:
+    from lxml import etree
+    source = io.BytesIO(pptx)
+    output = io.BytesIO()
+    target_name = f"ppt/charts/chart{chart_number}.xml"
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(output, "w") as zout:
+        for info in zin.infolist():
+            payload = zin.read(info.filename)
+            if info.filename == target_name:
+                root = etree.fromstring(payload)
+                mutate(root)
+                payload = etree.tostring(root, xml_declaration=True,
+                                         encoding="UTF-8")
+            zout.writestr(info, payload)
+    return output.getvalue()
+
+
+def test_chart_cache_rejects_missing_trailing_point(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def remove_last(root):
+        cache = root.find(f".//{ns}val/{ns}numRef/{ns}numCache")
+        points = cache.findall(f"{ns}pt")
+        cache.remove(points[-1])
+        count = cache.find(f"{ns}ptCount")
+        count.set("val", str(int(count.get("val")) - 1))
+
+    tampered = _rewrite_chart(build_deck(analysis), 2, remove_last)
+    with pytest.raises(VerificationError, match="expected 4 points, found 3"):
+        assert_chart_cache(tampered, analysis)
+
+
+def test_chart_cache_rejects_category_reordering(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def rename_category(root):
+        value = root.find(
+            f".//{ns}cat/{ns}strRef/{ns}strCache/{ns}pt/{ns}v")
+        value.text = "WRONG"
+
+    tampered = _rewrite_chart(build_deck(analysis), 2, rename_category)
+    with pytest.raises(VerificationError, match="categories"):
+        assert_chart_cache(tampered, analysis)
+
+
+def test_chart_cache_checks_categories_on_every_series(analysis):
+    from app.efficiency.deck import C_NS
+    ns = f"{{{C_NS}}}"
+
+    def rename_second_series_category(root):
+        series = root.findall(f".//{ns}ser")
+        value = series[1].find(
+            f"{ns}cat/{ns}strRef/{ns}strCache/{ns}pt/{ns}v")
+        value.text = "WRONG"
+
+    tampered = _rewrite_chart(
+        build_deck(analysis), 2, rename_second_series_category)
+    with pytest.raises(VerificationError, match="categories"):
+        assert_chart_cache(tampered, analysis)
+
+
 def test_deck_zh_language():
     a = analyze(io.BytesIO(build_eff_bytes()), ReportConfig(language="zh"))
     pptx = build_deck(a)
     assert_chart_cache(pptx, a)
+    joined = " ".join(a["insights"]["price"] + a["insights"]["efficiency"]
+                      + a["insights"]["caveats"] + [a["insights"]["footnote"]])
+    for english in ("WINNER", "COMPARISON", "CAUTION", "POST(S)",
+                    "BASIS", "RESULTS CONCENTRATED"):
+        assert english not in joined.upper()
+
+
+def test_insight_uses_tie_when_displayed_values_are_equal():
+    from app.efficiency.analysis import build_insights
+    cfg = ReportConfig()
+    groups = {
+        "KOC PAID": {"tier": "KOC", "n": 3, "avg_price": 1000,
+                     "cpm_pooled": 10.44, "cpe_pooled": 2.04,
+                     "cpm_perpost": 10.44, "cpe_perpost": 2.04},
+        "KOC SOFT": {"tier": "KOC", "n": 3, "avg_price": 1000,
+                     "cpm_pooled": 10.45, "cpe_pooled": 2.049,
+                     "cpm_perpost": 10.45, "cpe_perpost": 2.049},
+    }
+    insights = build_insights(
+        {"groups": groups, "totals": {"rows": 6}}, cfg, [])
+    assert "TIE ¥10" in insights["efficiency"][0]
+    assert "TIE ¥2.0" in insights["efficiency"][1]
 
 
 # ----------------------------------------------------- golden (real file)

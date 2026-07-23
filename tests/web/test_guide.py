@@ -79,7 +79,6 @@ def test_upload_forms_have_dropzones_and_busy_states(client):
 
 def test_past_runs_show_badges_and_export_links(client):
     from app.core import db
-    import time as _t
     db.run_create("uitest0run01", plog_path="x", dmr_path="y",
                   plog_name="p.xlsx", dmr_name="d.xlsx", preview={},
                   perimeter_hash=None)

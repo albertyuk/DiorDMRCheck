@@ -7,9 +7,9 @@ to the canonical fields. It answers with a column mapping and per-field
 confidence — it never rewrites data, and nothing it says takes effect until
 a human approves the mapping on the audit screen.
 
-Applying a mapping rewrites ONLY the text of the identified header cells to
-the canonical names; every data cell (and hyperlink) is byte-identical, so
-the deterministic parsers — and all their guarantees — run unchanged.
+Applying a mapping patches only the identified worksheet's header-cell XML.
+It deliberately does not round-trip the workbook through openpyxl because
+doing so clears Excel's cached formula results.
 
 Approved mappings are cached by a signature of the header row's LAYOUT
 (sheet name, row index, header cell texts — never the data rows), so a given
@@ -22,9 +22,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import posixpath
 import time
+import zipfile
 from typing import Any, Optional
 
+from lxml import etree
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field, ValidationError
@@ -44,6 +47,13 @@ SAMPLE_CELL_CHARS = 60
 MAX_SHEETS = 6
 
 
+def _safe_xml(data: bytes):
+    """Parse untrusted OOXML without DTD, entity, or network expansion."""
+    parser = etree.XMLParser(resolve_entities=False, no_network=True,
+                             load_dtd=False, huge_tree=False)
+    return etree.fromstring(data, parser=parser)
+
+
 class SchemaMapError(Exception):
     """Mapper unavailable or the model's answer was unusable."""
 
@@ -59,11 +69,16 @@ def _sample_cell_str(v: Any) -> str:
 
 
 def build_sample(data: bytes) -> dict:
-    """Structural sample sent to the model: sheet names + top-left grid."""
+    """Structural sample sent to the model: visible sheet names + bounded grid.
+
+    Hidden worksheets often contain lookup tables or unrelated client data;
+    they are never sent to the external mapper.
+    """
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
         sheets = []
-        for ws in wb.worksheets[:MAX_SHEETS]:
+        visible = [ws for ws in wb.worksheets if ws.sheet_state == "visible"]
+        for ws in visible[:MAX_SHEETS]:
             rows = []
             for row in ws.iter_rows(min_row=1, max_row=SAMPLE_ROWS,
                                     max_col=SAMPLE_COLS):
@@ -109,12 +124,15 @@ def header_signature(data: bytes, sheet: str, header_row: int) -> str:
 
 def candidate_signatures(data: bytes) -> list[tuple[str, int, str]]:
     """(sheet, row, signature) for every non-empty row in the header-scan
-    region of the first MAX_SHEETS sheets — the lookup keys probed against
-    the approved-mapping cache before any LLM call."""
+    region of the first MAX_SHEETS visible sheets — the lookup keys probed
+    against the approved-mapping cache before any LLM call. This selection
+    exactly matches :func:`build_sample`, so a mapping approved for a visible
+    sheet after hidden lookup tabs remains reusable."""
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     out = []
     try:
-        for ws in wb.worksheets[:MAX_SHEETS]:
+        visible = [ws for ws in wb.worksheets if ws.sheet_state == "visible"]
+        for ws in visible[:MAX_SHEETS]:
             for i, row in enumerate(
                     ws.iter_rows(min_row=1, max_row=SAMPLE_ROWS,
                                  max_col=SAMPLE_COLS), start=1):
@@ -241,30 +259,129 @@ def column_choices(data: bytes, sheet: str, header_row: int,
 
 def apply_mapping(data: bytes, kind: str, sheet: str, header_row: int,
                   columns: dict[str, int]) -> bytes:
-    """Rewrite ONLY the chosen header cells to the canonical names. Data
-    cells, formulas, and hyperlinks are untouched. Unchosen header cells that
-    would collide with a canonical name are prefixed so the fingerprint
-    cannot bind to the wrong column."""
+    """Patch only selected header cells in the OOXML package.
+
+    A normal openpyxl save removes cached results from formula cells.  Direct
+    worksheet-XML patching preserves all data cells, formula expressions,
+    cached values, hyperlinks and unrelated package parts.
+    """
     canonical = {key: text for text, key, _, _ in FIELDS[kind]}
-    wb = load_workbook(io.BytesIO(data))       # NOT data_only: keep formulas
+    unknown = set(columns) - set(canonical)
+    if unknown:
+        raise ValueError(f"unknown mapping fields: {sorted(unknown)}")
+    if header_row < 1 or header_row > SAMPLE_ROWS:
+        raise ValueError("header row is outside the audited range")
+    if (not columns or any(not isinstance(col, int) or col < 1
+                           or col > SAMPLE_COLS for col in columns.values())
+            or len(set(columns.values())) != len(columns)):
+        raise ValueError("mapping columns are invalid or duplicated")
+
+    # Use read-only openpyxl solely to inspect header text for de-collision;
+    # never save this object.
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
+    if sheet not in wb.sheetnames:
+        wb.close()
+        raise ValueError(f"unknown worksheet {sheet!r}")
     ws = wb[sheet]
     chosen_cols = set(columns.values())
     mapped_keys = {header_key(canonical[k]) for k in columns}
+    replacements: dict[int, str] = {}
     # de-collide first, then write (order matters when a canonical name
     # already exists on a column the human did NOT choose)
-    for col in range(1, ws.max_column + 1):
+    for col in range(1, min(ws.max_column, SAMPLE_COLS) + 1):
         if col in chosen_cols:
             continue
         cell = ws.cell(row=header_row, column=col)
         if cell.value is None:
             continue
         if header_key(cell_str(cell.value)) in mapped_keys:
-            cell.value = f"(original) {cell.value}"
+            replacements[col] = f"(original) {cell.value}"
     for key, col in columns.items():
-        ws.cell(row=header_row, column=col).value = canonical[key]
-    buf = io.BytesIO()
-    wb.save(buf)
+        replacements[col] = canonical[key]
+    wb.close()
+
+    with zipfile.ZipFile(io.BytesIO(data), "r") as source:
+        part = _worksheet_part(source, sheet)
+        patched = _patch_header_xml(
+            source.read(part), header_row, replacements)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as target:
+            for info in source.infolist():
+                target.writestr(info, patched if info.filename == part
+                                else source.read(info.filename))
     return buf.getvalue()
+
+
+SS_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
+
+
+def _worksheet_part(archive: zipfile.ZipFile, sheet: str) -> str:
+    workbook = _safe_xml(archive.read("xl/workbook.xml"))
+    rid = None
+    for node in workbook.findall(f".//{{{SS_NS}}}sheet"):
+        if node.get("name") == sheet:
+            rid = node.get(f"{{{REL_NS}}}id")
+            break
+    if not rid:
+        raise ValueError(f"unknown worksheet {sheet!r}")
+    rels = _safe_xml(archive.read("xl/_rels/workbook.xml.rels"))
+    for rel in rels.findall(f"{{{PKG_REL_NS}}}Relationship"):
+        if rel.get("Id") != rid:
+            continue
+        if rel.get("TargetMode", "").casefold() == "external":
+            break
+        target = rel.get("Target", "").replace("\\", "/")
+        part = (target.lstrip("/") if target.startswith("/")
+                else posixpath.normpath(posixpath.join("xl", target)))
+        if part in archive.namelist() and not part.startswith("../"):
+            return part
+        break
+    raise ValueError(f"worksheet XML for {sheet!r} is missing")
+
+
+def _patch_header_xml(xml: bytes, header_row: int,
+                      replacements: dict[int, str]) -> bytes:
+    root = _safe_xml(xml)
+    row = root.find(f".//{{{SS_NS}}}row[@r='{header_row}']")
+    if row is None:
+        raise ValueError(f"header row {header_row} is missing")
+    cells = {cell.get("r"): cell for cell in row.findall(f"{{{SS_NS}}}c")}
+    for col, value in replacements.items():
+        ref = f"{get_column_letter(col)}{header_row}"
+        cell = cells.get(ref)
+        if cell is None:
+            cell = etree.Element(f"{{{SS_NS}}}c", r=ref)
+            # Keep worksheet cell order stable for strict spreadsheet readers.
+            inserted = False
+            for index, sibling in enumerate(row.findall(f"{{{SS_NS}}}c")):
+                sibling_col = sibling.get("r", "")
+                sibling_col = "".join(ch for ch in sibling_col if ch.isalpha())
+                if sibling_col and col < _column_number(sibling_col):
+                    row.insert(index, cell)
+                    inserted = True
+                    break
+            if not inserted:
+                row.append(cell)
+        for child in list(cell):
+            cell.remove(child)
+        cell.set("t", "inlineStr")
+        inline = etree.SubElement(cell, f"{{{SS_NS}}}is")
+        text = etree.SubElement(inline, f"{{{SS_NS}}}t")
+        if value != value.strip():
+            text.set(f"{{{XML_NS}}}space", "preserve")
+        text.text = value
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                          standalone=True)
+
+
+def _column_number(letters: str) -> int:
+    value = 0
+    for char in letters.upper():
+        value = value * 26 + ord(char) - ord("A") + 1
+    return value
 
 
 # -------------------------------------------------------------------- cache
@@ -275,21 +392,38 @@ def _cache_key(kind: str, sig: str) -> str:
 
 def cache_get(kind: str, sig: str) -> Optional[dict]:
     raw = db.setting_get(_cache_key(kind, sig))
-    return json.loads(raw) if raw else None
+    if not raw:
+        return None
+    mapping = json.loads(raw)
+    mapping.setdefault("sig", sig)
+    return mapping
 
 
 def cache_get_many(kind: str, sigs: list[str]) -> dict[str, dict]:
     """sig → approved mapping for every candidate signature that has one
     (single settings query)."""
     hits = db.settings_get_many([_cache_key(kind, s) for s in sigs])
-    return {s: json.loads(hits[_cache_key(kind, s)])
-            for s in sigs if _cache_key(kind, s) in hits}
+    out = {}
+    for sig in sigs:
+        raw = hits.get(_cache_key(kind, sig))
+        if raw is None:
+            continue
+        mapping = json.loads(raw)
+        mapping.setdefault("sig", sig)
+        out[sig] = mapping
+    return out
 
 
 def cache_put(kind: str, sig: str, sheet: str, header_row: int,
               columns: dict[str, int], approved_by: str) -> None:
     db.setting_set(_cache_key(kind, sig), json.dumps({
-        "sheet": sheet, "header_row": header_row, "columns": columns,
+        "sig": sig, "sheet": sheet, "header_row": header_row,
+        "columns": columns,
         "approved_by": approved_by,
         "approved_at": time.strftime("%Y-%m-%d %H:%M"),
     }, ensure_ascii=False))
+
+
+def cache_delete(kind: str, sig: str) -> None:
+    """Revoke one stale/invalid approved mapping."""
+    db.setting_delete(_cache_key(kind, sig))

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import posixpath
+import re
 import shutil
 import threading
 import time
@@ -12,7 +13,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Union
 from urllib.parse import unquote
-from xml.etree import ElementTree
+from defusedxml import ElementTree
 
 from fastapi import Request, UploadFile
 from starlette.concurrency import run_in_threadpool
@@ -237,10 +238,39 @@ def run_upload_task_sync(func: Callable, *args: Any, **kwargs: Any):
 
 
 ArchiveSource = Union[bytes, bytearray, Path, str, BinaryIO]
+_CELL_REF_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?([1-9][0-9]*)$")
 
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def _column_index(letters: str) -> int:
+    index = 0
+    for char in letters.upper():
+        index = index * 26 + ord(char) - ord("A") + 1
+    return index
+
+
+def _validate_coordinate(reference: str, *, max_row_index: int | None,
+                         max_column_index: int | None) -> None:
+    """Reject worksheet dimensions/cells that force huge sparse iteration."""
+    match = _CELL_REF_RE.fullmatch(reference or "")
+    if match is None:
+        return
+    column, row_text = match.groups()
+    row = int(row_text)
+    if max_row_index is not None and row > max_row_index:
+        raise UploadLimitError(
+            "Workbook uses a worksheet row beyond the configured "
+            f"{max_row_index:,} row-index limit."
+        )
+    column_number = _column_index(column)
+    if max_column_index is not None and column_number > max_column_index:
+        raise UploadLimitError(
+            "Workbook uses a worksheet column beyond the configured "
+            f"{max_column_index:,} column-index limit."
+        )
 
 
 def _normalize_part_path(name: str) -> str | None:
@@ -289,7 +319,8 @@ def _worksheet_parts(archive: zipfile.ZipFile,
         if name == "[Content_Types].xml":
             with archive.open(info) as stream:
                 for _event, element in ElementTree.iterparse(
-                        stream, events=("end",)):
+                        stream, events=("end",), forbid_dtd=True,
+                        forbid_entities=True, forbid_external=True):
                     if (_local_name(element.tag) == "Override"
                             and element.attrib.get("ContentType", "").lower()
                             .endswith("worksheet+xml")):
@@ -305,7 +336,8 @@ def _worksheet_parts(archive: zipfile.ZipFile,
                 continue
             with archive.open(info) as stream:
                 for _event, element in ElementTree.iterparse(
-                        stream, events=("end",)):
+                        stream, events=("end",), forbid_dtd=True,
+                        forbid_entities=True, forbid_external=True):
                     if (_local_name(element.tag) == "Relationship"
                             and element.attrib.get("Type", "").lower()
                             .endswith("/worksheet")
@@ -322,7 +354,10 @@ def _worksheet_parts(archive: zipfile.ZipFile,
 
 def validate_xlsx_archive(source: ArchiveSource, *, max_uncompressed_bytes: int,
                           max_entries: int,
-                          max_cells: int | None = None) -> None:
+                          max_cells: int | None = None,
+                          max_sheets: int | None = None,
+                          max_row_index: int | None = None,
+                          max_column_index: int | None = None) -> None:
     """Reject archives that could expand beyond the process safety budget.
 
     The HTTP/compressed size is bounded separately.  XLSX is a ZIP container,
@@ -344,19 +379,51 @@ def validate_xlsx_archive(source: ArchiveSource, *, max_uncompressed_bytes: int,
                 raise UploadLimitError(
                     f"Workbook expands beyond the {limit_mb} MB safety limit."
                 )
-            if max_cells is not None:
+            if any(limit is not None for limit in (
+                    max_cells, max_sheets, max_row_index,
+                    max_column_index)):
                 cell_count = 0
                 worksheet_parts = _worksheet_parts(archive, infos)
+                if (max_sheets is not None
+                        and len(worksheet_parts) > max_sheets):
+                    raise UploadLimitError(
+                        "Workbook contains more than "
+                        f"{max_sheets:,} worksheets."
+                    )
                 for worksheet in infos:
                     if (_canonical_part_name(worksheet.filename)
                             not in worksheet_parts):
                         continue
                     with archive.open(worksheet) as xml:
                         for _event, element in ElementTree.iterparse(
-                                xml, events=("end",)):
-                            if _local_name(element.tag) == "c":
+                                xml, events=("end",), forbid_dtd=True,
+                                forbid_entities=True, forbid_external=True):
+                            local_name = _local_name(element.tag)
+                            if local_name == "dimension":
+                                for coordinate in element.attrib.get(
+                                        "ref", "").split(":"):
+                                    _validate_coordinate(
+                                        coordinate,
+                                        max_row_index=max_row_index,
+                                        max_column_index=max_column_index,
+                                    )
+                            elif local_name == "row":
+                                row = element.attrib.get("r", "")
+                                if row.isdigit() and max_row_index is not None:
+                                    _validate_coordinate(
+                                        "A" + row,
+                                        max_row_index=max_row_index,
+                                        max_column_index=max_column_index,
+                                    )
+                            elif local_name == "c":
+                                _validate_coordinate(
+                                    element.attrib.get("r", ""),
+                                    max_row_index=max_row_index,
+                                    max_column_index=max_column_index,
+                                )
                                 cell_count += 1
-                                if cell_count > max_cells:
+                                if (max_cells is not None
+                                        and cell_count > max_cells):
                                     raise UploadLimitError(
                                         "Workbook contains more than "
                                         f"{max_cells:,} populated cells."

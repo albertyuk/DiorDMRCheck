@@ -1,6 +1,7 @@
 {
  "buckets": {
-  "dmr_gaps": 3,
+  "dmr_gaps": 1,
+  "expected_missing": 1,
   "outside_perimeter": 0
  },
  "cells": [
@@ -1437,27 +1438,22 @@
   [
    11,
    19,
-   "无帖子"
+   "人工复核（链接已解析但无法获取作者ID（TikHub不可用）/ note resolved but author id unavailable, cannot decide 无博主 vs 无帖子）"
   ],
   [
    11,
    20,
-   "NO_POST"
+   "REVIEW"
   ],
   [
    11,
    21,
-   "2:author-id-sibling"
+   "1:resolved-no-author"
   ],
   [
    11,
    24,
    "6a1a0000000000000000a00c"
-  ],
-  [
-   11,
-   25,
-   "5f00000000000000000000b1"
   ],
   [
    11,
@@ -1468,11 +1464,6 @@
    11,
    30,
    "墨池墨吟 [6a1a0000000000000000a008] 2026-07-10 Δ-2d (cjk-substring)"
-  ],
-  [
-   11,
-   34,
-   "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable. | DMR tracks author 5f00000000000000000000b1 ('墨池墨吟', 4 post(s)) but this note 6a1a0000000000000000a00c is not among them."
   ]
  ],
  "counts": {
@@ -1480,8 +1471,8 @@
   "MATCH": 4,
   "MATCH_name_mislabel": 1,
   "NO_BLOGGER": 1,
-  "NO_POST": 3,
-  "REVIEW": 1
+  "NO_POST": 2,
+  "REVIEW": 2
  },
  "dmr_meta": {
   "header_row": 3,
@@ -1503,6 +1494,9 @@
  "reverse_audit": [
   {
    "blogger": "墨池墨吟",
+   "campaigns": [
+    "PLOG #001"
+   ],
    "dmr_row": 4,
    "engagement": 98,
    "likes_retweet": 88,
@@ -1512,6 +1506,9 @@
   },
   {
    "blogger": "墨池墨吟",
+   "campaigns": [
+    "PLOG #001"
+   ],
    "dmr_row": 11,
    "engagement": 66,
    "likes_retweet": 61,
@@ -1964,7 +1961,7 @@
      "username": "5f00000000000000000000b1"
     }
    ],
-   "column_s": "无帖子",
+   "column_s": "人工复核（链接已解析但无法获取作者ID（TikHub不可用）/ note resolved but author id unavailable, cannot decide 无博主 vs 无帖子）",
    "date_delta_days": null,
    "dmr_likes_retweet": null,
    "excel_row": 11,
@@ -1981,10 +1978,7 @@
    "name_method": "",
    "name_mislabel": false,
    "no": "2",
-   "notes": [
-    "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.",
-    "DMR tracks author 5f00000000000000000000b1 ('墨池墨吟', 4 post(s)) but this note 6a1a0000000000000000a00c is not among them."
-   ],
+   "notes": [],
    "out_of_window": false,
    "perimeter_candidates": [],
    "perimeter_dmrid": "",
@@ -2000,12 +1994,12 @@
    "post_link": "http://xhslink.com/o/mochi-dead-detail",
    "resolution_error": "",
    "resolution_source": "fixture",
-   "resolved_author_id": "5f00000000000000000000b1",
+   "resolved_author_id": "",
    "resolved_author_name": "",
    "resolved_note_id": "6a1a0000000000000000a00c",
-   "review_reason": "",
-   "status": "NO_POST",
-   "tier": "2:author-id-sibling"
+   "review_reason": "链接已解析但无法获取作者ID（TikHub不可用）/ note resolved but author id unavailable, cannot decide 无博主 vs 无帖子",
+   "status": "REVIEW",
+   "tier": "1:resolved-no-author"
   }
  ]
 }

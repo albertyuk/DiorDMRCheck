@@ -90,6 +90,6 @@ def test_golden_export_snapshot(plog_path, dmr_path, fake_resolver, tmp_path):
         "cells": cells,
         "verdicts": [v.to_dict() for v in verdicts],
         "counts": counts,
-        "buckets": summary_buckets(counts),
+        "buckets": summary_buckets(verdicts),
         "reverse_audit": reverse_audit(plog, dmr, verdicts),
     })

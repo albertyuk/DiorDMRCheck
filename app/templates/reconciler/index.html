@@ -19,6 +19,12 @@
       <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
             data-bad-size="{{ t('over the 25 MB limit') }}">
         <input type="file" name="perimeter" accept=".xlsx"></span></label></p>
+    <input type="hidden" name="allow_header_ai" value="0">
+    {% if anthropic_configured %}
+    <p><label><input type="checkbox" name="allow_header_ai" value="1">
+      {{ t("If headers are unfamiliar, allow a bounded sample of visible worksheet cells to be sent to Claude to propose a column mapping. No sample is sent unless this is checked.") }}
+    </label></p>
+    {% endif %}
     <button type="submit"
             data-busy-label="{{ t('Uploading & parsing…') }}">{{ t("Upload & preview") }}</button>
   </form>

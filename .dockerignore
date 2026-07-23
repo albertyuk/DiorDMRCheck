@@ -1,0 +1,10 @@
+# The Dockerfile needs only these inputs. An allow-list keeps client
+# workbooks, SQLite databases, .env files, VCS history, and future local
+# artifacts out of the build context without relying on every extension being
+# anticipated here.
+*
+!app/
+!app/**
+!requirements.txt
+!requirements.lock
+!entrypoint.sh

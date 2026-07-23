@@ -23,6 +23,17 @@
         <b>{{ m.approved_by or "?" }}</b> {{ m.approved_at }}.
       {% else %}{{ t("Approved just now by") }} <b>{{ m.approved_by or "?" }}</b>.{% endif %}
       {{ t("Only header names were rewritten; data cells are untouched.") }}
+      {% set mapping_viewer = user_of(request) %}
+      {% if m.sig and m.shared and (not mapping_viewer or mapping_viewer.is_admin) %}
+      <form method="post" action="/remap/cache/{{ m.kind }}/{{ m.sig }}/delete"
+            style="display:inline;margin-left:.5rem">
+        <input type="hidden" name="next_path" value="/">
+        <button type="submit" class="secondary" style="padding:.2rem .55rem"
+                onclick="return confirm('{{ t("Revoke this shared mapping and require another audit?") }}')">
+          {{ t("Revoke mapping") }}
+        </button>
+      </form>
+      {% endif %}
     </div>
     {% endfor %}
   {% endif %}

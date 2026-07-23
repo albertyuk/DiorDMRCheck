@@ -36,7 +36,7 @@ N_DUP_C3 = "6a1a0000000000000000a008"      # duplicate blogger, campaign #003 po
 N_OLD = "6a1a0000000000000000a009"         # out-of-window December post
 N_EXTRA = "6a1a0000000000000000a00a"       # DMR extra post → reverse audit
 N_CONFLICT = "6a1a0000000000000000a00b"    # tier-2 name-conflict row
-N_DEAD_DETAIL = "6a1a0000000000000000a00c"  # note resolves, detail dead → sibling tier
+N_DEAD_DETAIL = "6a1a0000000000000000a00c"  # note resolves, detail dead → review
 
 U_MOCHI = "5f00000000000000000000b1"
 U_BING = "5f00000000000000000000b2"
@@ -74,8 +74,8 @@ def plog_rows() -> list[dict]:
         # -------- PLOG #003 (duplicate blogger across campaigns)
         dict(no=1, campaign="PLOG #003", name="墨池墨吟", date=datetime(2026, 7, 10),
              link=LINK.format("mochi-jul"), like=300, collection=20, comment=6),
-        # note resolves but detail is dead/blocked (no author) — the author id
-        # must come from the sibling 墨池墨吟 rows above → deterministic 无帖子
+        # Note resolves but detail is dead/blocked (no author). Another row's
+        # identity is deliberately not borrowed: this stays manual review.
         dict(no=2, campaign="PLOG #003", name="墨池墨吟", date=datetime(2026, 7, 12),
              link=LINK.format("mochi-dead-detail"), like=50, collection=4, comment=1),
     ]
@@ -197,7 +197,7 @@ def build_eff_bytes() -> bytes:
     MID SOFT  n=3: 6k×3, impr 100k/50k/50k, eng 500/250/250
               → pooled CPM 90, per-post CPM 100, pooled CPE 18, avg 6k
     BOT SOFT  n=2: one normal + one IMPRESSION=0 (V3)
-              → pooled CPM 50 (zero-impr row out of CPM only), CPE 10
+              → pooled CPM 100 (all spend / positive impressions), CPE 10
     KOC PAID  n=4: impr 90k/90k/10k/10k → top-2 hold 90% (V10)
     TOP SOFT  n=1 (V9); BOT PAID n=30 (filler, makes TOP SOFT a <3% sliver)
     plus: V7 unknown TYPE row (in totals, no group), V2 missing-PRICE row

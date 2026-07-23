@@ -6,6 +6,7 @@ expired tokens 404.
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 
 import pytest
@@ -42,7 +43,7 @@ def test_full_flow(client, tmp_path, monkeypatch):
     body = r.text
     assert "Download .pptx" in body
     assert "MID PAID" in body and "V10" in body            # findings shown WITH output
-    assert "CPM WINNER" in body
+    assert "CPM COMPARISON" in body
     # nothing was written to disk — client campaign data stays in memory
     assert not (tmp_path / "uploads").exists()
 
@@ -51,6 +52,40 @@ def test_full_flow(client, tmp_path, monkeypatch):
     assert d.status_code == 200
     assert d.content[:2] == b"PK"
     assert "wave1_efficiency.pptx" in d.headers["content-disposition"]
+
+
+def test_large_efficiency_upload_never_rolls_to_tempfile(client, monkeypatch):
+    source = io.BytesIO(build_eff_bytes())
+    padded = io.BytesIO()
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(padded, "w") as zout:
+        for info in zin.infolist():
+            zout.writestr(info, zin.read(info.filename))
+        # Incompressible padding makes the multipart file exceed Starlette's
+        # normal 1 MiB spool threshold while remaining a valid bounded XLSX.
+        zout.writestr("xl/media/privacy-padding.bin", os.urandom(1200 * 1024))
+    payload = padded.getvalue()
+    assert len(payload) > 1024 * 1024
+
+    observed = []
+    real_read_limited = eff_routes.read_limited
+
+    async def inspect_spool(upload, limit):
+        observed.append((getattr(upload.file, "_rolled", None), upload))
+        return await real_read_limited(upload, limit)
+
+    monkeypatch.setattr(eff_routes, "read_limited", inspect_spool)
+    response = client.post(
+        "/efficiency",
+        files={"report": (
+            "large.xlsx", payload,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert observed and observed[0][0] is False
+    assert observed[0][1].file.closed  # FormData was closed before returning
 
 
 def test_expired_token_404(client):
@@ -82,6 +117,36 @@ def test_bad_file_is_422_not_500(client):
     assert r.status_code == 422
 
 
+def test_header_only_workbook_is_422_not_internal_error(client):
+    from openpyxl import Workbook
+    from tests.fixtures import EFF_HEADERS
+    wb = Workbook()
+    wb.active.title = "MASTER KOL LIST"
+    wb.active.append(EFF_HEADERS)
+    buf = io.BytesIO()
+    wb.save(buf)
+    response = client.post(
+        "/efficiency",
+        files={"report": ("empty.xlsx", buf.getvalue(),
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")}, data={})
+    assert response.status_code == 422
+    assert "no analyzable efficiency rows" in response.text
+
+
+def test_unexpected_analysis_failure_is_logged_500_without_detail(
+        client, monkeypatch, caplog):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("sensitive implementation detail")
+
+    monkeypatch.setattr(eff_routes, "analyze_efficiency", fail)
+    response = _upload(client)
+    assert response.status_code == 500
+    assert "Unexpected server error" in response.text
+    assert "sensitive implementation detail" not in response.text
+    assert "unexpected efficiency report failure" in caplog.text
+
+
 def test_malformed_ooxml_metadata_is_422_not_500(client):
     workbook = io.BytesIO()
     with zipfile.ZipFile(workbook, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -104,6 +169,38 @@ def test_oversize_file_is_413(client, monkeypatch):
                                       "application/zip")},
                     data={})
     assert r.status_code == 413
+
+
+def test_analysis_resource_limit_is_413(client, monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise eff_routes.UploadLimitError("workbook resource limit exceeded")
+
+    monkeypatch.setattr(eff_routes, "analyze_efficiency", fail)
+    response = _upload(client)
+
+    assert response.status_code == 413
+    assert "workbook resource limit exceeded" in response.text
+
+
+def test_efficiency_row_cap_is_413(client, monkeypatch):
+    monkeypatch.setattr(config, "MAX_EFFICIENCY_ROWS", 1)
+
+    response = _upload(client)
+
+    assert response.status_code == 413
+    assert "efficiency rows" in response.text
+
+
+def test_full_report_store_is_controlled_503(client, monkeypatch):
+    def full(_entry):
+        raise eff_routes.TokenStoreFull("all report slots are claimed")
+
+    monkeypatch.setattr(eff_routes.EFF_REPORTS, "put", full)
+    response = _upload(client)
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "60"
+    assert "Too many efficiency reports are active" in response.text
 
 
 def test_invalid_config_values_fall_back_to_defaults(client):
@@ -155,3 +252,19 @@ def test_chinese_filename_downloads_cleanly(client):
     assert "filename*=UTF-8''%E5%B0%8F%E7%BA%A2%E4%B9%A6" in cd
     assert 'filename="' in cd            # ASCII fallback for old clients
     assert cd.encode("latin-1")          # must be header-encodable
+
+
+def test_download_filename_cannot_inject_response_headers(client):
+    token = eff_routes.EFF_REPORTS.put({
+        "analysis": {},
+        "pptx": b"PK-safe",
+        "filename": 'report"\r\nX-Injected: yes\\path',
+    })
+
+    response = client.get(f"/efficiency/{token}/deck.pptx")
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert "\r" not in disposition and "\n" not in disposition
+    assert "x-injected" not in response.headers
+    assert 'filename="report_X-Injected_yes_path_efficiency.pptx"' in disposition

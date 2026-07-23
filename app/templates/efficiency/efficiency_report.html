@@ -16,8 +16,21 @@
       {% for field, col in remap.columns.items() %}{{ field }} ← {{ t("column {n}", n=col) }}{% if not loop.last %} · {% endif %}{% endfor %}.
       {% if remap.auto %}{{ t("Applied automatically — this exact format was approved by") }}
         <b>{{ remap.approved_by or "?" }}</b> {{ remap.approved_at }}.
-      {% else %}{{ t("Approved just now by") }} <b>{{ remap.approved_by or "?" }}</b>.{% endif %}
+      {% else %}{{ t("Approved just now by") }} <b>{{ remap.approved_by or "?" }}</b>.
+        {% if not remap.shared %}{{ t("This mapping was not saved for reuse because validation blocked the deck.") }}{% endif %}
+      {% endif %}
       {{ t("Only header names were rewritten; data cells are untouched.") }}
+      {% set mapping_viewer = user_of(request) %}
+      {% if remap.sig and remap.shared and (not mapping_viewer or mapping_viewer.is_admin) %}
+      <form method="post" action="/remap/cache/{{ remap.kind }}/{{ remap.sig }}/delete"
+            style="display:inline;margin-left:.5rem">
+        <input type="hidden" name="next_path" value="/efficiency">
+        <button type="submit" class="secondary" style="padding:.2rem .55rem"
+                onclick="return confirm('{{ t("Revoke this shared mapping and require another audit?") }}')">
+          {{ t("Revoke mapping") }}
+        </button>
+      </form>
+      {% endif %}
     </div>
   {% endif %}
   {% if has_deck %}
@@ -25,7 +38,7 @@
        <span class="muted" style="font-size:.74rem;margin-left:.8rem">
          {{ t("Native editable charts — every cached chart value is verified against the computed metrics before the file is offered.") }}</span></p>
   {% else %}
-    <div class="warn">{{ t("<b>Deck not generated</b> — a validation error below is blocking (missing_row_policy=block). Fix the source data or re-run with the default policy.") | safe }}</div>
+    <div class="warn">{{ t("<b>Deck not generated</b> — an ERROR validation finding below is blocking. Fix the source data and run again.") | safe }}</div>
   {% endif %}
 </div>
 
@@ -55,7 +68,7 @@
     <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.impressions) }}</b> {{ t("impressions") }}</span>
     <span class="stat"><b>{{ "{:,}".format(analysis.metrics.totals.engagements) }}</b> {{ t("engagements") }}</span>
     {% if analysis.metrics.totals.excluded_rows %}
-      <span class="stat"><b>{{ analysis.metrics.totals.excluded_rows }}</b> {{ t("excluded (V2)") }}</span>
+      <span class="stat"><b>{{ analysis.metrics.totals.excluded_rows }}</b> {{ t("excluded (V2/V11)") }}</span>
     {% endif %}
     {% if analysis.metrics.totals.unclassified %}
       <span class="stat"><b>{{ analysis.metrics.totals.unclassified }}</b> {{ t("unclassified") }}</span>

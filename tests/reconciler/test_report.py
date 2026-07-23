@@ -114,3 +114,105 @@ def test_audit_json_has_document_level_caveat(plog_path, dmr_path,
         {"id": "t", "summary_json": None}, verdicts, {}, {}, {}, []))
     assert doc["engagement_caveat"] == ENGAGEMENT_CAVEAT
     assert all("engagement_caveat" not in v for v in doc["verdicts"])
+
+
+def test_export_neutralizes_formula_capable_external_text(
+        plog_path, dmr_path, fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    dmr = parse_dmr(dmr_path)
+    verdicts = run_pipeline(plog, dmr)
+    verdict = verdicts[0]
+    verdict.matched_blogger = '=HYPERLINK("https://evil.invalid","click")'
+    verdict.llm_rationale_en = "+SUM(1,1)"
+    verdict.notes = ["@malicious"]
+    overrides = {
+        verdict.excel_row: {"status": "无帖子", "note": "-1+1"}
+    }
+    out = tmp_path / "safe.xlsx"
+    write_annotated_xlsx(
+        plog_path, str(out), verdicts, plog.header_row, plog.sheet, overrides
+    )
+    ws = load_workbook(out, data_only=False)[plog.sheet]
+    for column in (23, 32, 34):  # W blogger, AF rationale, AH notes
+        cell = ws.cell(verdict.excel_row, column)
+        assert cell.data_type == "s"
+        assert cell.value.startswith("'")
+
+
+def test_audit_json_uses_effective_override_counts_and_retains_pipeline(
+        plog_path, dmr_path, fake_resolver):
+    import json
+    from app.reconciler.export import build_audit_json
+    from app.reconciler.pipeline import status_counts
+
+    plog = parse_plog(plog_path)
+    dmr = parse_dmr(dmr_path)
+    verdicts = run_pipeline(plog, dmr)
+    verdict = next(v for v in verdicts if v.status == "NO_POST")
+    overrides = {
+        verdict.excel_row: {"status": "无博主", "note": "reviewed"}
+    }
+    doc = json.loads(build_audit_json(
+        {"id": "t", "summary_json": None}, verdicts,
+        status_counts(verdicts), {}, {}, [], overrides=overrides,
+    ))
+    effective = next(v for v in doc["verdicts"]
+                     if v["excel_row"] == verdict.excel_row)
+    assert effective["status"] == "NO_BLOGGER"
+    assert effective["pipeline_status"] == "NO_POST"
+    assert doc["counts"]["NO_BLOGGER"] >= 1
+    assert doc["counts"].get("NO_POST", 0) == doc["pipeline_counts"]["NO_POST"] - 1
+    assert doc["summary_basis"] == "pipeline_before_human_overrides"
+
+
+def test_invalid_legacy_override_is_ignored_not_executed(
+        plog_path, dmr_path, fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    verdict = verdicts[0]
+    overrides = {
+        verdict.excel_row: {"status": "=1+1", "note": "legacy"}
+    }
+    out = tmp_path / "legacy.xlsx"
+    write_annotated_xlsx(
+        plog_path, str(out), verdicts, plog.header_row, plog.sheet, overrides
+    )
+    ws = load_workbook(out, data_only=False)[plog.sheet]
+    assert ws.cell(verdict.excel_row, 19).data_type != "f"
+    assert ws.cell(verdict.excel_row, 19).value == (verdict.column_s() or None)
+
+
+def test_xlsx_contains_hidden_perimeter_provenance(
+        plog_path, dmr_path, fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    out = tmp_path / "provenance.xlsx"
+    write_annotated_xlsx(
+        plog_path, str(out), verdicts, plog.header_row, plog.sheet,
+        perimeter_meta={"hash": "abc", "warnings": ["stale"]},
+        perimeter_warning="cache unavailable",
+    )
+    wb = load_workbook(out)
+    meta = wb["_DMR_AUDIT_META"]
+    assert meta.sheet_state == "hidden"
+    values = {row[0].value: row[1].value for row in meta.iter_rows(min_row=2)}
+    assert values["hash"] == "abc"
+    assert values["warning"] == "cache unavailable"
+
+
+def test_perimeter_provenance_never_deletes_same_named_user_sheet(
+        plog_path, dmr_path, fake_resolver, tmp_path):
+    source = tmp_path / "collision.xlsx"
+    wb = load_workbook(plog_path)
+    user_sheet = wb.create_sheet("_DMR_AUDIT_META")
+    user_sheet["A1"] = "USER CONTENT"
+    wb.save(source)
+    plog = parse_plog(str(source))
+    out = tmp_path / "collision-out.xlsx"
+    write_annotated_xlsx(
+        str(source), str(out), run_pipeline(plog, parse_dmr(dmr_path)),
+        plog.header_row, plog.sheet, perimeter_meta={"hash": "abc"},
+    )
+    exported = load_workbook(out)
+    assert exported["_DMR_AUDIT_META"]["A1"].value == "USER CONTENT"
+    assert exported["_DMR_AUDIT_META_2"].sheet_state == "hidden"

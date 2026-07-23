@@ -29,6 +29,12 @@
         <option value="en" {% if lang != "zh" %}selected{% endif %}>English</option>
         <option value="zh" {% if lang == "zh" %}selected{% endif %}>中文</option>
       </select></label></p>
+    <input type="hidden" name="allow_header_ai" value="0">
+    <p><label><input type="checkbox" name="allow_header_ai" value="1">
+      {{ t("If the headers are unfamiliar, send a bounded structural sample to Claude for mapping") }}</label><br>
+      <span class="muted" style="font-size:.72rem">
+        {{ t("Opt-in disclosure: only visible sheet names and at most the first 15 rows × 24 columns (cell text truncated to 60 characters) are sent to Anthropic. Hidden sheets are excluded. Leave unchecked to keep all workbook content local; unfamiliar headers will then be rejected.") }}
+      </span></p>
     <button type="submit"
             data-busy-label="{{ t('Analyzing…') }}">{{ t("Analyze & generate") }}</button>
 
@@ -43,7 +49,7 @@
          <code>COLLECTION</code> <code>COMMENT</code> <code>TTL ENGAGEMENT</code>
          <code>PRICE</code></p>
       <p>{{ t("TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — or switch tier assignment to FAN BASE thresholds above. PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.") }}</p>
-      <p class="muted">{{ t("Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.") }}</p>
+      <p class="muted">{{ t("Different headers or layout (e.g. a Chinese-headed tracker)? Opt in above if you want Claude to propose a column mapping; nothing is applied until an administrator approves it on the audit screen.") }}</p>
     </div>
   </details>
   </form>

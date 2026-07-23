@@ -73,6 +73,27 @@ def test_forged_session_rejected(client):
     assert r.status_code == 303 and r.headers["location"] == "/login"
 
 
+def test_run_error_page_does_not_disclose_internal_traceback(client):
+    from app.core import db
+
+    _setup_admin(client)
+    db.run_create("failed-run", plog_path="p", dmr_path="d")
+    db.run_update(
+        "failed-run",
+        status="error",
+        phase="error",
+        message="Run failed because of an internal error.",
+        error="Traceback: SENSITIVE_INTERNAL_DETAIL",
+    )
+
+    response = client.get("/runs/failed-run/progress")
+
+    assert response.status_code == 200
+    assert "Run failed because of an internal error." in response.text
+    assert "Traceback" not in response.text
+    assert "SENSITIVE_INTERNAL_DETAIL" not in response.text
+
+
 def test_admin_adds_coworker_who_can_sign_in(client):
     _setup_admin(client)
     r = client.post("/team/add", data={"username": "mei", "password": "meipassword",
@@ -86,6 +107,137 @@ def test_admin_adds_coworker_who_can_sign_in(client):
     assert "Only+admins" in r.headers["location"] or "Only%20admins" in r.headers["location"]
     from app.core import db
     assert db.user_get("x1") is None
+
+
+def test_non_admin_cannot_approve_or_revoke_shared_header_mapping(client):
+    from app.remap import mapper, service as remap_service
+
+    _setup_admin(client)
+    client.post("/team/add", data={"username": "mei",
+                                   "password": "meipassword"})
+    client.cookies.clear()
+    assert client.post("/login", data={"username": "mei",
+                                       "password": "meipassword"}).status_code == 303
+    token = remap_service.PENDING_MAPS.put({
+        "flow": "test", "audits": {}, "names": {},
+    })
+    try:
+        assert client.post(f"/remap/{token}/apply", data={}).status_code == 403
+        sig = "b" * 32
+        mapper.cache_put("eff", sig, "S", 1, {"name": 1}, "boss")
+        assert client.post(
+            f"/remap/cache/eff/{sig}/delete", data={}).status_code == 403
+        assert mapper.cache_get("eff", sig) is not None
+    finally:
+        remap_service.PENDING_MAPS.clear()
+        mapper.cache_delete("eff", "b" * 32)
+
+
+def test_non_admin_bad_data_cannot_revoke_valid_cached_mapping(client):
+    import io
+
+    from openpyxl import load_workbook
+
+    from app.remap import mapper
+    from tests.web.test_schema_map import (CN_EFF_PROPOSAL,
+                                           build_cn_plog_bytes)
+
+    _setup_admin(client)
+    client.post("/team/add", data={"username": "mei",
+                                   "password": "meipassword"})
+    client.cookies.clear()
+    assert client.post("/login", data={"username": "mei",
+                                       "password": "meipassword"}).status_code == 303
+
+    original = build_cn_plog_bytes()
+    sig = mapper.header_signature(original, "达人列表", 2)
+    mapper.cache_put(
+        "eff", sig, "达人列表", 2, CN_EFF_PROPOSAL["columns"], "boss")
+    wb = load_workbook(io.BytesIO(original))
+    ws = wb["达人列表"]
+    for row in range(3, ws.max_row + 1):
+        ws.cell(row=row, column=16).value = -1
+    invalid = io.BytesIO()
+    wb.save(invalid)
+
+    try:
+        response = client.post(
+            "/efficiency",
+            files={"report": (
+                "invalid-data.xlsx", invalid.getvalue(),
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet")},
+            data={},
+        )
+        assert response.status_code == 422
+        assert mapper.cache_get("eff", sig) is not None
+    finally:
+        mapper.cache_delete("eff", sig)
+
+
+def test_only_admin_can_remove_or_promote_shared_perimeter(client, monkeypatch):
+    from app import config
+    from app.core import db
+    from app.reconciler import runs
+
+    _setup_admin(client)
+    client.post("/team/add", data={"username": "mei",
+                                   "password": "meipassword"})
+    db.setting_set("current_perimeter", '{"hash":"keep"}')
+    client.cookies.clear()
+    assert client.post("/login", data={"username": "mei",
+                                       "password": "meipassword"}).status_code == 303
+    assert client.post("/perimeter/remove").status_code == 403
+    assert db.setting_get("current_perimeter") == '{"hash":"keep"}'
+    denied_upload = client.post("/upload", files={
+        "plog": ("p.xlsx", b"not-read"),
+        "dmr": ("d.xlsx", b"not-read"),
+        "perimeter": ("perimeter.xlsx", b"not-read"),
+    })
+    assert denied_upload.status_code == 403
+
+    run_dir = config.UPLOAD_DIR / "member-perimeter"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    db.run_create(
+        "member-perimeter", plog_path="p", dmr_path="d",
+        perimeter_hash="uploaded-hash", perimeter_uploaded=True,
+        perimeter_name="uploaded.xlsx",
+    )
+    started = []
+    monkeypatch.setattr(runs, "start_run", lambda run_id: started.append(run_id))
+    denied = client.post("/runs/member-perimeter/start", data={})
+    assert denied.status_code == 403
+    assert db.run_get("member-perimeter")["status"] == "pending"
+    assert not started
+
+    db.run_create(
+        "legacy-perimeter", plog_path="p", dmr_path="d",
+        perimeter_hash="legacy-hash", perimeter_uploaded=None,
+        perimeter_name="legacy.xlsx",
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET perimeter_uploaded = NULL WHERE id = ?",
+            ("legacy-perimeter",),
+        )
+        conn.commit()
+    legacy_denied = client.post("/runs/legacy-perimeter/start", data={})
+    assert legacy_denied.status_code == 403
+    assert db.run_get("legacy-perimeter")["status"] == "pending"
+
+    client.cookies.clear()
+    assert client.post("/login", data={"username": "boss",
+                                       "password": "password123"}).status_code == 303
+    assert client.post("/perimeter/remove").status_code == 303
+    assert db.setting_get("current_perimeter") is None
+
+
+def test_initial_password_field_is_masked(client):
+    _setup_admin(client)
+    page = client.get("/team")
+    assert page.status_code == 200
+    assert 'type="password" name="password"' in page.text
+    assert 'autocomplete="new-password"' in page.text
 
 
 def test_cannot_delete_last_admin_or_self(client):
