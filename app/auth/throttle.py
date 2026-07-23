@@ -64,6 +64,45 @@ def register_failure(scope: str, key: str) -> None:
         _prune(now)
 
 
+def reserve(pairs: list[tuple[str, str]]) -> int:
+    """Atomically admit-or-block across several (scope, key) buckets at once.
+
+    Returns 0 and records a pending attempt in EVERY bucket when all are under
+    their limit, else returns the wait time and records nothing. Doing the
+    check-and-record under one lock closes the check-then-act race: an awaited
+    password hash between a separate check and a later register let N
+    concurrent guesses all pass a stale count. Release the reservation with
+    ``release`` on success so a correct login doesn't burn a slot."""
+    now = time.time()
+    with _LOCK:
+        _prune(now)
+        worst = 0
+        for scope, key in pairs:
+            ts = [t for t in _failures.get((scope, key), [])
+                  if now - t <= WINDOW_SECONDS]
+            if len(ts) >= LIMITS[scope]:
+                worst = max(worst, max(1, int(WINDOW_SECONDS - (now - ts[0])) + 1))
+        if worst:
+            return worst
+        for scope, key in pairs:
+            ts = _failures.setdefault((scope, key), [])
+            ts.append(now)
+            del ts[:-LIMITS[scope]]
+        return 0
+
+
+def release(scope: str, key: str) -> None:
+    """Remove the most recent reservation from one bucket (on a success), so a
+    correct attempt doesn't count as a failure — without wiping OTHER entries
+    (an IP bucket aggregates many usernames)."""
+    with _LOCK:
+        ts = _failures.get((scope, key))
+        if ts:
+            ts.pop()
+            if not ts:
+                _failures.pop((scope, key), None)
+
+
 def clear(scope: str, key: str) -> None:
     with _LOCK:
         _failures.pop((scope, key), None)

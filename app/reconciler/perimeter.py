@@ -213,12 +213,14 @@ def store_parsed(parsed: PerimeterParse) -> None:
 
 
 def _payload(cached: dict) -> dict:
-    """parsed_json is versioned by shape: v1 was a bare rows list (only ever
-    stored under pre-salt hashes, but tolerate it), v2 a dict with counters."""
+    """parsed_json is versioned by shape: v1 was a bare rows list parsed under
+    the OLD (pre-China-filter) semantics, v2 a dict with counters. ``legacy``
+    marks the v1 shape so callers can refuse to serve unfiltered rows."""
     loaded = json.loads(cached["parsed_json"])
     if isinstance(loaded, list):
-        return {"rows": loaded, "rows_scanned": len(loaded), "china_filter": ""}
-    return loaded
+        return {"rows": loaded, "rows_scanned": len(loaded),
+                "china_filter": "", "legacy": True}
+    return {**loaded, "legacy": False}
 
 
 def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"]:
@@ -227,12 +229,20 @@ def load_cached(file_hash: str, filename: str = "") -> Optional["PerimeterIndex"
     The cache is content-addressed, so identical bytes uploaded under a new
     filename still share parsed rows without losing the name shown for that
     particular run.
+
+    A v1 (legacy, pre-China-filter) cache row is treated as a MISS: those rows
+    were parsed without the China-market filter, so serving them would silently
+    pollute every 无博主 evidence scan with ~52k non-China names. Returning None
+    degrades the run to 'no perimeter' (safe) and prompts a re-upload, which
+    re-parses under the current filter and stores a fresh salted hash.
     """
     row = db.perimeter_cache_get(file_hash)
     if not row:
         return None
-    rows = _payload(row)["rows"]
-    return PerimeterIndex(rows, extraction_date=row["extraction_date"] or "",
+    payload = _payload(row)
+    if payload["legacy"]:
+        return None
+    return PerimeterIndex(payload["rows"], extraction_date=row["extraction_date"] or "",
                           filename=filename or row["filename"] or "",
                           file_hash=file_hash)
 
@@ -358,6 +368,13 @@ def current_meta() -> Optional[dict]:
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        meta = json.loads(raw)
     except ValueError:
         return None
+    # A perimeter promoted before the China-filter deploy points at a v1
+    # (legacy) cache row that load_cached now refuses to serve, so runs would
+    # silently skip the split. Flag it so the UI can prompt a re-upload
+    # instead of claiming an inert perimeter is "in use".
+    row = db.perimeter_cache_get(meta.get("hash", ""))
+    meta["stale"] = row is None or _payload(row)["legacy"]
+    return meta

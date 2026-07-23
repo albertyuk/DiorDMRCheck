@@ -191,15 +191,19 @@ def test_apply_window_override():
     # no keys at all (legacy options) → detected window untouched
     apply_window_override(d, {"use_llm": True})
     assert d.window_from == date(2025, 1, 1)
+    # BOTH bounds empty (a pre-feature run retried through the error panel) →
+    # KEEP the detected window, never silently disable the check
+    apply_window_override(d, {"window_from": "", "window_to": ""})
+    assert d.window_from == date(2025, 1, 1) and d.window_to == date(2025, 12, 31)
+    # garbage on both → also a no-op, detected window kept
+    apply_window_override(d, {"window_from": "not-a-date", "window_to": "x"})
+    assert d.window_from == date(2025, 1, 1)
     # user widened the window to include 2024
     apply_window_override(d, {"window_from": "2024-01-01",
                               "window_to": "2025-12-31"})
     assert d.window_from == date(2024, 1, 1)
     assert d.window_to == date(2025, 12, 31)
-    # cleared a bound → that side unset (disables window checks)
-    apply_window_override(d, {"window_from": "", "window_to": "2025-12-31"})
-    assert d.window_from is None and d.window_to == date(2025, 12, 31)
-    # garbage never crashes a run
-    apply_window_override(d, {"window_from": "not-a-date",
-                              "window_to": "2025-13-45"})
-    assert d.window_from is None and d.window_to is None
+    # one real bound set, the other cleared → the set side applies, the
+    # cleared side unsets (an explicit half-open edit)
+    apply_window_override(d, {"window_from": "", "window_to": "2025-06-30"})
+    assert d.window_from is None and d.window_to == date(2025, 6, 30)

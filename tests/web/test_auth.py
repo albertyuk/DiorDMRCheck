@@ -278,3 +278,32 @@ def test_throttle_window_expires(client, monkeypatch):
                         lambda: real_time() + throttle.WINDOW_SECONDS + 1)
     assert client.post("/login", data={
         "username": "boss", "password": "password123"}).status_code == 303
+
+
+def test_login_reserve_blocks_concurrent_guess_burst(client):
+    """The reserve() gate must count in-flight guesses so a burst can't exceed
+    the per-username cap while the awaited PBKDF2 is in flight."""
+    from app.auth import throttle
+    throttle.reset()
+    _setup_admin(client)
+    client.get("/logout")
+    # simulate N coroutines that have all passed retry_after but not yet
+    # registered — reserve() must let at most LIMITS['user'] through
+    admitted = sum(1 for _ in range(20)
+                   if throttle.reserve([("user", "boss"), ("ip", "1.2.3.4")]) == 0)
+    assert admitted == throttle.LIMITS["user"]
+    throttle.reset()
+
+
+def test_login_success_releases_ip_reservation():
+    """A correct login clears the user bucket and releases (does not keep) its
+    own IP reservation, so the success is not counted as an IP failure."""
+    from app.auth import throttle
+    throttle.reset()
+    # one reservation in each bucket (as a login would take)
+    assert throttle.reserve([("user", "boss"), ("ip", "9.9.9.9")]) == 0
+    throttle.clear("user", "boss")       # success: wipe user failures
+    throttle.release("ip", "9.9.9.9")    # success: drop the ip reservation
+    # ip bucket is now empty again — a shared IP isn't penalized for a success
+    assert throttle.reserve([("ip", "9.9.9.9")]) == 0
+    throttle.reset()

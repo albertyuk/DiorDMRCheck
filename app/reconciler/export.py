@@ -102,12 +102,14 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         ws = wb.active
 
     overrides = overrides or {}
-    verdict_rows = [v.excel_row for v in verdicts]
-    check_rows = [header_row] + verdict_rows
 
     def _populated(col: int) -> bool:
-        return any(ws.cell(row=r, column=col).value not in (None, "")
-                   for r in check_rows)
+        # scan the whole used height, not just header+verdict rows: a totals
+        # or metadata row below the data can occupy an evidence column too
+        for r in range(1, ws.max_row + 1):
+            if ws.cell(row=r, column=col).value not in (None, ""):
+                return True
+        return False
 
     # first contiguous fully-empty block wide enough for the evidence columns
     ev_start = EVIDENCE_START_COL
@@ -125,12 +127,15 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         r = v.excel_row
         ov = overrides.get(r)
         existing_s = ws.cell(row=r, column=S_COL).value
-        preserved = None
+        has_existing = existing_s not in (None, "")
+        preserved = False
+        write_s = True                    # False → leave the source cell untouched
         if ov:
             s_text = "" if ov["status"] == OVERRIDE_MATCH_BLANK else ov["status"]
-        elif existing_s not in (None, ""):
-            preserved = str(existing_s)
-            s_text = preserved            # keep the human's cell verbatim
+        elif has_existing:
+            preserved = True
+            write_s = False               # keep the human's cell byte-identical:
+            s_text = None                 # don't str()-ify a number/date/formula
         else:
             s_text = v.column_s()
         status = f"{v.status}{' (override)' if ov else ''}"
@@ -138,14 +143,21 @@ def write_annotated_xlsx(plog_path: str, out_path: str, verdicts: list[Verdict],
         llm = (f"{v.llm_verdict} ({v.llm_confidence:.0%})"
                if v.llm_verdict and v.llm_confidence is not None else v.llm_verdict)
         notes = list(v.notes)
-        if preserved is not None:
-            pipeline_s = v.column_s()
-            if preserved.strip() != (pipeline_s or "").strip():
+        pipeline_s = v.column_s()
+        if preserved:
+            if str(existing_s).strip() != (pipeline_s or "").strip():
                 notes.append(
-                    f"S already contained {preserved!r} — kept; pipeline "
+                    f"S already contained {existing_s!r} — kept; pipeline "
                     f"verdict was {pipeline_s or '(blank=matched)'}")
             status += " (S kept from source)"
-        ws.cell(row=r, column=S_COL, value=s_text or None)
+        elif ov and has_existing:
+            # an explicit override replaces a human's prior S annotation —
+            # record what was there so the export stays self-auditing
+            notes.append(
+                f"S contained {existing_s!r} in the source — replaced by "
+                f"the override {ov['status']!r}")
+        if write_s:
+            ws.cell(row=r, column=S_COL, value=s_text or None)
         values = [
             status,
             v.tier,

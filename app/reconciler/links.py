@@ -95,6 +95,12 @@ class _DirectBreaker:
 
 
 DIRECT_BREAKER = _DirectBreaker()
+# The note-page HTML fetch (ensure_author) is a DIFFERENT network operation
+# than the xhslink redirect walk — a WAF commonly walls one and not the
+# other — and it also misses for structural reasons (a 200 page that lacks
+# the author) that are not network health. A separate breaker keeps a run of
+# structural page misses from starving the working redirect-resolve path.
+PAGE_BREAKER = _DirectBreaker()
 
 
 @dataclass
@@ -531,12 +537,20 @@ def _resolve_link_inner(url: str, run_counter: Optional[Callable[[], None]],
         if not retry_failed and age_h < config.FAILED_CACHE_TTL_HOURS:
             return _res_from_cache(cached)
 
-    # 1. Free first try: walk the redirect chain ourselves. When it works, the
-    # note id alone is enough for the Tier-1 join — TikHub (which costs money)
-    # is deferred to ensure_author, which the pipeline invokes only when the
-    # join misses and the 无博主/无帖子 decision actually needs the author id.
-    # The breaker skips this once the network has proven blocked (datacenter
-    # IPs usually are) so links stop paying dead timeout before TikHub.
+    # 1a. Free, zero-network: a canonical xiaohongshu.com/explore/<id> link
+    # carries the note id in the URL itself. Resolve it directly, BEFORE the
+    # breaker — it makes no request, so it must never be skipped as a blocked
+    # "probe" nor counted as a network success that re-closes the breaker.
+    direct_note = _note_id_from_url(url)
+    if direct_note:
+        db.cache_put(url, status="ok", note_id=direct_note, source="direct")
+        return Resolution(status="ok", note_id=direct_note, source="direct")
+
+    # 1b. Free first try that DOES hit the network: walk the redirect chain of
+    # an xhslink short link. The note id alone is enough for the Tier-1 join —
+    # TikHub (which costs money) is deferred to ensure_author. The breaker
+    # skips this once the network has proven blocked (datacenter IPs usually
+    # are) so links stop paying dead timeout before TikHub.
     if DIRECT_BREAKER.should_try():
         note_id = direct_resolve(url)
         DIRECT_BREAKER.record(bool(note_id))
@@ -592,12 +606,12 @@ def ensure_author(url: str, res: Resolution,
 
     # Free first try: the note page's SSR state carries the author id. This
     # runs even when a previous enrichment failed (it costs nothing) — the
-    # failure TTL below only gates the paid TikHub call. Same breaker as the
-    # resolve fast path: a blocked network shouldn't tax every enrichment.
+    # failure TTL below only gates the paid TikHub call. Its own breaker (the
+    # page fetch is walled independently of xhslink redirects).
     page = {}
-    if DIRECT_BREAKER.should_try():
+    if PAGE_BREAKER.should_try():
         page = direct_fetch_note_detail(url, expected_note_id=res.note_id)
-        DIRECT_BREAKER.record(bool(page.get("author_id")))
+        PAGE_BREAKER.record(bool(page.get("author_id")))
     if page.get("author_id"):
         res.author_id = page["author_id"]
         res.author_name = page.get("author_name") or res.author_name

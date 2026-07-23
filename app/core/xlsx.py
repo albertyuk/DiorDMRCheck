@@ -42,17 +42,25 @@ def to_date(v: Any) -> Optional[date]:
         except (OverflowError, ValueError):
             return None
     s = nfkc(str(v)).strip()
-    # %y/%m/%d ("24/11/27" = 2024-11-27, seen in real trackers) sits LAST so
-    # every string the earlier formats already accept keeps its current
-    # interpretation — the two-digit-year forms only catch what would
-    # otherwise be unparseable.
+    # Four-digit-year and month-first formats first — a string any of these
+    # accepts keeps its historical reading.
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y", "%d/%m/%Y",
-                "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%m/%d/%y", "%m-%d-%Y",
-                "%y/%m/%d", "%y-%m-%d", "%y.%m.%d"):
+                "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%m/%d/%y", "%m-%d-%Y"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
             continue
+    # Two-digit-year-FIRST ("24/11/27" = 2024-11-27, seen in real trackers).
+    # This shape is genuinely ambiguous with dd/mm/yy, so guard it: only
+    # accept a result that is NOT in the future — "27/11/24" would parse as
+    # 2027 (future), which is almost certainly a dd/mm/yy date, so we reject
+    # it (→ None, warned as unparseable) rather than mis-dating it.
+    for fmt in ("%y/%m/%d", "%y-%m-%d", "%y.%m.%d"):
+        try:
+            d = datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+        return d if d <= date.today() else None
     m = re.match(r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", s)
     if m:
         try:

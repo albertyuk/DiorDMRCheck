@@ -102,7 +102,7 @@
         <input type="date" name="window_to"
                value="{{ preview.dmr.window[1] or '' }}"></label><br>
       <span class="muted" style="font-size:.72rem">
-        {{ t("Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). Clear either date to disable the window checks.") }}</span></p>
+        {{ t("Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). To effectively turn the check off, set a window that spans every post date.") }}</span></p>
     <div class="confirmbar">
       <button type="submit"
               data-busy-label="{{ t('Starting…') }}">{{ t("Run reconciliation") }}</button>

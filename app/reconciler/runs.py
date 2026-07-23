@@ -114,23 +114,27 @@ def _run_slot(run_id: str) -> None:
 def apply_window_override(dmr, options: dict) -> None:
     """Apply the user-edited DMR export window from the confirm screen.
 
-    The metadata-detected window prefills the form, so unedited runs are
-    unchanged. Clearing either date (or an unparseable value) leaves that
-    bound unset — and the pipeline requires both bounds, so a cleared field
-    disables the out-of-window checks entirely."""
-    if "window_from" not in options and "window_to" not in options:
-        return
+    The form prefills from the metadata-detected window. The override applies
+    only when at least ONE bound is a real date — so an empty submission (a
+    pre-feature run retried through the error panel, whose hidden inputs post
+    blank strings) is a no-op that KEEPS the detected window rather than
+    silently disabling the out-of-window checks. To widen or narrow the
+    window, set the dates; to effectively disable the checks, set a window
+    that spans everything."""
+    from datetime import date
 
     def _parse(key):
-        from datetime import date
         v = str(options.get(key) or "").strip()
         try:
             return date.fromisoformat(v) if v else None
         except ValueError:
             return None
 
-    dmr.window_from = _parse("window_from")
-    dmr.window_to = _parse("window_to")
+    wf, wt = _parse("window_from"), _parse("window_to")
+    if wf is None and wt is None:
+        return                    # nothing edited — keep the detected window
+    dmr.window_from = wf
+    dmr.window_to = wt
 
 
 def _run(run_id: str) -> None:

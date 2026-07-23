@@ -56,7 +56,16 @@
     </div>
   </details>
 
-  {% if perimeter %}
+  {% if perimeter and perimeter.stale %}
+    <div class="warn">
+      <b>{{ t("Perimeter needs re-uploading.") }}</b>
+      {{ t("The saved perimeter ({filename}) was parsed before the China-market filter and is no longer used by runs. Re-upload it above to refresh it, or remove it.",
+           filename=perimeter.filename) }}
+      <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem">
+        <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
+      </form>
+    </div>
+  {% elif perimeter %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
       <b>{{ t("Perimeter in use:") }}</b>
       {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.",

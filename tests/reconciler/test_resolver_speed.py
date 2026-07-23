@@ -57,22 +57,57 @@ def test_direct_success_keeps_path_armed(monkeypatch):
     assert DIRECT_BREAKER.should_try()          # never tripped
 
 
-def test_ensure_author_respects_breaker(monkeypatch):
+def test_ensure_author_respects_its_own_breaker(monkeypatch):
+    """ensure_author uses PAGE_BREAKER, independent of the resolve breaker."""
+    from app.reconciler.links import PAGE_BREAKER
     page_calls = []
     monkeypatch.setattr(links, "direct_fetch_note_detail",
                         lambda url, expected_note_id="": page_calls.append(url) or {})
     monkeypatch.setattr(
         links, "tikhub_fetch_note",
         lambda **kw: (_ for _ in ()).throw(TikHubError("stub")))
-    for _ in range(DIRECT_BREAKER.TRIP_AFTER):
-        DIRECT_BREAKER.record(False)            # network already proven blocked
+    PAGE_BREAKER.reset()
+    for _ in range(PAGE_BREAKER.TRIP_AFTER):
+        PAGE_BREAKER.record(False)              # page fetch proven blocked
     from app.core import db
     url = "http://xhslink.com/e1"
     db.cache_put(url, status="ok", note_id="b" * 24, source="direct")
     res = links.Resolution(status="ok", note_id="b" * 24, source="direct")
     links.ensure_author(url, res, retry_failed=True)
     assert page_calls == []                     # free page fetch skipped
+    PAGE_BREAKER.reset()
+
+
+def test_resolve_and_page_breakers_are_independent():
+    """A run of page-fetch misses must not starve the redirect-resolve path."""
+    from app.reconciler.links import DIRECT_BREAKER, PAGE_BREAKER
+    DIRECT_BREAKER.reset(); PAGE_BREAKER.reset()
+    for _ in range(PAGE_BREAKER.TRIP_AFTER):
+        PAGE_BREAKER.record(False)
+    assert not PAGE_BREAKER.should_try()        # page breaker tripped…
+    assert DIRECT_BREAKER.should_try()          # …resolve breaker unaffected
+    DIRECT_BREAKER.reset(); PAGE_BREAKER.reset()
 
 
 def test_tikhub_client_is_shared():
     assert links._tikhub_http() is links._tikhub_http()
+
+
+def test_canonical_url_resolves_free_even_when_breaker_open(monkeypatch):
+    """A xiaohongshu.com/explore/<id> link needs zero network — it must
+    resolve directly and NOT be shunted to paid TikHub when the breaker is
+    open, nor count as a network probe."""
+    from app.reconciler.links import DIRECT_BREAKER
+    import app.reconciler.links as links
+    DIRECT_BREAKER.reset()
+    for _ in range(DIRECT_BREAKER.TRIP_AFTER):
+        DIRECT_BREAKER.record(False)            # breaker open (datacenter)
+    tikhub_calls = []
+    monkeypatch.setattr(links, "tikhub_fetch_note",
+                        lambda **kw: tikhub_calls.append(kw) or {})
+    nid = "a1b2c3d4e5f6a1b2c3d4e5f6"
+    res = links.resolve_link(f"https://www.xiaohongshu.com/explore/{nid}")
+    assert res.status == "ok" and res.note_id == nid and res.source == "direct"
+    assert tikhub_calls == []                    # never billed
+    assert DIRECT_BREAKER.should_try() is False  # zero-network resolve didn't re-close it
+    DIRECT_BREAKER.reset()

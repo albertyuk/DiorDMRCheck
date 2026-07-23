@@ -194,3 +194,32 @@ def test_evidence_block_shifts_past_populated_columns(plog_path, dmr_path,
     assert ann.cell(row=some_row, column=20).value == "我的备注，别动"
     assert ann.cell(row=plog.header_row, column=20).value in (None, "")
     assert ann.cell(row=plog.header_row, column=21).value == "STATUS"
+
+
+def test_preserved_s_number_is_left_byte_identical(plog_path, dmr_path,
+                                                    fake_resolver, tmp_path):
+    """When column S already holds a NUMBER (remapped layouts can put data in
+    col 19), preservation must not str()-ify it into text."""
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    row = verdicts[0].excel_row
+    src = _prefilled_copy(plog_path, tmp_path, col_edits={(row, 19): 12345})
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(src, str(out), verdicts, header_row=plog.header_row)
+    cell = load_workbook(str(out))["MASTER KOL LIST"].cell(row=row, column=19)
+    assert cell.value == 12345 and isinstance(cell.value, int)   # not "12345"
+
+
+def test_override_over_source_s_is_recorded(plog_path, dmr_path,
+                                            fake_resolver, tmp_path):
+    plog = parse_plog(plog_path)
+    verdicts = run_pipeline(plog, parse_dmr(dmr_path))
+    row = verdicts[0].excel_row
+    src = _prefilled_copy(plog_path, tmp_path, s_edits={row: "旧人工备注"})
+    out = tmp_path / "ann.xlsx"
+    write_annotated_xlsx(src, str(out), verdicts, header_row=plog.header_row,
+                         overrides={row: {"status": "无博主", "note": ""}})
+    ann = load_workbook(str(out))["MASTER KOL LIST"]
+    assert ann.cell(row=row, column=19).value == "无博主"
+    notes_col = 20 + len(EVIDENCE_HEADERS) - 1
+    assert "旧人工备注" in (ann.cell(row=row, column=notes_col).value or "")

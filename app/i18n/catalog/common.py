@@ -312,8 +312,8 @@ ZH: dict[str, str] = {
         "PLOG {p} 行 ↔ DMR {d} 行——目前尚未调用任何外部服务。",
     "Export window from": "导出窗口 从",
     "Export window to": "导出窗口 至",
-    "Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). Clear either date to disable the window checks.":
-        "从 DMR 文件的元信息中检测得到——可修改，用来决定哪些帖子算「在导出窗口外」（属预期缺失，不算 DMR 漏抓）。清空任一日期即关闭窗口检查。",
+    "Detected from the DMR file's metadata — edit to override which posts count as 'outside the export window' (expected-missing, not DMR gaps). To effectively turn the check off, set a window that spans every post date.":
+        "从 DMR 文件的元信息中检测得到——可修改，用来决定哪些帖子算「在导出窗口外」（属预期缺失，不算 DMR 漏抓）。如需实际关闭该检查，把窗口设为覆盖所有发帖日期即可。",
     "All": "全部",
     "Needs attention": "待处理",
     "Search name / campaign / blogger…": "搜索博主名／项目／Blogger…",
@@ -346,6 +346,9 @@ ZH: dict[str, str] = {
     "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
         "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——LEVEL 缺失或看不懂的行会自动按 FAN BASE 粉丝量分层（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP，以 V11 提示）。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
     "Perimeter in use:": "当前使用的 Perimeter：",
+    "Perimeter needs re-uploading.": "Perimeter 名单需要重新上传。",
+    "The saved perimeter ({filename}) was parsed before the China-market filter and is no longer used by runs. Re-upload it above to refresh it, or remove it.":
+        "已保存的 Perimeter 名单（{filename}）是在启用中国市场过滤之前解析的，核对时已不再使用。请在上方重新上传以刷新，或将其移除。",
     "China market only ({signal}): kept {kept} of {scanned} rows.":
         "仅限中国市场（按 {signal} 判定）：{scanned} 行中保留 {kept} 行。",
     "No IN_CHINA_REPORTS or COUNTRY column found — cannot restrict the perimeter to the China market; keeping all rows.":

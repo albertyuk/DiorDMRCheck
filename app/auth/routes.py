@@ -59,9 +59,12 @@ async def login(request: Request, username: str = Form(""),
                 password: str = Form(...)):
     username = service.normalize_username(username)
     ip = throttle.client_ip(request)
-    wait = max(throttle.retry_after("user", username),
-               throttle.retry_after("ip", ip))
-    if wait:  # checked BEFORE the expensive hash — throttled guesses are cheap
+    # Reserve a failure slot in both buckets up front and atomically: the
+    # PBKDF2 verify below yields the event loop, so a plain check-then-register
+    # would let concurrent guesses all pass a stale count. A correct login
+    # releases its reservation.
+    wait = throttle.reserve([("user", username), ("ip", ip)])
+    if wait:
         return templates.TemplateResponse(
             request, "auth/login.html",
             {"error": _tr(request)(
@@ -75,10 +78,10 @@ async def login(request: Request, username: str = Form(""),
     ok = bool(user) and await run_in_threadpool(
         service.verify_password, password, user["password_hash"])
     if ok:
-        throttle.clear("user", username)
+        throttle.clear("user", username)   # wipe this user's failures
+        throttle.release("ip", ip)         # this success wasn't an IP failure
         return _session_response(username)
-    throttle.register_failure("user", username)
-    throttle.register_failure("ip", ip)
+    # failure already counted by reserve() — do not double-register
     return templates.TemplateResponse(
         request, "auth/login.html",
         {"error": _tr(request)("Wrong username or password."),

@@ -2,7 +2,8 @@
 
 This file briefs a fresh Claude session (or human) taking over development.
 It captures state, architecture, hard invariants, judgment calls, and the
-working conventions this project was built under. Last updated: 2026-07-22.
+working conventions this project was built under. Last updated: 2026-07-22
+(second-pass hardening applied — see "Hardening draft 2" at the bottom).
 
 ## What this is
 
@@ -202,3 +203,46 @@ run summary, header-map proposals) · `MAX_UPLOAD_MB=25` and zip caps ·
 3. Skim `docs/REORGANIZATION.md` if you need the deep architecture rationale.
 4. Make changes → tests → push to BOTH branches → remind the user:
    `git pull origin claude/dmr-reconciler-webapp-9bwvwn && fly deploy`.
+
+## Hardening draft 2 (post-merge review of the 12 feature commits)
+
+An adversarial multi-lens review of everything after the PR-#1 merge found
+and fixed these (all with regression tests; 246 tests pass):
+
+- **Perimeter China-filter was inert for already-promoted perimeters.** The
+  `_PARSER_VERSION` salt only guards new content-hash lookups; a perimeter
+  promoted before the deploy kept serving its v1 (unfiltered, ~58.8k-row)
+  cache payload. Fix: `load_cached` refuses v1 payloads (→ safe "no
+  perimeter" degrade); `current_meta()` sets `stale=True`; the home page
+  shows a "re-upload" prompt. **If the team had a perimeter loaded before the
+  China-filter deploy, they must re-upload it once.**
+- **Annotated export corrupted preserved S cells.** Preservation did
+  `str(existing_s)` and rewrote the cell, turning numbers/dates/formulas to
+  text (reachable via remapped layouts where col 19 holds data). Fix: when
+  preserving, don't write the cell at all — leave it byte-identical. Also:
+  the empty-column scan now covers the full sheet height (totals rows), and
+  a UI override that replaces a human's prior S value now records it in Notes.
+- **/login throttle check-then-act race.** The awaited PBKDF2 let N
+  concurrent guesses pass a stale count. Fix: `throttle.reserve()` atomically
+  checks-and-records both buckets under one lock before the verify;
+  `release()` refunds an IP reservation on success.
+- **DIRECT_BREAKER penalized zero-network canonical links.** A
+  `xiaohongshu.com/explore/<id>` link resolves from the URL with no request,
+  but was gated by the (open, on datacenter IPs) breaker → shunted to paid
+  TikHub. Fix: resolve canonical URLs before the breaker. Also split
+  `PAGE_BREAKER` (ensure_author) from `DIRECT_BREAKER` (redirect walk).
+- **Window-override retry silently disabled window checks.** A pre-feature
+  run retried via the error panel posted empty window fields, which
+  `apply_window_override` read as "explicitly cleared → disable". Fix: the
+  override applies only when a bound is a real date; empty → keep detected.
+- **YY/MM/DD parsing was ambiguous with dd/mm/yy.** `27/11/24` mis-parsed as
+  2027. Fix: two-digit-year-first formats reject future dates (guards the
+  loudest wrong case; the real files are YY/MM/DD and unaffected).
+- **Busy-submit buttons stuck disabled after bfcache Back.** Fix: a
+  `pageshow` handler re-enables them.
+
+Not fixed (documented tradeoffs): per-username login throttle still allows a
+targeted account-lockout DoS by an unauthenticated attacker refreshing the
+window — inherent to account-scoped throttling; a full fix needs CAPTCHA /
+proof-of-work. `Fly-Client-IP` is trusted (correct behind the Fly proxy;
+would be spoofable only on a non-Fly deployment).

@@ -304,6 +304,17 @@ document.addEventListener('submit', function (e) {
     btn.textContent = btn.dataset.busyLabel || '…';
   }, 0);
 });
+/* Re-enable busy buttons when the page is restored from the back/forward
+   cache — otherwise navigating Back to a form (e.g. after a failed upload)
+   restores a frozen, disabled "Uploading…" button and the form is dead. */
+window.addEventListener('pageshow', function () {
+  document.querySelectorAll('form[data-busy] button[disabled]').forEach(function (btn) {
+    if (btn.dataset.origLabel !== undefined) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.origLabel;
+    }
+  });
+});
 
 /* dropzones: dragging a file onto the zone assigns it to the input; on
    change, show name + size and pre-check extension and the 25 MB limit. */

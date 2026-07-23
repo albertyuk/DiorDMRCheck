@@ -100,3 +100,12 @@ def test_to_date_existing_interpretations_unchanged():
     assert to_date("12/31/2025") == date(2025, 12, 31)  # %m/%d/%Y
     assert to_date("2025-06-01") == date(2025, 6, 1)
     assert to_date("garbage") is None
+
+
+def test_two_digit_year_future_date_rejected():
+    """dd/mm/yy like 27/11/24 would parse as a future 2027 date under
+    %y/%m/%d — reject it rather than confidently mis-dating."""
+    from datetime import date
+    from app.core.xlsx import to_date
+    assert to_date("24/11/27") == date(2024, 11, 27)   # real YY/MM/DD kept
+    assert to_date("27/11/24") is None                 # future 2027 → rejected

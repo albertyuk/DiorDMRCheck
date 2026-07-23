@@ -163,4 +163,4 @@ def test_preview_offers_editable_export_window(client, tmp_path):
     # date inputs exist and are prefilled with the metadata-detected window
     assert 'name="window_from"' in body and 'name="window_to"' in body
     assert 'value="2026-01-01"' in body and 'value="2026-07-20"' in body
-    assert "Clear either date to disable the window checks" in body
+    assert "set a window that spans every post date" in body

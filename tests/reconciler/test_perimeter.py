@@ -340,3 +340,24 @@ def test_file_hash_is_parser_version_salted():
     (they would serve unfiltered, non-China rows)."""
     import hashlib
     assert file_hash(b"same-bytes") != hashlib.sha256(b"same-bytes").hexdigest()
+
+
+def test_legacy_v1_cache_is_refused_not_served(tmp_path, monkeypatch):
+    """A perimeter parsed under old (pre-China-filter) semantics is stored as
+    a bare-list v1 payload; load_cached must treat it as a MISS so unfiltered
+    non-China rows never reach a run."""
+    from app import config
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "legacy.sqlite3")
+    from app.core import db
+    from app.reconciler import perimeter as P
+    h = "deadbeef" * 4
+    # simulate a pre-salt row: parsed_json is a bare list of rows
+    db.perimeter_cache_put(h, filename="old.xlsx", sheet="List Micro",
+                           extraction_date="2026-01-01", row_count=2,
+                           redbook_count=1,
+                           parsed_json='[{"name":"x","redbook_id":"a"}]',
+                           warnings_json="[]")
+    assert P.load_cached(h) is None                 # refused
+    db.setting_set("current_perimeter",
+                   '{"hash":"%s","filename":"old.xlsx"}' % h)
+    assert P.current_meta()["stale"] is True        # UI flags re-upload
