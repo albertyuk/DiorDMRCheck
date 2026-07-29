@@ -20,6 +20,8 @@ ZH: dict[str, str] = {
     "Email": "邮箱",
     "Status": "状态",
     "Forgot your password?": "忘记密码？",
+    "Need an account? Ask a team admin to invite you — accounts are created on the Team page, not self-service.":
+        "还没有账号？请让团队管理员邀请你——账号由管理员在「团队」页面创建，不支持自助注册。",
     "Forgot password": "忘记密码",
     "Set your password": "设置密码",
     "Choose a new password": "设置新密码",
