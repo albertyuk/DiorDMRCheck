@@ -2,7 +2,8 @@
 
 One 16:9 slide (13.33"×7.5"), white background, three panels with black
 header bars over #F2F2F2. Left column: donut + price bars; right column:
-CPM + CPE bars, insights, basis footnote. All charts are native OOXML chart
+CPM + CPE bars, an avg-CPE-per-MCN-agency bar row (when the source has MCN
+values), insights, basis footnote. All charts are native OOXML chart
 parts (the team edits decks), built with python-pptx and post-processed at
 the chart-XML level for the pieces python-pptx doesn't expose: donut hole
 size, per-point label colors (white on dark slices), and sliver labels
@@ -37,7 +38,7 @@ TEXTS = {
         "eff_title": "KOL SOFT VS PAID EFFICIENCY COMPARISON (CNY)",
         "cpm": "CPM", "cpe": "CPE",
         "deck_title": "KOL EFFICIENCY REPORT",
-        "mcn_title": "AVG CPE BY MCN AGENCY (CNY)",
+        "mcn_title": "AVG CPE BY MCN AGENCY",
         "mcn_basis_pooled":
             "Basis: pooled — agency total spend ÷ total engagements (CPE). "
             "Agencies ranked by post count; (n) = posts.",
@@ -53,7 +54,7 @@ TEXTS = {
         "eff_title": "软植 VS 报备 投放效率对比 (CNY)",
         "cpm": "CPM", "cpe": "CPE",
         "deck_title": "KOL 投放效率报告",
-        "mcn_title": "各 MCN 机构平均 CPE (CNY)",
+        "mcn_title": "各 MCN 机构平均 CPE",
         "mcn_basis_pooled":
             "口径：合并——机构总花费 ÷ 总互动（CPE）。机构按发帖数排序；(n) 为帖数。",
         "mcn_basis_per_post":
@@ -381,36 +382,38 @@ def build_deck(analysis: dict) -> bytes:
     rx, rw = Inches(4.9), Inches(8.08)
     _panel(slide, rx, Inches(0.62), rw, Inches(6.52), texts["eff_title"])
     _legend_swatches(slide, rx + Inches(0.15), Inches(1.06))
+    # When MCN data exists its chart shares this panel, so the CPM/CPE pair
+    # and the bullet block give up height; without it the original spacious
+    # layout stands.
+    mcn_all = analysis["metrics"]["mcn"]
+    shown = mcn_all[:MCN_MAX_BARS]
+    pair_h = Inches(2.15) if shown else Inches(2.95)
     # floor-divide: EMU coordinates are xsd integers — a float here (e.g.
     # cx="3511296.0") makes PowerPoint "repair" the deck by deleting the
     # chart frame, though LibreOffice renders it fine.
     half = (rw - Inches(0.4)) // 2
     _text(slide, rx + Inches(0.15), Inches(1.28), half, Inches(0.2),
           [texts["cpm"]], size=9, bold=True)
-    _bar_chart(slide, rx + Inches(0.1), Inches(1.5), half, Inches(2.95),
+    _bar_chart(slide, rx + Inches(0.1), Inches(1.5), half, pair_h,
                groups, cpm_key, "0")
     _text(slide, rx + Inches(0.25) + half, Inches(1.28), half, Inches(0.2),
           [texts["cpe"]], size=9, bold=True)
-    _bar_chart(slide, rx + Inches(0.2) + half, Inches(1.5), half, Inches(2.95),
+    _bar_chart(slide, rx + Inches(0.2) + half, Inches(1.5), half, pair_h,
                groups, cpe_key, "0.0")
 
-    bullets = ins["efficiency"] + ins["caveats"]
-    _text(slide, rx + Inches(0.15), Inches(4.62), rw - Inches(0.3),
-          Inches(1.9), bullets, size=8, bold=True, bullet=True)
-    _text(slide, rx + Inches(0.15), Inches(6.62), rw - Inches(0.3),
-          Inches(0.44), [ins["footnote"]], size=7, color=RGBColor(0x59, 0x59, 0x59))
+    bullets_y = Inches(4.62)
+    if shown:
+        _text(slide, rx + Inches(0.15), Inches(3.72), rw - Inches(0.3),
+              Inches(0.2), [texts["mcn_title"]], size=9, bold=True)
+        _mcn_bar_chart(slide, rx + Inches(0.1), Inches(3.94),
+                       rw - Inches(0.2), Inches(1.72), shown, cpe_key)
+        bullets_y = Inches(5.72)
 
-    # ---- slide 2: avg CPE per MCN agency (skipped when no MCN data — V13)
-    mcn_all = analysis["metrics"]["mcn"]
-    if mcn_all:
-        shown = mcn_all[:MCN_MAX_BARS]
-        slide2 = prs.slides.add_slide(prs.slide_layouts[6])
-        _text(slide2, Inches(0.35), Inches(0.12), Inches(9), Inches(0.4),
-              [texts["deck_title"]], size=18, bold=True)
-        mx, mw = Inches(0.35), Inches(12.63)
-        _panel(slide2, mx, Inches(0.62), mw, Inches(6.52), texts["mcn_title"])
-        _mcn_bar_chart(slide2, mx + Inches(0.15), Inches(1.2),
-                       mw - Inches(0.3), Inches(5.2), shown, cpe_key)
+    bullets = ins["efficiency"] + ins["caveats"]
+    _text(slide, rx + Inches(0.15), bullets_y, rw - Inches(0.3),
+          Inches(6.56) - bullets_y, bullets, size=8, bold=True, bullet=True)
+    footnotes = [ins["footnote"]]
+    if shown:
         note = [texts["mcn_basis_pooled"] if basis == "pooled"
                 else texts["mcn_basis_per_post"]]
         if len(mcn_all) > len(shown):
@@ -418,9 +421,9 @@ def build_deck(analysis: dict) -> bytes:
                 shown=len(shown), total=len(mcn_all)))
         if totals["mcn_missing"]:
             note.append(texts["mcn_missing"].format(n=totals["mcn_missing"]))
-        _text(slide2, mx + Inches(0.15), Inches(6.62), mw - Inches(0.3),
-              Inches(0.44), [" ".join(note)], size=7,
-              color=RGBColor(0x59, 0x59, 0x59))
+        footnotes.append(" ".join(note))
+    _text(slide, rx + Inches(0.15), Inches(6.62), rw - Inches(0.3),
+          Inches(0.44), footnotes, size=7, color=RGBColor(0x59, 0x59, 0x59))
 
     buf = io.BytesIO()
     prs.save(buf)

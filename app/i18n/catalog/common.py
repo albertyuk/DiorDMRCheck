@@ -262,8 +262,8 @@ ZH: dict[str, str] = {
     # saved English notes through td(); keep them translating
     "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
         "作者 ID 取自同一博主（NAME 相同）的另一条 PLOG 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
-    "Agencies are ranked by post count; the deck plots this as its second slide.":
-        "机构按发帖数排序；幻灯片第 2 页即为此图。",
+    "Agencies are ranked by post count; the deck plots this beneath the CPM/CPE bars.":
+        "机构按发帖数排序；幻灯片中此图位于 CPM/CPE 柱状图下方。",
     "Agency": "MCN 机构",
     "Avg CPE by MCN agency": "各 MCN 机构平均 CPE",
     "Avg price": "平均合作价",

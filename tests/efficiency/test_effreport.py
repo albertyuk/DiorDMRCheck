@@ -427,6 +427,10 @@ def test_mcn_chart_added_to_deck_and_verified():
         charts = sorted(n for n in z.namelist()
                         if n.startswith("ppt/charts/chart") and n.endswith(".xml"))
         assert len(charts) == 5
+        # everything shares the one slide — the MCN chart is not a slide 2
+        assert [n for n in z.namelist()
+                if n.startswith("ppt/slides/slide")
+                and n.endswith(".xml")] == ["ppt/slides/slide1.xml"]
         xml = z.read(charts[-1]).decode()
     assert "Orange (2)" in xml and "Papitube (1)" in xml   # n in the label
     # a deck whose chart disagrees with the metrics must never ship
