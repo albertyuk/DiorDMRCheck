@@ -15,13 +15,15 @@
     <p style="text-align:center; margin-top:1.4rem">
       <button type="submit" style="width:100%">{{ t("Sign in") }}</button></p>
   </form>
-  <p class="muted" style="font-size:.78rem; text-align:center">
+  <p style="text-align:center; margin-top:1rem">
+    <a class="btn secondary" href="/setup" style="width:100%">{{ t("Create an account") }}</a></p>
+  <p class="muted" style="font-size:.78rem; text-align:center; margin-top:.6rem">
     <a href="/forgot" style="color:var(--ink)">{{ t("Forgot your password?") }}</a></p>
   {% if no_users %}
-    <p class="muted" style="font-size:.78rem">{{ t('No accounts exist yet — <a href="/setup" style="color:var(--ink)">create the admin account</a> with the setup code.') | safe }}</p>
+    <p class="muted" style="font-size:.72rem; text-align:center">{{ t("First time here? 'Create an account' makes the admin account with the setup code.") }}</p>
   {% else %}
     <p class="muted" style="font-size:.72rem; text-align:center; border-top:1px solid var(--hairline); padding-top:.9rem; margin-top:1.1rem">
-      {{ t("Need an account? Ask a team admin to invite you — accounts are created on the Team page, not self-service.") }}</p>
+      {{ t("'Create an account' needs the setup code (admins). Coworkers are added by an admin on the Team page or by email invite.") }}</p>
   {% endif %}
 </div>
 {% endblock %}

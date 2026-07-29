@@ -192,6 +192,8 @@ ALLOWED_ZH_DUPLICATE_GROUPS = {
     # buttons — different English contexts, one natural zh term
     frozenset({"Reconcile", "Run"}),
     frozenset({"Retry", "Retry run"}),
+    # Team-page button vs login-page link — same action, one natural zh term
+    frozenset({"Create account", "Create an account"}),
 }
 
 

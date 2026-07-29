@@ -20,8 +20,11 @@ ZH: dict[str, str] = {
     "Email": "邮箱",
     "Status": "状态",
     "Forgot your password?": "忘记密码？",
-    "Need an account? Ask a team admin to invite you — accounts are created on the Team page, not self-service.":
-        "还没有账号？请让团队管理员邀请你——账号由管理员在「团队」页面创建，不支持自助注册。",
+    "Create an account": "创建账号",
+    "First time here? 'Create an account' makes the admin account with the setup code.":
+        "首次使用？点击「创建账号」，用设置码创建管理员账号。",
+    "'Create an account' needs the setup code (admins). Coworkers are added by an admin on the Team page or by email invite.":
+        "「创建账号」需要设置码（用于管理员）。同事账号由管理员在「团队」页面添加，或通过邮件邀请。",
     "Forgot password": "忘记密码",
     "Set your password": "设置密码",
     "Choose a new password": "设置新密码",
