@@ -32,6 +32,11 @@
           <input type="hidden" name="username" value="{{ u.username }}">
           <button type="submit" class="secondary" style="padding:.35rem .8rem">{{ t("Resend invite") }}</button>
         </form>
+        {% elif u.email and not u.email_verified %}
+        <form method="post" action="/team/verify-email" style="display:inline">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <button type="submit" class="secondary" style="padding:.35rem .8rem">{{ t("Send confirmation") }}</button>
+        </form>
         {% endif %}
         {% if u.username != user.username %}
         <form method="post" action="/team/delete" style="display:inline"
@@ -69,6 +74,21 @@
     <p><button type="submit">{{ t("Create account") }}</button></p>
   </form>
   {% endif %}
+
+  <h2>{% if user and user.is_admin %}{{ t("Set an email address") }}{% else %}{{ t("Your email address") }}{% endif %}</h2>
+  <p class="muted" style="font-size:.8rem">{{ t("An account can only use “Forgot password?” once its email is confirmed by clicking the link we send. Leave blank to remove the address.") }}</p>
+  <form method="post" action="/team/email" style="max-width:420px" data-busy>
+    {% if user and user.is_admin %}
+      <label class="field"><span>{{ t("Username") }}</span>
+        <input type="text" name="username" value="{{ user.username }}"
+               autocapitalize="none" required></label>
+    {% else %}
+      <input type="hidden" name="username" value="{{ user.username if user }}">
+    {% endif %}
+    <label class="field"><span>{{ t("Email") }}</span>
+      <input type="email" name="email" value="{{ user.email or '' if user }}"></label>
+    <p><button type="submit" data-busy-label="{{ t('Saving…') }}">{{ t("Save email") }}</button></p>
+  </form>
 
   <h2>{% if user and user.is_admin %}{{ t("Change a password") }}{% else %}{{ t("Change your password") }}{% endif %}</h2>
   <form method="post" action="/team/password" style="max-width:420px">

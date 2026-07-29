@@ -63,6 +63,25 @@ ZH: dict[str, str] = {
     "(optional)": "（选填）",
     "Initial password — only if not inviting by email":
         "初始密码——仅在不通过邮件邀请时填写",
+    "Email — needed to reset your own password later":
+        "邮箱——日后自助重置密码时需要用到",
+    "Set an email address": "绑定邮箱",
+    "Your email address": "你的邮箱",
+    "An account can only use “Forgot password?” once its email is confirmed by clicking the link we send. Leave blank to remove the address.":
+        "只有点击确认邮件中的链接完成验证后，该账号才能使用「忘记密码」。留空即可解除绑定。",
+    "Save email": "保存邮箱",
+    "Send confirmation": "发送确认邮件",
+    "Only admins can change another account's email.":
+        "只有管理员可以修改他人的邮箱。",
+    "Email removed from {username}.": "已解除 {username} 的邮箱绑定。",
+    "Confirmation link sent to {email} — click it to enable password reset for this address.":
+        "确认邮件已发送至 {email}——点击其中的链接后，该邮箱才可用于重置密码。",
+    "Email saved for {username}. It cannot be used for password reset until it is confirmed.":
+        "已保存 {username} 的邮箱。完成验证前，该邮箱不能用于重置密码。",
+    "Link no longer valid": "链接已失效",
+    "Email confirmed": "邮箱已验证",
+    "This address can now receive password-reset links.":
+        "该邮箱现在可以接收密码重置链接了。",
     "This link has expired or was already used. Ask an admin to re-send the invite, or request a new password-reset link.":
         "该链接已失效或已被使用。请让管理员重新发送邀请，或重新申请密码重置链接。",
     "Too many failed attempts — wait {s} seconds and try again.":

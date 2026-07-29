@@ -68,6 +68,18 @@ def send_invite(to: str, link: str, ttl_hours: int,
                 html_body, text_body)
 
 
+def send_verify(to: str, link: str, ttl_hours: int) -> bool:
+    html_body, text_body = _wrap(
+        "Confirm this address for your DMR Reconciler account. Until you do, "
+        "it cannot be used to reset your password.",
+        "请确认此邮箱属于你的 DMR Reconciler 账号。未确认前，该邮箱无法用于重置密码。",
+        "Confirm this email", link,
+        f"This link works once and expires in {ttl_hours} hours.",
+        f"该链接仅可使用一次，{ttl_hours} 小时后失效。")
+    return send(to, "Confirm your DMR Reconciler email · 确认邮箱",
+                html_body, text_body)
+
+
 def send_reset(to: str, link: str, ttl_hours: int) -> bool:
     html_body, text_body = _wrap(
         "A password reset was requested for your DMR Reconciler account. "

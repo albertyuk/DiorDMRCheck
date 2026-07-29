@@ -22,7 +22,7 @@ router = APIRouter()
 
 # Paths reachable WITHOUT a session (token links arrive by email, before the
 # user has an account/session). Prefix-matched in the middleware.
-_PUBLIC_PREFIXES = ("/static", "/lang/", "/invite/", "/reset/")
+_PUBLIC_PREFIXES = ("/static", "/lang/", "/invite/", "/reset/", "/verify/")
 _PUBLIC_EXACT = ("/healthz", "/login", "/setup", "/forgot")
 
 
@@ -32,6 +32,18 @@ def _link(request: Request, path: str) -> str:
     back to the request origin only for local dev."""
     base = config.PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
     return f"{base}{path}"
+
+
+async def _send_email_verification(request: Request, username: str,
+                                   email: str) -> bool:
+    """Email a confirm-ownership link. No-op (False) when email is off."""
+    if not config.email_enabled():
+        return False
+    raw = service.issue_token(username, "verify", email,
+                              config.INVITE_TTL_HOURS)
+    return await run_in_threadpool(
+        mailer.send_verify, email, _link(request, f"/verify/{raw}"),
+        config.INVITE_TTL_HOURS)
 
 
 def _session_response(username: str, url: str = "/") -> RedirectResponse:
@@ -112,18 +124,20 @@ async def logout():
 async def setup_form(request: Request):
     return templates.TemplateResponse(request, "auth/setup.html", {
         "error": "", "auth_enabled": bool(config.APP_PASSWORD),
-        "has_users": db.user_count() > 0})
+        "has_users": db.user_count() > 0,
+        "email_enabled": config.email_enabled()})
 
 
 @router.post("/setup")
 async def setup(request: Request, code: str = Form(...),
                 username: str = Form(...), password: str = Form(...),
-                display: str = Form("")):
+                display: str = Form(""), email: str = Form("")):
     def fail(msg: str, status: int = 400):
         return templates.TemplateResponse(
             request, "auth/setup.html",
             {"error": msg, "auth_enabled": bool(config.APP_PASSWORD),
-             "has_users": db.user_count() > 0},
+             "has_users": db.user_count() > 0,
+             "email_enabled": config.email_enabled()},
             status_code=status)
 
     tr = _tr(request)
@@ -144,9 +158,30 @@ async def setup(request: Request, code: str = Form(...),
         return fail(tr("Username: 2-32 chars, a-z 0-9 . _ - (starts alphanumeric)"))
     if len(password) < 8:
         return fail(tr("Password must be at least 8 characters."))
+    email = service.normalize_email(email)
+    if email and not service.valid_email(email):
+        return fail(tr("That doesn't look like a valid email address."))
+    if email:
+        other = db.user_get_by_email(email)
+        if other and other["username"] != username:
+            return fail(tr("That email is already registered to another account."))
+    # /setup doubles as "reset the admin account", so a blank email field must
+    # not silently drop an address (and its confirmed status) already on file.
+    existing = db.user_get(username) or {}
+    verified = False
+    if not email:
+        email = existing.get("email") or ""
+        verified = bool(email) and bool(existing.get("email_verified"))
+    else:
+        verified = (email == (existing.get("email") or "")
+                    and bool(existing.get("email_verified")))
     db.user_upsert(username, await run_in_threadpool(service.hash_password,
                                                      password),
-                   display=display.strip(), is_admin=True)
+                   display=display.strip(), is_admin=True,
+                   email=email or None, email_verified=verified)
+    if email and not verified:
+        # confirm ownership so the address can later receive reset links
+        await _send_email_verification(request, username, email)
     return _session_response(username)
 
 
@@ -282,8 +317,82 @@ async def team_password(request: Request, username: str = Form(...),
 
 # --------------------------------------------- invite / reset by email token
 
+@router.post("/team/email")
+async def team_email(request: Request, username: str = Form(...),
+                     email: str = Form("")):
+    """Set/change an account's email. Anyone may set their own; admins may
+    set anyone's. A changed address is always unverified until confirmed."""
+    user = current_user(request)
+    tr = _tr(request)
+    if not user:
+        return _team_redirect(error=tr("Not signed in."))
+    username = service.normalize_username(username)
+    if username != user["username"] and not user["is_admin"]:
+        return _team_redirect(error=tr("Only admins can change another account's email."))
+    target = db.user_get(username)
+    if not target:
+        return _team_redirect(error=tr("No such user."))
+    email = service.normalize_email(email)
+    if not email:
+        db.user_set_email(username, None)
+        return _team_redirect(msg=tr("Email removed from {username}.",
+                                     username=username))
+    if not service.valid_email(email):
+        return _team_redirect(error=tr("That doesn't look like a valid email address."))
+    other = db.user_get_by_email(email)
+    if other and other["username"] != username:
+        return _team_redirect(error=tr("That email is already registered to another account."))
+    db.user_set_email(username, email)
+    if await _send_email_verification(request, username, email):
+        return _team_redirect(msg=tr(
+            "Confirmation link sent to {email} — click it to enable password "
+            "reset for this address.", email=email))
+    return _team_redirect(msg=tr(
+        "Email saved for {username}. It cannot be used for password reset "
+        "until it is confirmed.", username=username))
+
+
+@router.post("/team/verify-email")
+async def team_verify_email(request: Request, username: str = Form(...)):
+    user = current_user(request)
+    tr = _tr(request)
+    if not user:
+        return _team_redirect(error=tr("Not signed in."))
+    username = service.normalize_username(username)
+    if username != user["username"] and not user["is_admin"]:
+        return _team_redirect(error=tr("Only admins can change another account's email."))
+    target = db.user_get(username)
+    if not target or not target.get("email"):
+        return _team_redirect(error=tr("No such user."))
+    if await _send_email_verification(request, username, target["email"]):
+        return _team_redirect(msg=tr(
+            "Confirmation link sent to {email} — click it to enable password "
+            "reset for this address.", email=target["email"]))
+    return _team_redirect(error=tr("Could not send the email — check the "
+                                   "email configuration."))
+
+
 _EXPIRED = ("This link has expired or was already used. Ask an admin to "
             "re-send the invite, or request a new password-reset link.")
+
+
+@router.get("/verify/{token}", response_class=HTMLResponse)
+async def verify_email(request: Request, token: str):
+    tr = _tr(request)
+    claimed = service.consume_token(token, "verify")
+    ok = bool(claimed) and db.user_mark_email_verified(claimed["username"],
+                                                       claimed["email"] or "")
+    if not ok:
+        # Either the link is spent/expired, or the account's address changed
+        # after it was sent — in both cases nothing gets confirmed.
+        return templates.TemplateResponse(
+            request, "auth/notice.html",
+            {"title": tr("Link no longer valid"), "message": tr(_EXPIRED),
+             "ok": False}, status_code=404)
+    return templates.TemplateResponse(request, "auth/notice.html", {
+        "title": tr("Email confirmed"),
+        "message": tr("This address can now receive password-reset links."),
+        "ok": True})
 
 
 def _set_password_page(request, action, kind, token, error="", status=200):
@@ -343,7 +452,10 @@ async def forgot_submit(request: Request, email: str = Form(...)):
     email = service.normalize_email(email)
     if config.email_enabled() and service.valid_email(email):
         user = db.user_get_by_email(email)
-        if user:
+        # Only CONFIRMED addresses receive reset links: an unconfirmed one
+        # could be a typo pointing at someone else's inbox, and a reset link
+        # sent there would hand them the account.
+        if user and user.get("email_verified"):
             raw = service.issue_token(user["username"], "reset", email,
                                       config.RESET_TTL_HOURS)
             await run_in_threadpool(

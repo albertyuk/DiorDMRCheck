@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block guide_auto %}0{% endblock %}
+{% block content %}
+<div class="card authcard">
+  <span class="wordmark">DMR&nbsp;Reconciler</span>
+  <p class="muted" style="font-size:.72rem; letter-spacing:.2em; text-transform:uppercase">
+    {{ title }}</p>
+  {% if ok %}<div class="msg-ok">{{ message }}</div>
+  {% else %}<div class="warn">{{ message }}</div>{% endif %}
+  <p style="text-align:center; margin-top:1.2rem">
+    <a class="btn secondary" href="/login">{{ t("Back to sign in") }}</a></p>
+</div>
+{% endblock %}

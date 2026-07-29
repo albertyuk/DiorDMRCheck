@@ -219,6 +219,28 @@ def user_upsert(username: str, password_hash: str, display: str = "",
         conn.commit()
 
 
+def user_set_email(username: str, email: Optional[str]) -> None:
+    """Set (or clear) a user's email. Always resets email_verified — a new
+    address must prove ownership again before it can receive reset links."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE users SET email = ?, email_verified = 0 WHERE username = ?",
+            (email, username))
+        conn.commit()
+
+
+def user_mark_email_verified(username: str, email: str) -> bool:
+    """Confirm `email` for `username`. Scoped to the address on purpose: a
+    confirmation link only proves ownership of the address it was sent to, so
+    if the account has moved on to a different one it must not be blessed."""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE users SET email_verified = 1 WHERE username = ? "
+            "AND email = ? COLLATE NOCASE", (username, email))
+        conn.commit()
+    return cur.rowcount == 1
+
+
 def user_get_by_email(email: str) -> Optional[dict]:
     with connect() as conn:
         row = conn.execute(

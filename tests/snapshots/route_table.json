@@ -269,6 +269,13 @@
    "APIRoute"
   ],
   [
+   "/team/email",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
    "/team/password",
    [
     "POST"
@@ -283,9 +290,23 @@
    "APIRoute"
   ],
   [
+   "/team/verify-email",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
    "/upload",
    [
     "POST"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/verify/{token}",
+   [
+    "GET"
    ],
    "APIRoute"
   ]

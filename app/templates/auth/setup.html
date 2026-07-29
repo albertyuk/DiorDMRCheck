@@ -21,6 +21,8 @@
       <label class="field"><span>{{ t("Username") }}</span>
         <input type="text" name="username" autocapitalize="none" required
                pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}"></label>
+      <label class="field"><span>{% if email_enabled %}{{ t("Email — needed to reset your own password later") }}{% else %}{{ t("Email") }} {{ t("(optional)") }}{% endif %}</span>
+        <input type="email" name="email" autocomplete="email"></label>
       <label class="field"><span>{{ t("Display name (optional)") }}</span>
         <input type="text" name="display"></label>
       <label class="field"><span>{{ t("Password (min 8 characters)") }}</span>
