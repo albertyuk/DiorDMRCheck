@@ -18,7 +18,7 @@ from openpyxl import load_workbook
 
 from ..core.xlsx import (HEADER_SCAN_ROWS, MAX_CONSECUTIVE_BLANK_ROWS,
                          cell_str, extract_link_target, find_header_row,
-                         to_date, to_datetime, to_int)
+                         to_date, to_datetime, to_float, to_int)
 from .domain import HEX24, is_hex24
 
 
@@ -71,7 +71,7 @@ def parse_plog(path: str) -> PlogParse:
             break
     if not found:
         raise ValueError(
-            "PLOG parse failed: no sheet has a header row containing both "
+            "KOL parse failed: no sheet has a header row containing both "
             "'NAME' and 'POST LINK' within the first "
             f"{HEADER_SCAN_ROWS} rows."
         )
@@ -119,7 +119,7 @@ def parse_plog(path: str) -> PlogParse:
             bad_dates += 1
             if bad_dates <= 5:
                 result.warnings.append(
-                    f"PLOG row {r}: POST DATE {cell_str(raw_date)!r} could not "
+                    f"KOL row {r}: POST DATE {cell_str(raw_date)!r} could not "
                     "be parsed — date-based checks are skipped for this row."
                 )
 
@@ -153,10 +153,10 @@ def parse_plog(path: str) -> PlogParse:
 
     if bad_dates > 5:
         result.warnings.append(
-            f"PLOG: {bad_dates} rows in total had unparseable POST DATE values."
+            f"KOL: {bad_dates} rows in total had unparseable POST DATE values."
         )
     if not result.rows:
-        result.warnings.append("PLOG sheet parsed but contained no data rows.")
+        result.warnings.append("KOL sheet parsed but contained no data rows.")
     return result
 
 
@@ -176,6 +176,7 @@ class DmrRow:
     link_target: str       # hyperlink target of the Link cell, if any
     link_embedded_post_id: str
     excel_row: int
+    weighted_eng: Optional[float] = None  # "WEIGHTED ENG." column
 
 
 @dataclass
@@ -256,6 +257,9 @@ def parse_dmr(path: str) -> DmrParse:
     c_pdate = col("postdate")
     c_likes, c_shares = col("likes_retweet"), col("share_favorites")
     c_eng, c_comm, c_link = col("engagement"), col("comments"), col("link")
+    # header_key("WEIGHTED ENG.") == "weightedeng." — accept spelling drift
+    c_weng = next((cols[k] for k in ("weightedeng.", "weightedeng",
+                                     "weightedengagement") if k in cols), None)
 
     non_hex_pids = 0
     consecutive_blank = 0
@@ -299,6 +303,7 @@ def parse_dmr(path: str) -> DmrParse:
             link_target=link_target,
             link_embedded_post_id=embedded,
             excel_row=r,
+            weighted_eng=to_float(get(c_weng)),
         )
         if embedded and pid and embedded != pid:
             result.warnings.append(

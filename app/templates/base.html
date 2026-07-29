@@ -227,7 +227,7 @@
       <a href="/logout">{{ t("Sign out") }}</a>
     {% endif %}
   </nav>
-  <div class="tagline">{{ t("PLOG · DMR · Xiaohongshu") }}</div>
+  <div class="tagline">{{ t("KOL · DMR · Xiaohongshu") }}</div>
 </header>
 <main>{% block content %}{% endblock %}</main>
 
@@ -239,11 +239,11 @@
     <h2 id="guide-title">{{ t("Quick guide") }}</h2>
 
     <p class="guide-k">{{ t("What this app does") }}</p>
-    <p>{{ t("It reconciles your internal KOL tracker (PLOG) against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.") }}</p>
+    <p>{{ t("It reconciles your internal KOL tracker against the DMR social-listening export for Xiaohongshu posts, row by row, and produces the annotated Excel your team otherwise fills in by hand — column S verdicts with the evidence behind each one.") }}</p>
 
     <p class="guide-k">{{ t("Running a reconciliation") }}</p>
     <ol>
-      <li>{{ t("Upload the PLOG and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership. Only its China-market rows are used (IN_CHINA_REPORTS=YES, or COUNTRY=Mainland China when that column is absent) — this tool evaluates the Chinese market only.") }}</li>
+      <li>{{ t("Upload the KOL and DMR files on the home page. The Perimeter list is optional — with it, 无博主 rows are split by list membership. Only its China-market rows are used (IN_CHINA_REPORTS=YES, or COUNTRY=Mainland China when that column is absent) — this tool evaluates the Chinese market only.") }}</li>
       <li>{{ t("Check the parse preview (sheets, row counts, date window) and confirm — nothing external is called until you do.") }}</li>
       <li>{{ t("The run resolves every post link, then matches by note ID and author ID; only leftover ambiguous rows go to Claude for annotation, plus one final call that drafts the run summary — Claude never decides a verdict.") }}</li>
       <li>{{ t("Review the results — each verdict shows its evidence, any row can be overridden by hand — then download the annotated .xlsx or the JSON audit log.") }}</li>
@@ -257,13 +257,13 @@
       <dt>Check链接错误</dt><dd>{{ t("The post link is dead or unresolvable — same-name candidates are listed for review, never auto-matched.") }}</dd>
       <dt>人工复核</dt><dd>{{ t("Signals conflict or the deciding data is unavailable — a human decides; the reason is shown on the row.") }}</dd>
     </dl>
-    <p class="muted">{{ t("Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to PLOG finals.") }}</p>
+    <p class="muted">{{ t("Engagement numbers never decide a match — DMR records an early snapshot that is not comparable to KOL-tracker finals.") }}</p>
 
     <p class="guide-k">{{ t("Unfamiliar sheet formats") }}</p>
     <p>{{ t("If a workbook's headers don't match the known format (say, a tracker with Chinese headers), Claude proposes which column is which — and you review that mapping on an audit screen before anything runs. Each field shows the original header, example values, and a confidence score; correct or reject anything. Only header names get rewritten, never data, and each format needs approving once.") }}</p>
 
     <p class="guide-k">{{ t("Efficiency report") }}</p>
-    <p>{{ t("The Efficiency page turns a PLOG tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.") }}</p>
+    <p>{{ t("The Efficiency page turns a KOL tracker on its own into a one-slide CPM/CPE chart presentation — editable .pptx plus a web view — with data-validation findings shown alongside. It runs entirely in memory and every report expires after two hours.") }}</p>
 
     <p class="muted">{{ t("Switch the interface language any time with the toggle in the top-left corner — this guide reopens from the button next to it.") }}</p>
     <div class="guide-actions">

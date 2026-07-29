@@ -17,7 +17,13 @@ reference (`PLOG_DMR_CHECK_1.xlsx`).
    DMR likes).
 2. **Every verdict carries evidence** — deciding tier, matched DMR row/PostID,
    resolved note/author IDs, name-match method, date delta — visible in the UI
-   popover and exported in columns T+ and the JSON audit log.
+   popover and in the JSON audit log. The annotated Excel stays deliberately
+   small: column S, then `STATUS`, `MATCHED DMR BLOGGER`, a
+   `PERIMETER (无博主)` membership column (initially-无博主 rows: `Micro` /
+   `Macro` / `Micro + Macro` / `None` across the checked lists), and a
+   weighted-engagement-data section copied verbatim from the matched DMR row
+   (`Likes_Retweet` · `Share_Favorites` · `Comments` · `Engagement` ·
+   `WEIGHTED ENG.`).
 3. **Cache everything external.** SQLite table keyed by short-link URL. A
    resolved `(note_id, author_id)` never changes, so successes are cached
    permanently; failures are retried only after a TTL or on request.
@@ -44,9 +50,15 @@ blank = matched · `无博主` · `无帖子` · `Check链接错误` (+ candidat
 
 ## Perimeter cross-check (optional)
 
-Upload the LVMH Micro social perimeter workbook (third slot on the upload
-screen) and `无博主` rows are split by perimeter membership — an offline join,
-no new external calls:
+Upload the LVMH social perimeter workbook — Micro (third slot, reads the
+`List Micro` sheet) and/or Macro (fourth slot, reads the `List Macro`
+sheet). A `Perimeter check` toggle (Micro / Macro / Both, on the upload form
+and again on the confirm screen) picks which loaded list(s) the run checks;
+each initially-`无博主` row's membership across the checked lists (`Micro` /
+`Macro` / `Micro + Macro` / `None`) is shown in the evidence popover and
+written to the export's `PERIMETER (无博主)` column. With any list active,
+`无博主` rows are split by perimeter membership — an offline join, no new
+external calls:
 
 - resolved `author_id ∈ REDBOOK_ID` set → `无博主但在Perimeter内→无帖子`
   (blogger is monitored yet absent from the export → a genuine DMR gap,
@@ -313,7 +325,7 @@ excusing those two**.
   running, and pending-audit runs; removal also clears matching run history.
 - **The export never overwrites populated cells.** An S cell that already
   holds a value in the uploaded file is kept verbatim (when it disagrees
-  with the pipeline the verdict is recorded in the evidence Notes column
+  with the pipeline the verdict is recorded in the evidence STATUS cell
   instead), and the evidence block shifts right past any column that
   already contains data. A UI override — an explicit action in this tool —
   still writes its value.

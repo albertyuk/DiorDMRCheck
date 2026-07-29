@@ -33,6 +33,8 @@ FIELDS: dict[str, list[tuple[str, str, bool, str]]] = {
         ("Likes_Retweet", "likes_retweet", False, "likes at first crawl"),
         ("Share_Favorites", "share_favorites", False, "shares/favorites"),
         ("Engagement", "engagement", False, "total engagement at crawl"),
+        ("WEIGHTED ENG.", "weightedeng.", False,
+         "weighted engagement score at crawl"),
         ("Comments", "comments", False, "comment count at crawl"),
         ("Link", "link", False,
          "post URL (hyperlink cell often embeds the note id)"),
@@ -57,5 +59,5 @@ FIELDS: dict[str, list[tuple[str, str, bool, str]]] = {
     ],
 }
 
-KIND_LABELS = {"plog": "PLOG tracker", "dmr": "DMR export",
+KIND_LABELS = {"plog": "KOL tracker", "dmr": "DMR export",
                "eff": "KOL efficiency workbook"}

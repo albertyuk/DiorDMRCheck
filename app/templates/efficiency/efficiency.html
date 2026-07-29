@@ -3,7 +3,7 @@
 {% block content %}
 <div class="card">
   <h1>{{ t("KOL efficiency report") }}</h1>
-  <p class="muted">{{ t("Upload a PLOG-style tracker (") }}<code>MASTER KOL LIST</code>
+  <p class="muted">{{ t("Upload a KOL-style tracker (") }}<code>MASTER KOL LIST</code>
      {{ t("sheet). The analyzer classifies every post into TIER × 报备/软植 groups, validates the data (duplicate links, engagement identities, missing values, small samples, viral-post concentration), and produces a chart-based one-slide presentation — as an editable") }}
      <code>.pptx</code> {{ t("download and an HTML view. Nothing is stored: the workbook is analyzed in memory and the report expires after two hours.") }}</p>
   <div style="display:flex; gap:2.4rem; flex-wrap:wrap; align-items:flex-start">
@@ -36,7 +36,7 @@
     <summary>{{ t("What the workbook must contain") }}</summary>
     <div style="font-size:.8rem">
       <p style="margin-top:.7rem">
-        {{ t("Excel .xlsx, up to 25 MB, one PLOG-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:") }}</p>
+        {{ t("Excel .xlsx, up to 25 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:") }}</p>
       <p><code>NO</code> <code>CAMPAIGN</code> <code>TYPE</code> <code>LEVEL</code>
          <code>NAME</code> <code>FAN BASE（K)</code> <code>POST DATE</code>
          <code>POST LINK</code> <code>IMPRESSION</code> <code>LIKE</code>

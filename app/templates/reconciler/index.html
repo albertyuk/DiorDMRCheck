@@ -3,10 +3,10 @@
 <div class="card">
   {% set flow_step = "upload" %}{% include "shared/_steps.html" %}
   <h1>{{ t("New reconciliation run") }}</h1>
-  <p class="muted">{{ t("Upload the internal tracker (PLOG) and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
+  <p class="muted">{{ t("Upload the internal KOL tracker and the DMR social-listening export. You will see a parse preview before anything runs — no TikHub or Claude calls happen until you confirm.") }}</p>
   <form method="post" action="/upload" enctype="multipart/form-data"
         data-busy data-drop-i18n>
-    <p><label>{{ t("PLOG file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
+    <p><label>{{ t("KOL file (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
       <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
             data-bad-size="{{ t('over the 25 MB limit') }}">
         <input type="file" name="plog" accept=".xlsx" required></span></label></p>
@@ -19,6 +19,16 @@
       <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
             data-bad-size="{{ t('over the 25 MB limit') }}">
         <input type="file" name="perimeter" accept=".xlsx"></span></label></p>
+    <p><label>{{ t("Perimeter (Macro) — optional") }}
+      {% if perimeter_macro %}<span class="muted">{{ t("(replaces the current one below)") }}</span>{% endif %}<br>
+      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 25 MB limit') }}">
+        <input type="file" name="perimeter_macro" accept=".xlsx"></span></label></p>
+    <p>{{ t("Perimeter check") }}:
+      <label style="margin:0 .9rem 0 .5rem"><input type="radio" name="perimeter_mode" value="micro"> Micro</label>
+      <label style="margin-right:.9rem"><input type="radio" name="perimeter_mode" value="macro"> Macro</label>
+      <label><input type="radio" name="perimeter_mode" value="both" checked> {{ t("Both") }}</label><br>
+      <span class="muted" style="font-size:.72rem">{{ t("Which perimeter list(s) the 无博主 cross-check uses — only lists that are uploaded (or already in use) are actually checked. You can still change this on the confirm screen.") }}</span></p>
     <button type="submit"
             data-busy-label="{{ t('Uploading & parsing…') }}">{{ t("Upload & preview") }}</button>
   </form>
@@ -36,7 +46,7 @@
     <div style="font-size:.8rem; max-width:760px">
       <p style="margin-top:.7rem"><b>{{ t("All files") }}</b> —
         {{ t("Excel .xlsx only, up to 25 MB each. Sheet names don't matter and metadata rows above the table are fine: the header row is found automatically anywhere in the first 15 rows, and header spelling is forgiving (case, spacing and full-width characters are normalized).") }}</p>
-      <p><b>PLOG</b> —
+      <p><b>KOL</b> —
         {{ t("needs columns") }} <code>NAME</code> {{ t("and") }} <code>POST LINK</code>.
         {{ t("POST LINK can be visible text or a hyperlink cell, as xhslink.com share links or xiaohongshu.com note links. Also used when present:") }}
         <code>CAMPAIGN</code> <code>NO</code> <code>POST DATE</code> <code>LIKE</code>
@@ -47,7 +57,7 @@
         {{ t("(the 24-character Xiaohongshu note id).") }}
         <code>Username</code> {{ t("is strongly recommended — without it 无博主 vs 无帖子 cannot be decided deterministically. Also used when present:") }}
         <code>PostDate</code> <code>Likes_Retweet</code> <code>Share_Favorites</code>
-        <code>Engagement</code> <code>Comments</code> <code>Link</code>{{ t('. A "From … To …" line above the header enables the export-window checks.') }}</p>
+        <code>Engagement</code> <code>WEIGHTED ENG.</code> <code>Comments</code> <code>Link</code>{{ t('. A "From … To …" line above the header enables the export-window checks.') }}</p>
       <p><b>Perimeter</b> —
         {{ t("the LVMH workbook with a") }} <code>List Micro</code>
         {{ t("sheet; needs") }} <code>NAME</code> {{ t("and") }} <code>REDBOOK_ID</code>.
@@ -56,36 +66,41 @@
     </div>
   </details>
 
-  {% if perimeter and perimeter.stale %}
+  {% for kind, p in [("Micro", perimeter), ("Macro", perimeter_macro)] %}
+    {% if p and p.stale %}
     <div class="warn">
       <b>{{ t("Perimeter needs re-uploading.") }}</b>
       {{ t("The saved perimeter ({filename}) was parsed before the China-market filter and is no longer used by runs. Re-upload it above to refresh it, or remove it.",
-           filename=perimeter.filename) }}
+           filename=p.filename) }}
       <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem">
+        <input type="hidden" name="kind" value="{{ kind | lower }}">
         <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
       </form>
     </div>
-  {% elif perimeter %}
+    {% elif p %}
     <div class="warn" style="background:#f4f6f4;border-left-color:#256b2f">
-      <b>{{ t("Perimeter in use:") }}</b>
+      <b>{{ t("Perimeter in use ({kind}):", kind=kind) }}</b>
       {{ t("{filename} · extracted {date} · {rows} rows, {redbook} with REDBOOK_ID.",
-           filename=perimeter.filename,
-           date=perimeter.extraction_date or t("unknown date"),
-           rows="{:,}".format(perimeter.rows),
-           redbook="{:,}".format(perimeter.redbook_count)) }}
-      {% if perimeter.china_filter %}
+           filename=p.filename,
+           date=p.extraction_date or t("unknown date"),
+           rows="{:,}".format(p.rows),
+           redbook="{:,}".format(p.redbook_count)) }}
+      {% if p.china_filter %}
       {{ t("China market only ({signal}): kept {kept} of {scanned} rows.",
-           signal=perimeter.china_filter,
-           kept="{:,}".format(perimeter.rows),
-           scanned="{:,}".format(perimeter.rows_scanned or 0)) }}
+           signal=p.china_filter,
+           kept="{:,}".format(p.rows),
+           scanned="{:,}".format(p.rows_scanned or 0)) }}
       {% endif %}
       {{ t("无博主 rows will be split by perimeter membership. The perimeter updates regularly — replace it when the extraction date gets stale.") }}
       <form method="post" action="/perimeter/remove" style="display:inline;margin-left:.6rem"
             onsubmit="return confirm('{{ t("Remove the perimeter? Runs revert to plain 无博主.") }}')">
+        <input type="hidden" name="kind" value="{{ kind | lower }}">
         <button type="submit" class="secondary" style="padding:.3rem .8rem">{{ t("Remove") }}</button>
       </form>
     </div>
-  {% else %}
+    {% endif %}
+  {% endfor %}
+  {% if not perimeter and not perimeter_macro %}
     <p class="muted" style="font-size:.78rem">{{ t("No perimeter uploaded — 无博主 rows are not split by perimeter membership.") }}</p>
   {% endif %}
 </div>

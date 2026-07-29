@@ -139,7 +139,7 @@ def build_dmr(path: str) -> None:
             "CN", "Beauty", r["blogger"], r["user"], "RED", r["pid"],
             r["likes"], r["favs"], r["date"], 150000, "Fashion", "Dior",
             "Makeup", "#tag", "Show Post", r["likes"] + r["favs"] + r["comments"],
-            1.0, "", 0, "", r["comments"],
+            r["likes"] + 0.5, "", 0, "", r["comments"],
         ]
         ws.append(row)
         link_cell = ws.cell(row=ws.max_row, column=DMR_HEADERS.index("Link") + 1)

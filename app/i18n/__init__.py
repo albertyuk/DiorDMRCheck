@@ -16,7 +16,7 @@ readable and the English rendering is byte-identical to a non-localized app:
 The Chinese copy is written for the actual audience — a China-side social /
 KOL operations team working with 小红书, DMR exports and Perimeter lists —
 not as literal translation: domain vocabulary the team already uses stays
-untouched (无博主 / 无帖子 / 人工复核 / 报备 / 软植 / Perimeter / PLOG / DMR
+untouched (无博主 / 无帖子 / 人工复核 / 报备 / 软植 / Perimeter / KOL / DMR
 / CPM / CPE), a reconciliation *run* is 核对, and sentences are rebuilt
 around the meaning rather than the English syntax.
 """
