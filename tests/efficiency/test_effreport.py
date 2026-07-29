@@ -87,7 +87,7 @@ def test_dual_path_catches_divergence():
     validate(rows, cfg, findings)
     primary = compute_metrics(rows, cfg)
     secondary = compute_metrics_pandas(rows, cfg)
-    secondary["MID PAID"]["cpm_pooled"] += 1.0
+    secondary["groups"]["MID PAID"]["cpm_pooled"] += 1.0
     with pytest.raises(VerificationError):
         verify_dual_path(primary, secondary)
 
@@ -372,3 +372,106 @@ def test_fanbase_normalization_feeds_fanbase_mode_too():
     a = analyze(io.BytesIO(_level_fallback_wb([("头部", 450000)])),
                 ReportConfig(tier_mode="fanbase"))
     assert a["metrics"]["groups"]["MID PAID"]["n"] == 1   # 450K → MID
+
+
+# ---------------------------------------------------------- MCN agency CPE
+
+def _mcn_wb(rows) -> bytes:
+    """rows = [(mcn, price, ttl_engagement), …] — everything else constant."""
+    from tests.fixtures import EFF_HEADERS, EFF_PAID, _eff_row
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MASTER KOL LIST"
+    ws.append(EFF_HEADERS)
+    for i, (mcn, price, ttl) in enumerate(rows, start=1):
+        like = max(ttl - 2, 0)
+        ws.append(_eff_row(i, EFF_PAID, "KOC", f"kol{i}", 50,
+                           f"http://x.co/m{i}", 10_000, like, 1, 1, ttl,
+                           price, mcn=mcn))
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_mcn_avg_cpe_grouped_case_insensitively_and_ranked():
+    a = analyze(io.BytesIO(_mcn_wb([
+        ("Orange", 1_000, 100),      # CPE 10
+        ("orange ", 3_000, 100),     # same agency, case/space variant: CPE 30
+        ("Papitube", 500, 50),       # CPE 10
+        ("papitube", 500, 50),
+        ("PAPITUBE", 2_000, 100),    # pooled: 3000/200 = 15
+        ("", 999, 10),               # no MCN — excluded from this chart only
+    ])), ReportConfig())
+    mcn = a["metrics"]["mcn"]
+    assert [x["name"] for x in mcn] == ["Papitube", "Orange"]  # by n desc
+    pap, org = mcn
+    assert pap["n"] == 3 and org["n"] == 2
+    assert org["cpe_pooled"] == pytest.approx(4_000 / 200)     # 20
+    assert org["cpe_perpost"] == pytest.approx((10 + 30) / 2)  # 20
+    assert pap["cpe_pooled"] == pytest.approx(15.0)
+    assert a["metrics"]["totals"]["mcn_missing"] == 1
+    v13 = [f for f in a["findings"] if f["code"] == "V13"]
+    assert len(v13) == 1 and "1 row(s) without an MCN value" in v13[0]["message"]
+    from app.i18n import make_td
+    assert "缺少 MCN 信息" in make_td("zh")(v13[0]["message"])
+
+
+def test_mcn_chart_added_to_deck_and_verified():
+    a = analyze(io.BytesIO(_mcn_wb([
+        ("Orange", 1_000, 100), ("Orange", 3_000, 100),
+        ("Papitube", 500, 50),
+    ])), ReportConfig())
+    pptx = build_deck(a)
+    assert_chart_cache(pptx, a)               # 5th chart verified too
+    with zipfile.ZipFile(io.BytesIO(pptx)) as z:
+        charts = sorted(n for n in z.namelist()
+                        if n.startswith("ppt/charts/chart") and n.endswith(".xml"))
+        assert len(charts) == 5
+        xml = z.read(charts[-1]).decode()
+    assert "Orange (2)" in xml and "Papitube (1)" in xml   # n in the label
+    # a deck whose chart disagrees with the metrics must never ship
+    a["metrics"]["mcn"][0]["cpe_pooled"] += 1.0
+    with pytest.raises(VerificationError):
+        assert_chart_cache(pptx, a)
+
+
+def test_mcn_chart_truncated_to_top_agencies():
+    from app.efficiency.deck import MCN_MAX_BARS
+    a = analyze(io.BytesIO(_mcn_wb(
+        [(f"Agency{i:02d}", 1_000, 100) for i in range(MCN_MAX_BARS + 3)]
+    )), ReportConfig())
+    assert len(a["metrics"]["mcn"]) == MCN_MAX_BARS + 3    # metrics keep all
+    pptx = build_deck(a)
+    assert_chart_cache(pptx, a)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as z:
+        charts = sorted(n for n in z.namelist()
+                        if n.startswith("ppt/charts/chart") and n.endswith(".xml"))
+        xml = z.read(charts[-1]).decode()
+    assert f'<c:ptCount val="{MCN_MAX_BARS}"/>' in xml     # chart caps at 12
+
+
+def test_no_mcn_values_skips_chart_and_warns(analysis):
+    """The base fixture has an empty MCN column throughout."""
+    assert analysis["metrics"]["mcn"] == []
+    v13 = [f for f in analysis["findings"] if f["code"] == "V13"]
+    assert len(v13) == 1 and v13[0]["message"].startswith("No MCN values")
+    pptx = build_deck(analysis)
+    assert_chart_cache(pptx, analysis)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as z:
+        assert len([n for n in z.namelist()
+                    if n.startswith("ppt/charts/chart")
+                    and n.endswith(".xml")]) == 4          # no 5th chart
+
+
+def test_dual_path_catches_mcn_divergence():
+    from app.efficiency.analysis import classify, parse_report, validate
+    cfg = ReportConfig()
+    rows, findings, _ = parse_report(io.BytesIO(_mcn_wb(
+        [("Orange", 1_000, 100), ("Papitube", 500, 50)])))
+    classify(rows, cfg, findings)
+    validate(rows, cfg, findings)
+    primary = compute_metrics(rows, cfg)
+    secondary = compute_metrics_pandas(rows, cfg)
+    secondary["mcn"]["orange"]["cpe_pooled"] += 1.0
+    with pytest.raises(VerificationError):
+        verify_dual_path(primary, secondary)

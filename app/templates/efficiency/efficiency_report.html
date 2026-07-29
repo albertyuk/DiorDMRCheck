@@ -95,6 +95,33 @@
   <p class="muted" style="font-size:.74rem">{{ t("Missing groups are absent — rendered as gaps on the slide, never zero bars. The source file's CPM column (price per <i>single</i> impression) is never reused; CPM here is the industry-standard ¥ per 1,000.") | safe }}</p>
 </div>
 
+{% if analysis.metrics.mcn %}
+<div class="card">
+  <h2>{{ t("Avg CPE by MCN agency") }}</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>{{ t("Agency") }}</th><th>n</th>
+        <th>{{ t("CPE pooled") }}</th><th>{{ t("CPE per-post") }}</th>
+        <th>{{ t("Spend") }}</th></tr>
+    {% for a in analysis.metrics.mcn %}
+    <tr>
+      <td><b>{{ a.name }}</b></td>
+      <td>{{ a.n }}</td>
+      <td>{% if a.cpe_pooled is not none %}¥{{ "{:,.2f}".format(a.cpe_pooled) }}{% else %}—{% endif %}</td>
+      <td>{% if a.cpe_perpost is not none %}¥{{ "{:,.2f}".format(a.cpe_perpost) }}{% else %}—{% endif %}</td>
+      <td>¥{{ "{:,.0f}".format(a.spend) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  <p class="muted" style="font-size:.74rem">
+    {{ t("Agencies are ranked by post count; the deck plots this as its second slide.") }}
+    {% if analysis.metrics.totals.mcn_missing %}
+      {{ t("{n} post(s) have no MCN value and are excluded from this table only.", n=analysis.metrics.totals.mcn_missing) }}
+    {% endif %}</p>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>{{ t("Insights (data-driven only)") }}</h2>
   {% for b in analysis.insights.price %}<p>• {{ td(b) }}</p>{% endfor %}

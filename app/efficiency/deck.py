@@ -37,6 +37,15 @@ TEXTS = {
         "eff_title": "KOL SOFT VS PAID EFFICIENCY COMPARISON (CNY)",
         "cpm": "CPM", "cpe": "CPE",
         "deck_title": "KOL EFFICIENCY REPORT",
+        "mcn_title": "AVG CPE BY MCN AGENCY (CNY)",
+        "mcn_basis_pooled":
+            "Basis: pooled — agency total spend ÷ total engagements (CPE). "
+            "Agencies ranked by post count; (n) = posts.",
+        "mcn_basis_per_post":
+            "Basis: per-post average — mean of PRICE÷ENGAGEMENT across the "
+            "agency's posts. Agencies ranked by post count; (n) = posts.",
+        "mcn_truncated": "Top {shown} of {total} agencies shown.",
+        "mcn_missing": "{n} post(s) without an MCN value excluded.",
     },
     "zh": {
         "donut_title": "达人构成占比",
@@ -44,8 +53,20 @@ TEXTS = {
         "eff_title": "软植 VS 报备 投放效率对比 (CNY)",
         "cpm": "CPM", "cpe": "CPE",
         "deck_title": "KOL 投放效率报告",
+        "mcn_title": "各 MCN 机构平均 CPE (CNY)",
+        "mcn_basis_pooled":
+            "口径：合并——机构总花费 ÷ 总互动（CPE）。机构按发帖数排序；(n) 为帖数。",
+        "mcn_basis_per_post":
+            "口径：单帖平均——机构内各帖 PRICE÷ENGAGEMENT 的平均。"
+            "机构按发帖数排序；(n) 为帖数。",
+        "mcn_truncated": "仅展示发帖数前 {shown} 的机构（共 {total} 家）。",
+        "mcn_missing": "{n} 篇帖子缺少 MCN 信息，未计入本图。",
     },
 }
+
+# The agency chart stays readable up to about this many columns; beyond it,
+# keep the most-posted agencies and say so on the slide.
+MCN_MAX_BARS = 12
 
 # palette (spec §6)
 SOFT_COLOR = RGBColor(0x00, 0x00, 0x00)
@@ -178,6 +199,17 @@ def _bar_chart(slide, x, y, w, h, groups: dict, value_key: str,
             (groups.get(f"{t} {coop}") or {}).get(value_key) for t in TIERS))
     gf = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, w, h, data)
     _style_bar_chart(gf.chart, number_format)
+    return gf
+
+
+def _mcn_bar_chart(slide, x, y, w, h, agencies: list[dict], cpe_key: str):
+    """Single-series columns: avg CPE (y) per MCN agency (x). Labels carry
+    the post count so a 1-post agency can't masquerade as a benchmark."""
+    data = CategoryChartData()
+    data.categories = [f"{a['name']} ({a['n']})" for a in agencies]
+    data.add_series("CPE", tuple(a[cpe_key] for a in agencies))
+    gf = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, w, h, data)
+    _style_bar_chart(gf.chart, "0.0")
     return gf
 
 
@@ -368,6 +400,28 @@ def build_deck(analysis: dict) -> bytes:
     _text(slide, rx + Inches(0.15), Inches(6.62), rw - Inches(0.3),
           Inches(0.44), [ins["footnote"]], size=7, color=RGBColor(0x59, 0x59, 0x59))
 
+    # ---- slide 2: avg CPE per MCN agency (skipped when no MCN data — V13)
+    mcn_all = analysis["metrics"]["mcn"]
+    if mcn_all:
+        shown = mcn_all[:MCN_MAX_BARS]
+        slide2 = prs.slides.add_slide(prs.slide_layouts[6])
+        _text(slide2, Inches(0.35), Inches(0.12), Inches(9), Inches(0.4),
+              [texts["deck_title"]], size=18, bold=True)
+        mx, mw = Inches(0.35), Inches(12.63)
+        _panel(slide2, mx, Inches(0.62), mw, Inches(6.52), texts["mcn_title"])
+        _mcn_bar_chart(slide2, mx + Inches(0.15), Inches(1.2),
+                       mw - Inches(0.3), Inches(5.2), shown, cpe_key)
+        note = [texts["mcn_basis_pooled"] if basis == "pooled"
+                else texts["mcn_basis_per_post"]]
+        if len(mcn_all) > len(shown):
+            note.append(texts["mcn_truncated"].format(
+                shown=len(shown), total=len(mcn_all)))
+        if totals["mcn_missing"]:
+            note.append(texts["mcn_missing"].format(n=totals["mcn_missing"]))
+        _text(slide2, mx + Inches(0.15), Inches(6.62), mw - Inches(0.3),
+              Inches(0.44), [" ".join(note)], size=7,
+              color=RGBColor(0x59, 0x59, 0x59))
+
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -416,6 +470,9 @@ def assert_chart_cache(pptx_bytes: bytes, analysis: dict) -> None:
         series_for(cpm_key),
         series_for(cpe_key),
     ]
+    mcn_shown = analysis["metrics"]["mcn"][:MCN_MAX_BARS]
+    if mcn_shown:
+        expected_charts.append({"CPE": [a[cpe_key] for a in mcn_shown]})
 
     with zipfile.ZipFile(io.BytesIO(pptx_bytes)) as z:
         chart_names = sorted(

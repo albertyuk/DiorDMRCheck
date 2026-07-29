@@ -262,6 +262,10 @@ ZH: dict[str, str] = {
     # saved English notes through td(); keep them translating
     "Author id established from another PLOG row of the same blogger (identical NAME) — this row's note detail is dead/blocked, but blogger presence is still decidable.":
         "作者 ID 取自同一博主（NAME 相同）的另一条 PLOG 行——本行笔记详情已失效或被拦截，但仍可判定博主是否在库。",
+    "Agencies are ranked by post count; the deck plots this as its second slide.":
+        "机构按发帖数排序；幻灯片第 2 页即为此图。",
+    "Agency": "MCN 机构",
+    "Avg CPE by MCN agency": "各 MCN 机构平均 CPE",
     "Avg price": "平均合作价",
     "Back": "返回",
     "Back to sign in": "返回登录",
@@ -465,6 +469,9 @@ ZH: dict[str, str] = {
     "Setup code": "设置码",
     "Severity": "级别",
     "Share": "占比",
+    "Spend": "总花费",
+    "{n} post(s) have no MCN value and are excluded from this table only.":
+        "{n} 篇帖子缺少 MCN 信息——仅从本表中排除。",
     "Sheet": "工作表",
     "Sign in": "登录",
     "Slide language": "幻灯片语言",

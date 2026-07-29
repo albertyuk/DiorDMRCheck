@@ -182,8 +182,8 @@ EFF_PAID, EFF_SOFT = "报备图文", "软植图文"
 
 
 def _eff_row(no, type_, level, name, fan, link, impr, like, coll, comm, ttl,
-             price, cpm=None):
-    return [no, "", "EFF #001", type_, level, name, fan,
+             price, cpm=None, mcn=""):
+    return [no, mcn, "EFF #001", type_, level, name, fan,
             datetime(2026, 6, 1 + (no - 1) % 28), "", link, impr, like, coll,
             comm, ttl,
             price, cpm, None]

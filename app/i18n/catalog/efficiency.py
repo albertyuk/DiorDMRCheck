@@ -57,6 +57,13 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(\d+) row\(s\) with TTL ENGAGEMENT=0 — excluded from CPE "
                 r"ratios only\.$"),
      r"\1 行 TTL ENGAGEMENT=0——仅从 CPE 计算中排除。"),
+    (re.compile(r"^No MCN values found — the AVG CPE BY MCN AGENCY chart is "
+                r"omitted\.$"),
+     r"未找到任何 MCN 信息——已省略「各 MCN 机构平均 CPE」图表。"),
+    (re.compile(r"^(\d+) row\(s\) without an MCN value — excluded from the "
+                r"AVG CPE BY MCN AGENCY chart \(posts stay in all other "
+                r"metrics\)\.$"),
+     r"\1 行缺少 MCN 信息——不计入「各 MCN 机构平均 CPE」图表（其余指标不受影响）。"),
     (re.compile(r"^TTL ENGAGEMENT ≠ LIKE\+COLLECTION\+COMMENT on (\d+) "
                 r"row\(s\)\.$"),
      r"共 \1 行 TTL ENGAGEMENT ≠ LIKE+COLLECTION+COMMENT。"),

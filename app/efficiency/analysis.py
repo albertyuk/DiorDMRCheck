@@ -64,6 +64,7 @@ class Row:
     name: str
     type_raw: str
     level_raw: str
+    mcn: str                 # agency, display form ('' when the cell is blank)
     fanbase_k: Optional[float]
     post_date: Optional[date]
     post_link: str
@@ -185,6 +186,7 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
             idx=len(rows), excel_row=r,
             campaign=current_campaign, no=cell_str(get("no")), name=name,
             type_raw=cell_str(get("type")), level_raw=cell_str(get("level")),
+            mcn=nfkc(cell_str(get("mcn"))).strip(),
             fanbase_k=fanbase_k,
             post_date=to_date(get("postdate")),
             post_link=link.strip(),
@@ -383,6 +385,20 @@ def validate(rows: list[Row], cfg: ReportConfig,
                 "metrics keep both rows, but verify.",
                 [x.excel_row for x in rs]))
 
+    # V13 — MCN coverage (feeds the AVG CPE BY MCN AGENCY chart)
+    no_mcn = [r.excel_row for r in active if not r.mcn]
+    if no_mcn and len(no_mcn) == len(active):
+        findings.append(Finding(
+            "V13", "WARN",
+            "No MCN values found — the AVG CPE BY MCN AGENCY chart is "
+            "omitted."))
+    elif no_mcn:
+        findings.append(Finding(
+            "V13", "WARN",
+            f"{len(no_mcn)} row(s) without an MCN value — excluded from the "
+            "AVG CPE BY MCN AGENCY chart (posts stay in all other metrics).",
+            no_mcn))
+
     # V8 — 尾部/底部 coexistence (documented merge) + fan-range detail
     if cfg.tier_mode == "label":
         weibu = [r for r in rows if "尾部" in nfkc(r.level_raw)]
@@ -472,6 +488,7 @@ def compute_metrics(rows: list[Row], cfg: ReportConfig) -> dict:
             }
     unclassified = [r for r in active if not r.group]
     totals = {
+        "mcn_missing": sum(1 for r in active if not r.mcn),
         "rows": total_rows,
         "classified": total_rows - len(unclassified),
         "unclassified": len(unclassified),
@@ -483,7 +500,36 @@ def compute_metrics(rows: list[Row], cfg: ReportConfig) -> dict:
         "engagements": sum(_eng(r) or 0 for r in active),
         "excluded_rows": len(rows) - total_rows,
     }
-    return {"groups": groups, "totals": totals}
+    return {"groups": groups, "totals": totals, "mcn": _mcn_metrics(active)}
+
+
+def _mcn_metrics(active: list[Row]) -> list[dict]:
+    """Average CPE per MCN agency. Grouped case-insensitively (the display
+    name is the first spelling seen); ordered by post count desc so the
+    ranking is stable across the pooled/per-post basis toggle. Rows without
+    an MCN value are excluded here only (V13) — never from other metrics."""
+    by_key: dict[str, list[Row]] = {}
+    display: dict[str, str] = {}
+    for r in active:
+        if not r.mcn:
+            continue
+        key = r.mcn.casefold()
+        by_key.setdefault(key, []).append(r)
+        display.setdefault(key, r.mcn)
+    out = []
+    for key, g in by_key.items():
+        eng_rows = [r for r in g if (_eng(r) or 0) > 0]
+        spend_eng = sum(r.price for r in eng_rows)
+        eng = sum(r.ttl_engagement for r in eng_rows)
+        out.append({
+            "name": display[key], "n": len(g),
+            "spend": sum(r.price for r in g),
+            "cpe_pooled": spend_eng / eng if eng else None,
+            "cpe_perpost": _mean([r.price / r.ttl_engagement
+                                  for r in eng_rows]),
+        })
+    out.sort(key=lambda a: (-a["n"], a["name"].casefold()))
+    return out
 
 
 def compute_metrics_pandas(rows: list[Row], cfg: ReportConfig) -> dict:
@@ -493,11 +539,23 @@ def compute_metrics_pandas(rows: list[Row], cfg: ReportConfig) -> dict:
     import pandas as pd
     active = [r for r in rows if not r.excluded]
     df = pd.DataFrame([{
-        "group": r.group, "price": r.price, "impression": r.impression or 0,
+        "group": r.group, "mcn": r.mcn.casefold(), "price": r.price,
+        "impression": r.impression or 0,
         "engagement": _eng(r) or 0} for r in active])
     out: dict[str, dict] = {}
+    mcn: dict[str, dict] = {}
     if df.empty:
-        return out
+        return {"groups": out, "mcn": mcn}
+    for key, g in df[df["mcn"] != ""].groupby("mcn"):
+        ge = g[g["engagement"] > 0]
+        mcn[key] = {
+            "n": int(len(g)),
+            "spend": float(g["price"].sum()),
+            "cpe_pooled": float(ge["price"].sum() / ge["engagement"].sum())
+            if len(ge) else None,
+            "cpe_perpost": float((ge["price"] / ge["engagement"]).mean())
+            if len(ge) else None,
+        }
     for gname, g in df[df["group"] != ""].groupby("group"):
         gi = g[g["impression"] > 0]
         ge = g[g["engagement"] > 0]
@@ -514,7 +572,7 @@ def compute_metrics_pandas(rows: list[Row], cfg: ReportConfig) -> dict:
             "cpe_perpost": float((ge["price"] / ge["engagement"]).mean())
             if len(ge) else None,
         }
-    return out
+    return {"groups": out, "mcn": mcn}
 
 
 class VerificationError(RuntimeError):
@@ -522,20 +580,32 @@ class VerificationError(RuntimeError):
 
 
 def verify_dual_path(primary: dict, secondary: dict) -> None:
-    keys = ("n", "share", "avg_price", "cpm_pooled", "cpe_pooled",
-            "cpm_perpost", "cpe_perpost")
-    if set(primary["groups"]) != set(secondary):
-        raise VerificationError(
-            f"dual-path group mismatch: {sorted(primary['groups'])} vs "
-            f"{sorted(secondary)}")
-    for gname, g in primary["groups"].items():
-        for k in keys:
-            a, b = g[k], secondary[gname][k]
+    def diff(name: str, ks: tuple[str, ...], a_dict: dict, b_dict: dict):
+        for k in ks:
+            a, b = a_dict[k], b_dict[k]
             if a is None and b is None:
                 continue
             if a is None or b is None or abs(a - b) > 1e-6:
                 raise VerificationError(
-                    f"dual-path mismatch {gname}.{k}: {a} vs {b}")
+                    f"dual-path mismatch {name}.{k}: {a} vs {b}")
+
+    sec_groups = secondary["groups"]
+    if set(primary["groups"]) != set(sec_groups):
+        raise VerificationError(
+            f"dual-path group mismatch: {sorted(primary['groups'])} vs "
+            f"{sorted(sec_groups)}")
+    for gname, g in primary["groups"].items():
+        diff(gname, ("n", "share", "avg_price", "cpm_pooled", "cpe_pooled",
+                     "cpm_perpost", "cpe_perpost"), g, sec_groups[gname])
+
+    sec_mcn = secondary["mcn"]
+    prim_mcn = {a["name"].casefold(): a for a in primary["mcn"]}
+    if set(prim_mcn) != set(sec_mcn):
+        raise VerificationError(
+            f"dual-path MCN mismatch: {sorted(prim_mcn)} vs {sorted(sec_mcn)}")
+    for key, a in prim_mcn.items():
+        diff(f"mcn {key}", ("n", "spend", "cpe_pooled", "cpe_perpost"),
+             a, sec_mcn[key])
 
 
 def verify_reconciliation(rows: list[Row], metrics: dict,
