@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block guide_auto %}0{% endblock %}
+{% block content %}
+<div class="card authcard">
+  <span class="wordmark">DMR&nbsp;Reconciler</span>
+  <p class="muted" style="font-size:.72rem; letter-spacing:.2em; text-transform:uppercase">
+    {{ t("Forgot password") }}</p>
+  {% if not enabled %}
+    <div class="warn">{{ t("Email-based reset is not configured on this server. Ask an admin to reset your password from the Team page.") }}</div>
+    <p style="text-align:center"><a class="btn secondary" href="/login">{{ t("Back to sign in") }}</a></p>
+  {% elif sent %}
+    <div class="msg-ok">{{ t("If that email belongs to an account, a reset link is on its way. Check your inbox (and spam).") }}</div>
+    <p style="text-align:center; margin-top:1rem"><a class="btn secondary" href="/login">{{ t("Back to sign in") }}</a></p>
+  {% else %}
+    <p class="muted" style="font-size:.82rem">{{ t("Enter your account's email and we'll send a link to set a new password.") }}</p>
+    <form method="post" action="/forgot" data-busy>
+      <label class="field"><span>{{ t("Email") }}</span>
+        <input type="email" name="email" autocomplete="email" required autofocus></label>
+      <p style="text-align:center; margin-top:1.4rem">
+        <button type="submit" style="width:100%"
+                data-busy-label="{{ t('Sending…') }}">{{ t("Send reset link") }}</button></p>
+    </form>
+    <p class="muted" style="font-size:.78rem"><a href="/login" style="color:var(--ink)">{{ t("Back to sign in") }}</a></p>
+  {% endif %}
+</div>
+{% endblock %}

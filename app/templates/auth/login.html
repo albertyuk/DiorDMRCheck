@@ -15,6 +15,8 @@
     <p style="text-align:center; margin-top:1.4rem">
       <button type="submit" style="width:100%">{{ t("Sign in") }}</button></p>
   </form>
+  <p class="muted" style="font-size:.78rem; text-align:center">
+    <a href="/forgot" style="color:var(--ink)">{{ t("Forgot your password?") }}</a></p>
   {% if no_users %}
     <p class="muted" style="font-size:.78rem">{{ t('No accounts exist yet — <a href="/setup" style="color:var(--ink)">create the admin account</a> with the setup code.') | safe }}</p>
   {% endif %}

@@ -62,6 +62,46 @@ def valid_username(username: str) -> bool:
     return bool(USERNAME_RE.fullmatch(username))
 
 
+# lax but sane: something@something.tld, no spaces
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def valid_email(email: str) -> bool:
+    return bool(email) and len(email) <= 254 and bool(EMAIL_RE.fullmatch(email))
+
+
+# ------------------------------------------------------ invite/reset tokens
+
+TOKEN_TTL = {"invite": None, "reset": None}   # filled from config at call time
+
+
+def _token_hash(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def issue_token(username: str, purpose: str, email: str,
+                ttl_hours: float) -> str:
+    """Create a single-use token, store only its hash, return the raw value
+    for the emailed link."""
+    from ..core import db
+    raw = secrets.token_urlsafe(32)
+    db.auth_token_put(_token_hash(raw), username, purpose, email,
+                      expires_at=time.time() + ttl_hours * 3600)
+    return raw
+
+
+def consume_token(raw: str, purpose: str) -> Optional[dict]:
+    """Atomically claim a valid token; returns {'username','email'} or None."""
+    from ..core import db
+    if not raw:
+        return None
+    return db.auth_token_consume(_token_hash(raw), purpose)
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),

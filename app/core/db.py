@@ -192,28 +192,100 @@ def user_count() -> int:
 def user_list() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT username, display, is_admin, created_at FROM users "
+            "SELECT username, display, is_admin, created_at, email, "
+            "email_verified, password_hash FROM users "
             "ORDER BY created_at").fetchall()
     return [dict(r) for r in rows]
 
 
 def user_upsert(username: str, password_hash: str, display: str = "",
-                is_admin: bool = False) -> None:
+                is_admin: bool = False, email: Optional[str] = None,
+                email_verified: bool = False) -> None:
     with connect() as conn:
         conn.execute(
-            "INSERT INTO users (username, display, password_hash, is_admin, created_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO users (username, display, password_hash, is_admin, "
+            "created_at, email, email_verified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(username) DO UPDATE SET display=excluded.display, "
-            "password_hash=excluded.password_hash, is_admin=excluded.is_admin",
-            (username, display, password_hash, int(is_admin), time.time()),
+            "password_hash=excluded.password_hash, is_admin=excluded.is_admin, "
+            "email=excluded.email, email_verified=excluded.email_verified",
+            (username, display, password_hash, int(is_admin), time.time(),
+             email, int(email_verified)),
         )
         conn.commit()
 
 
-def user_set_password(username: str, password_hash: str) -> None:
+def user_get_by_email(email: str) -> Optional[dict]:
     with connect() as conn:
-        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?",
-                     (password_hash, username))
+        row = conn.execute(
+            "SELECT * FROM users WHERE email = ? COLLATE NOCASE",
+            (email,)).fetchone()
+    return dict(row) if row else None
+
+
+def user_set_password(username: str, password_hash: str,
+                      mark_verified: bool = False) -> None:
+    with connect() as conn:
+        if mark_verified:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, email_verified = 1 "
+                "WHERE username = ?", (password_hash, username))
+        else:
+            conn.execute("UPDATE users SET password_hash = ? WHERE username = ?",
+                         (password_hash, username))
+        conn.commit()
+
+
+# --------------------------------------------------------- auth tokens
+
+def auth_token_put(token_hash: str, username: str, purpose: str,
+                   email: Optional[str], expires_at: float) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO auth_tokens (token_hash, username, purpose, "
+            "email, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            (token_hash, username, purpose, email, time.time(), expires_at))
+        conn.commit()
+
+
+def auth_token_consume(token_hash: str, purpose: str) -> Optional[dict]:
+    """Atomically claim a valid, unexpired, unused token. Returns its row
+    (username/email) on success, None otherwise. Marking used_at in the same
+    UPDATE makes the token strictly single-use even under concurrent clicks."""
+    now = time.time()
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE auth_tokens SET used_at = ? WHERE token_hash = ? AND "
+            "purpose = ? AND used_at IS NULL AND expires_at > ?",
+            (now, token_hash, purpose, now))
+        if cur.rowcount != 1:
+            conn.commit()
+            return None
+        row = conn.execute("SELECT username, email FROM auth_tokens "
+                           "WHERE token_hash = ?", (token_hash,)).fetchone()
+        conn.commit()
+    return dict(row) if row else None
+
+
+def auth_token_valid(token_hash: str, purpose: str) -> bool:
+    """Read-only check that a token exists, is unused, and unexpired."""
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM auth_tokens WHERE token_hash = ? AND purpose = ? "
+            "AND used_at IS NULL AND expires_at > ?",
+            (token_hash, purpose, now)).fetchone()
+    return row is not None
+
+
+def auth_tokens_invalidate(username: str, purpose: Optional[str] = None) -> None:
+    """Burn any outstanding tokens for a user (e.g. after a successful reset)."""
+    with connect() as conn:
+        if purpose:
+            conn.execute("DELETE FROM auth_tokens WHERE username = ? AND "
+                         "purpose = ?", (username, purpose))
+        else:
+            conn.execute("DELETE FROM auth_tokens WHERE username = ?", (username,))
         conn.commit()
 
 

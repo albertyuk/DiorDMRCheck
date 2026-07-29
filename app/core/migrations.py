@@ -65,12 +65,27 @@ CREATE TABLE IF NOT EXISTS overrides (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    username      TEXT PRIMARY KEY,       -- stored casefolded
-    display       TEXT,
-    password_hash TEXT NOT NULL,
-    is_admin      INTEGER DEFAULT 0,
-    created_at    REAL NOT NULL
+    username       TEXT PRIMARY KEY,      -- stored casefolded
+    display        TEXT,
+    password_hash  TEXT NOT NULL,         -- '' until an invite is accepted
+    is_admin       INTEGER DEFAULT 0,
+    created_at     REAL NOT NULL,
+    email          TEXT,                  -- lowercased; NULL for legacy rows
+    email_verified INTEGER DEFAULT 0
 );
+
+-- Single-use, time-limited invite / password-reset tokens. Only the SHA-256
+-- of the raw token is stored, so a DB read cannot mint a working link.
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    username   TEXT NOT NULL,
+    purpose    TEXT NOT NULL,             -- 'invite' | 'reset'
+    email      TEXT,                      -- address the link was sent to
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    used_at    REAL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(username);
 
 CREATE TABLE IF NOT EXISTS perimeter_cache (
     file_hash       TEXT PRIMARY KEY,     -- sha256 of the uploaded workbook
@@ -106,6 +121,8 @@ def apply(conn: sqlite3.Connection) -> None:
         "ALTER TABLE runs ADD COLUMN perimeter_uploaded INTEGER",
         "ALTER TABLE runs ADD COLUMN perimeter_name TEXT",
         "ALTER TABLE perimeter_cache ADD COLUMN warnings_json TEXT",
+        "ALTER TABLE users ADD COLUMN email TEXT",
+        "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0",
     ):
         try:
             conn.execute(stmt)

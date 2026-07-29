@@ -52,9 +52,37 @@
    "APIRoute"
   ],
   [
+   "/forgot",
+   [
+    "GET"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/forgot",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
    "/healthz",
    [
     "GET"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/invite/{token}",
+   [
+    "GET"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/invite/{token}",
+   [
+    "POST"
    ],
    "APIRoute"
   ],
@@ -125,6 +153,20 @@
   ],
   [
    "/remap/{token}/reject",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/reset/{token}",
+   [
+    "GET"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/reset/{token}",
    [
     "POST"
    ],
@@ -228,6 +270,13 @@
   ],
   [
    "/team/password",
+   [
+    "POST"
+   ],
+   "APIRoute"
+  ],
+  [
+   "/team/resend-invite",
    [
     "POST"
    ],

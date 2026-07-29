@@ -204,6 +204,23 @@ run summary, header-map proposals) · `MAX_UPLOAD_MB=25` and zip caps ·
 4. Make changes → tests → push to BOTH branches → remind the user:
    `git pull origin claude/dmr-reconciler-webapp-9bwvwn && fly deploy`.
 
+## Email invites + password reset (app/auth/mailer.py, tokens in service.py)
+
+Optional, gated on `RESEND_API_KEY`. Admin adds a coworker by **email** on
+`/team` → password-less account + one-time invite link emailed (Resend HTTP
+API) → coworker sets their own password at `/invite/{token}`. `/forgot` →
+`/reset/{token}` for self-service reset. Tokens: `secrets.token_urlsafe`,
+stored only as SHA-256 in `auth_tokens`, single-use (atomic UPDATE…used_at),
+purpose-scoped, TTL'd. No account enumeration on `/forgot` (constant
+response, IP-throttled via the `setup` scope). Absolute links come from
+`PUBLIC_BASE_URL`, never the Host header. Public routes bypass the session
+gate via `_PUBLIC_PREFIXES`/`_PUBLIC_EXACT` in auth/routes.py. When the key
+is unset the whole thing degrades to the legacy by-hand-initial-password
+flow. `users` gained `email` + `email_verified`; an empty `password_hash`
+means "invited, not yet activated" and can never authenticate. To wire it
+live: `fly secrets set RESEND_API_KEY=… EMAIL_FROM='… <noreply@domain>' PUBLIC_BASE_URL=https://…`
+(verify the sending domain in Resend first).
+
 ## Hardening draft 2 (post-merge review of the 12 feature commits)
 
 An adversarial multi-lens review of everything after the PR-#1 merge found

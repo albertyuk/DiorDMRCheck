@@ -201,6 +201,10 @@ External API integrations remain optional and degrade gracefully.
 | `APP_PASSWORD` | The **required-by-default setup code** for the account system. Visit `/setup`, enter the code, and create the admin account; admins add coworkers on `/team`. Startup fails if neither this nor the explicit local opt-out is set. |
 | `ALLOW_OPEN_ACCESS` | Set to `1` only for intentional local passwordless use. Defaults off, so a missing deployment secret fails closed. |
 | `SESSION_COOKIE_SECURE` | Defaults to `1`; set to `0` only for local plain-HTTP development. |
+| `RESEND_API_KEY` | Enables email invites + password reset (via the [Resend](https://resend.com) HTTP API). When unset the feature is off: admins set an initial password by hand and the reset link is hidden. |
+| `EMAIL_FROM` | Sender address, e.g. `DMR Reconciler <noreply@yourdomain.com>` — must be a domain verified in Resend. Defaults to Resend's `onboarding@resend.dev` (fine for testing). |
+| `PUBLIC_BASE_URL` | Absolute base for links in emails, e.g. `https://dmr-reconciler.fly.dev`. Read from config, never the request Host header, so a spoofed Host can't plant an attacker link. |
+| `INVITE_TTL_HOURS` / `RESET_TTL_HOURS` | Link lifetimes; default 72 h / 2 h. |
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
 | `MAX_UPLOAD_MB` | Maximum compressed size per workbook; defaults to 25 MB. |
 | `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents; defaults to 50 MB to reject ZIP bombs. |
@@ -290,6 +294,17 @@ excusing those two**.
   hashes; sessions are signed HMAC cookies, marked Secure in deployment, and
   invalidated when the account password changes. Anyone holding the setup
   code can make themselves admin, so treat it as the root secret.
+- **Email invites + reset** (when `RESEND_API_KEY` is set): an admin adds a
+  coworker by **email** on `/team`; the system creates a password-less
+  account and emails a one-time, time-limited link to set their own password
+  (proving they own the inbox). Users who forget their password use
+  **Forgot password?** on the sign-in page to get a reset link. Tokens are
+  stored only as SHA-256 hashes, are single-use and purpose-scoped
+  (invite/reset are not interchangeable), and `/forgot` returns the same
+  response whether or not the email exists (no account enumeration) and is
+  rate-limited. Without the key the flow is off and the by-hand
+  initial-password path (and the admin/setup-code reset) still work. The
+  setup-code path remains the admin's out-of-band recovery route.
 - **Upload lifecycle**: compressed and expanded workbook sizes are bounded;
   rejected, invalid, and cancelled staging is deleted immediately. Expired
   in-memory reports/remap audits and eligible upload directories are reaped

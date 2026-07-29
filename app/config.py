@@ -72,6 +72,26 @@ SESSION_COOKIE_SECURE = _bool_env("SESSION_COOKIE_SECURE", "1")
 # every teammate and must not let its holders forge session cookies.
 APP_SECRET = _env("APP_SECRET")
 
+# Email (invite + password reset). Sending is via the Resend HTTP API. When
+# RESEND_API_KEY is unset the whole feature degrades gracefully: admins fall
+# back to setting an initial password by hand, and password reset is hidden.
+RESEND_API_KEY = _env("RESEND_API_KEY")
+# From address, e.g. 'DMR Reconciler <noreply@yourdomain.com>'. Must be on a
+# domain verified in Resend (their onboarding@resend.dev works for testing).
+EMAIL_FROM = _env("EMAIL_FROM", "DMR Reconciler <onboarding@resend.dev>")
+# Absolute base for links in emails (e.g. https://dmr-reconciler.fly.dev).
+# Taken from config — NEVER the request Host header — so a spoofed Host can't
+# plant an attacker link in an email. Falls back to the request origin only
+# when unset (local dev).
+PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL").rstrip("/")
+INVITE_TTL_HOURS = int(_env("INVITE_TTL_HOURS", "72"))
+RESET_TTL_HOURS = int(_env("RESET_TTL_HOURS", "2"))
+
+
+def email_enabled() -> bool:
+    return bool(RESEND_API_KEY)
+
+
 # Soft ranking window for Tier-3 candidate dates (days). Evidence: verified
 # same-post matches at Δ=2 and Δ=4 days; a genuine different-post pair at Δ=2.
 CANDIDATE_DATE_WINDOW_DAYS = int(_env("CANDIDATE_DATE_WINDOW_DAYS", "7"))

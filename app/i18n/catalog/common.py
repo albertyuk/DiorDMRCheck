@@ -16,6 +16,50 @@ ZH: dict[str, str] = {
 
     # auth / server messages (main.py) --------------------------------------
     "Wrong username or password.": "用户名或密码错误。",
+    # email invites + password reset -----------------------------------------
+    "Email": "邮箱",
+    "Status": "状态",
+    "Forgot your password?": "忘记密码？",
+    "Forgot password": "忘记密码",
+    "Set your password": "设置密码",
+    "Choose a new password": "设置新密码",
+    "Welcome! Pick a password to activate your account.":
+        "欢迎！设置一个密码即可激活账号。",
+    "Save & sign in": "保存并登录",
+    "Saving…": "正在保存…",
+    "Sending…": "正在发送…",
+    "Send reset link": "发送重置链接",
+    "Enter your account's email and we'll send a link to set a new password.":
+        "输入你账号绑定的邮箱，我们会发送设置新密码的链接。",
+    "If that email belongs to an account, a reset link is on its way. Check your inbox (and spam).":
+        "如果该邮箱对应某个账号，重置链接已发出。请查看收件箱（以及垃圾邮件）。",
+    "Email-based reset is not configured on this server. Ask an admin to reset your password from the Team page.":
+        "本服务器未配置邮箱重置功能。请让管理员在「团队」页面为你重置密码。",
+    "That doesn't look like a valid email address.": "这个邮箱地址格式不正确。",
+    "That email is already registered to another account.":
+        "该邮箱已绑定到另一个账号。",
+    "Invite pending": "待接受邀请",
+    "Verified": "已验证",
+    "Unverified": "未验证",
+    "Resend invite": "重新发送邀请",
+    "Invite sent to {email} — {username} sets their own password from the link.":
+        "邀请已发送至 {email}——{username} 可通过链接自行设置密码。",
+    "Invite re-sent to {email}.": "邀请已重新发送至 {email}。",
+    "Account {username} created, but the invite email could not be sent. Use 'Resend invite' or set a password below.":
+        "账号 {username} 已创建，但邀请邮件未能发送。请使用「重新发送邀请」，或在下方设置密码。",
+    "Could not send the email — check the email configuration.":
+        "邮件发送失败——请检查邮箱配置。",
+    "Enter an email to send an invite, or an initial password of at least 8 characters.":
+        "请填写邮箱以发送邀请，或填写至少 8 位的初始密码。",
+    "Enter their email and we'll send an invite — they set their own password from the link. (Or leave email blank and set an initial password by hand.)":
+        "填写对方邮箱即可发送邀请——对方通过链接自行设置密码。（也可以留空邮箱、手动设置初始密码。）",
+    "(Email invites are off — RESEND_API_KEY is not configured.)":
+        "（邮件邀请未启用——未配置 RESEND_API_KEY。）",
+    "(optional)": "（选填）",
+    "Initial password — only if not inviting by email":
+        "初始密码——仅在不通过邮件邀请时填写",
+    "This link has expired or was already used. Ask an admin to re-send the invite, or request a new password-reset link.":
+        "该链接已失效或已被使用。请让管理员重新发送邀请，或重新申请密码重置链接。",
     "Too many failed attempts — wait {s} seconds and try again.":
         "失败次数过多——请等待 {s} 秒后再试。",
     "Wrong setup code.": "设置码错误。",

@@ -11,16 +11,28 @@
   {% if error %}<div class="warn">{{ error }}</div>{% endif %}
 
   <table>
-    <tr><th>{{ t("Username") }}</th><th>{{ t("Display") }}</th><th>{{ t("Role") }}</th>
+    <tr><th>{{ t("Username") }}</th><th>{{ t("Email") }}</th><th>{{ t("Status") }}</th>
+        <th>{{ t("Role") }}</th>
         {% if user and user.is_admin %}<th></th>{% endif %}</tr>
     {% for u in users %}
     <tr>
       <td>{{ u.username }}{% if user and u.username == user.username %}
-          <span class="muted">{{ t("(you)") }}</span>{% endif %}</td>
-      <td>{{ u.display or "" }}</td>
+          <span class="muted">{{ t("(you)") }}</span>{% endif %}
+          {% if u.display %}<br><span class="muted" style="font-size:.72rem">{{ u.display }}</span>{% endif %}</td>
+      <td class="muted">{{ u.email or "—" }}</td>
+      <td>{% if not u.password_hash %}<span class="badge review">{{ t("Invite pending") }}</span>
+          {% elif u.email and u.email_verified %}<span class="badge match">{{ t("Verified") }}</span>
+          {% elif u.email %}<span class="badge nopost">{{ t("Unverified") }}</span>
+          {% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ t("Admin") if u.is_admin else t("Member") }}</td>
       {% if user and user.is_admin %}
       <td style="white-space:nowrap">
+        {% if not u.password_hash and u.email %}
+        <form method="post" action="/team/resend-invite" style="display:inline">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <button type="submit" class="secondary" style="padding:.35rem .8rem">{{ t("Resend invite") }}</button>
+        </form>
+        {% endif %}
         {% if u.username != user.username %}
         <form method="post" action="/team/delete" style="display:inline"
               onsubmit="return confirm('{{ t("Remove account {username}?", username=u.username) }}')">
@@ -36,15 +48,21 @@
 
   {% if user and user.is_admin %}
   <h2>{{ t("Add a coworker") }}</h2>
-  <p class="muted" style="font-size:.8rem">{{ t("Create the account with an initial password and share it privately; they can change it here afterwards.") }}</p>
+  {% if email_enabled %}
+    <p class="muted" style="font-size:.8rem">{{ t("Enter their email and we'll send an invite — they set their own password from the link. (Or leave email blank and set an initial password by hand.)") }}</p>
+  {% else %}
+    <p class="muted" style="font-size:.8rem">{{ t("Create the account with an initial password and share it privately; they can change it here afterwards.") }} {{ t("(Email invites are off — RESEND_API_KEY is not configured.)") }}</p>
+  {% endif %}
   <form method="post" action="/team/add" style="max-width:420px">
     <label class="field"><span>{{ t("Username") }}</span>
       <input type="text" name="username" autocapitalize="none" required
              pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}"></label>
+    <label class="field"><span>{{ t("Email") }}{% if not email_enabled %} {{ t("(optional)") }}{% endif %}</span>
+      <input type="email" name="email" {% if email_enabled %}required{% endif %}></label>
     <label class="field"><span>{{ t("Display name (optional)") }}</span>
       <input type="text" name="display"></label>
-    <label class="field"><span>{{ t("Initial password (min 8 characters)") }}</span>
-      <input type="text" name="password" minlength="8" required></label>
+    <label class="field"><span>{% if email_enabled %}{{ t("Initial password — only if not inviting by email") }}{% else %}{{ t("Initial password (min 8 characters)") }}{% endif %}</span>
+      <input type="text" name="password" {% if not email_enabled %}minlength="8" required{% endif %}></label>
     <input type="hidden" name="is_admin" value="0">
     <p><label><input type="checkbox" name="is_admin" value="1">
       {{ t("Administrator (can manage accounts)") }}</label></p>
