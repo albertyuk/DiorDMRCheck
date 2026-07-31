@@ -60,7 +60,7 @@ written to the export's `PERIMETER (无博主)` column. With any list active,
 `无博主` rows are split by perimeter membership — an offline join, no new
 external calls:
 
-- resolved `author_id ∈ REDBOOK_ID` set → `无博主但在Perimeter内→无帖子`
+- resolved `author_id ∈ REDBOOK_ID` set → `无博主（博主在Perimeter内）`
   (blogger is monitored yet absent from the export → a genuine DMR gap,
   bucketed with `无帖子`);
 - otherwise → `无博主（不在Perimeter内）`, with name-ladder hits recorded as

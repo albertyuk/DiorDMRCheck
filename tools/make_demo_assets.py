@@ -15,13 +15,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openpyxl import Workbook
 
-from app.deck import assert_chart_cache, build_deck
-from app.effreport import ReportConfig, analyze
+from app.efficiency.deck import assert_chart_cache, build_deck
+from app.efficiency.analysis import ReportConfig, analyze
 
 HEADERS = ["NO", "MCN", "CAMPAIGN", "TYPE", "LEVEL", "NAME", "FAN BASE（K)",
            "POST DATE", "MICRO MACRO", "POST LINK", "IMPRESSION", "LIKE",
            "COLLECTION", "COMMENT", "TTL  ENGAGEMENT", "PRICE", "CPM", "CPE"]
 PAID, SOFT = "报备图文", "软植图文"
+# invented agencies (never real MCN names) so the avg-CPE-by-MCN bar row is
+# visible in the demo; % 5 spreads them across every tier
+MCNS = ["Starfruit", "OrangeCube", "WeiLink", "Papaya", "Nebula"]
 
 # (type, level, fanbase_k, [(price, impressions), ...])
 GROUPS = [
@@ -61,7 +64,7 @@ def build_demo_bytes() -> bytes:
             like = round(eng * 0.72)
             coll = round(eng * 0.17)
             comm = eng - like - coll
-            ws.append([no, "", "DEMO WAVE", type_, level, f"demo{no:02d}",
+            ws.append([no, MCNS[no % 5], "DEMO WAVE", type_, level, f"demo{no:02d}",
                        fan + no, datetime(2026, 6, 1 + (no - 1) % 28), "",
                        f"http://xhslink.com/demo{no:03d}", impr, like, coll,
                        comm, eng, price, None, None])

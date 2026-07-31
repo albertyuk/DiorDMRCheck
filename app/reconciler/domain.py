@@ -24,14 +24,18 @@ REVIEW = "REVIEW"
 NO_POST_IN_PERIMETER = "NO_POST_IN_PERIMETER"
 NO_BLOGGER_NOT_IN_PERIMETER = "NO_BLOGGER_NOT_IN_PERIMETER"
 
-# Human vocabulary for column S (reproduces the reference file exactly)
+# Human vocabulary for column S (reproduces the reference file exactly).
+# The perimeter variants state the observation plus the evidence in parens —
+# never an inference chain ("…→无帖子" read as a confusing double verdict).
+# Both MUST keep the 无博主 prefix: evaluate.classify() collapses annotations
+# by that prefix, and stored runs replay old strings through the same rule.
 S_TEXT = {
     MATCH: "",
     NO_BLOGGER: "无博主",
     NO_POST: "无帖子",
     LINK_ERROR: "Check链接错误",
     REVIEW: "人工复核",
-    NO_POST_IN_PERIMETER: "无博主但在Perimeter内→无帖子",
+    NO_POST_IN_PERIMETER: "无博主（博主在Perimeter内）",
     NO_BLOGGER_NOT_IN_PERIMETER: "无博主（不在Perimeter内）",
 }
 NAME_MISLABEL = "有 但是DMR博主名字标注错误"

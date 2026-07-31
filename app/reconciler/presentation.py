@@ -14,7 +14,7 @@ STATUS_BADGES = {
     NO_BLOGGER: ("noblogger", f"{S_TEXT[NO_BLOGGER]} NO_BLOGGER"),
     LINK_ERROR: ("linkerror", f"{S_TEXT[LINK_ERROR]} LINK_ERROR"),
     REVIEW: ("review", f"{S_TEXT[REVIEW]} REVIEW"),
-    NO_POST_IN_PERIMETER: ("periin", "Perimeter内 无帖子"),
+    NO_POST_IN_PERIMETER: ("periin", "无博主（Perimeter内）"),
     NO_BLOGGER_NOT_IN_PERIMETER: ("periout", "不在Perimeter"),
 }
 
