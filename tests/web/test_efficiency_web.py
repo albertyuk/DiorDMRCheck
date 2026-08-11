@@ -98,12 +98,20 @@ def test_malformed_ooxml_metadata_is_422_not_500(client):
 
 
 def test_oversize_file_is_413(client, monkeypatch):
-    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr(config, "EFF_MAX_UPLOAD_BYTES", 10)
     r = client.post("/efficiency",
                     files={"report": ("large.xlsx", b"x" * 11,
                                       "application/zip")},
                     data={})
     assert r.status_code == 413
+
+
+def test_efficiency_limit_is_independent_of_reconciler_limit(client, monkeypatch):
+    """The efficiency workbook has its own 40 MB budget — a file the
+    reconciler's MAX_UPLOAD_BYTES would reject still analyzes here."""
+    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 10)   # reconciler-only cap
+    r = _upload(client)
+    assert r.status_code == 200
 
 
 def test_invalid_config_values_fall_back_to_defaults(client):

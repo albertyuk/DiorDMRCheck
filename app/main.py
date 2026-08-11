@@ -36,9 +36,10 @@ def _request_body_limit(method: str, path: str) -> int:
     if method not in {"POST", "PUT", "PATCH"}:
         return 0
     if path == "/upload":
-        return 3 * config.MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD
+        # four workbooks: plog + dmr + perimeter micro + perimeter macro
+        return 4 * config.MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD
     if path == "/efficiency":
-        return config.MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD
+        return config.EFF_MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD
     return _FORM_BODY_LIMIT
 
 

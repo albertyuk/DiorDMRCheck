@@ -218,8 +218,9 @@ External API integrations remain optional and degrade gracefully.
 | `PUBLIC_BASE_URL` | Absolute base for links in emails, e.g. `https://dmr-reconciler.fly.dev`. Read from config, never the request Host header, so a spoofed Host can't plant an attacker link. |
 | `INVITE_TTL_HOURS` / `RESET_TTL_HOURS` | Link lifetimes; default 72 h / 2 h. |
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
-| `MAX_UPLOAD_MB` | Maximum compressed size per workbook; defaults to 25 MB. |
-| `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents; defaults to 50 MB to reject ZIP bombs. |
+| `MAX_UPLOAD_MB` | Maximum compressed size per reconciler workbook; defaults to 25 MB. |
+| `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents (reconciler); defaults to 50 MB to reject ZIP bombs. |
+| `EFF_MAX_UPLOAD_MB` / `EFF_MAX_XLSX_UNCOMPRESSED_MB` | The efficiency workbook's own budgets; default 40 MB compressed / 80 MB expanded. `MAX_XLSX_CELLS` applies unchanged. |
 | `MAX_XLSX_ENTRIES` | Maximum files inside an XLSX archive; defaults to 2,000. |
 | `MAX_XLSX_CELLS` | Maximum populated worksheet cells; defaults to 600,000 to bound `openpyxl` object growth. |
 | `UPLOAD_REQUEST_CONCURRENCY` | Maximum upload requests admitted before multipart spooling; defaults to 2 to bound aggregate memory and temporary disk. |

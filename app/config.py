@@ -106,6 +106,15 @@ MAX_UPLOAD_MB = _positive_int_env("MAX_UPLOAD_MB", "25")
 MAX_XLSX_UNCOMPRESSED_MB = _positive_int_env(
     "MAX_XLSX_UNCOMPRESSED_MB", "50"
 )
+# The efficiency workbook gets its own, larger budget (a full wave in one
+# file). Its expanded-XML budget scales with it — without that, a 40 MB
+# upload would pass this gate only to bounce off the 50 MB archive check.
+# The true memory guard (MAX_XLSX_CELLS, since normal-mode openpyxl
+# materializes every populated cell) applies unchanged.
+EFF_MAX_UPLOAD_MB = _positive_int_env("EFF_MAX_UPLOAD_MB", "40")
+EFF_MAX_XLSX_UNCOMPRESSED_MB = _positive_int_env(
+    "EFF_MAX_XLSX_UNCOMPRESSED_MB", "80"
+)
 MAX_XLSX_ENTRIES = _positive_int_env("MAX_XLSX_ENTRIES", "2000")
 # Normal-mode openpyxl materializes every populated cell. An expanded-byte
 # limit stops ZIP bombs; this independent count also bounds object growth for
@@ -125,6 +134,8 @@ MAINTENANCE_INTERVAL_SECONDS = _positive_int_env(
 )
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 MAX_XLSX_UNCOMPRESSED_BYTES = MAX_XLSX_UNCOMPRESSED_MB * 1024 * 1024
+EFF_MAX_UPLOAD_BYTES = EFF_MAX_UPLOAD_MB * 1024 * 1024
+EFF_MAX_XLSX_UNCOMPRESSED_BYTES = EFF_MAX_XLSX_UNCOMPRESSED_MB * 1024 * 1024
 UPLOAD_MAX_TOTAL_BYTES = UPLOAD_MAX_TOTAL_MB * 1024 * 1024
 
 # Failed link resolutions are cached; retry them only after this many hours

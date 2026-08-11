@@ -391,6 +391,7 @@ ZH: dict[str, str] = {
     "Results": "结果",
     "not an .xlsx file": "不是 .xlsx 文件",
     "over the 25 MB limit": "超过 25 MB 上限",
+    "over the 40 MB limit": "超过 40 MB 上限",
     "Uploading & parsing…": "正在上传并解析…",
     "Starting…": "正在启动…",
     "Analyzing…": "正在分析…",
@@ -433,8 +434,8 @@ ZH: dict[str, str] = {
         "会读取「Date of extraction」说明行来提示名单新旧。只使用中国市场的行（IN_CHINA_REPORTS=YES；没有该列时取 COUNTRY=Mainland China）。",
     "Different headers or layout (e.g. a Chinese-headed tracker)? Upload it anyway — Claude proposes a column mapping and nothing runs until you approve it on the audit screen.":
         "表头或版式不一样（比如中文表头的追踪表）？直接上传即可——Claude 会给出列映射建议，你在审核页批准之前不会开始任何处理。",
-    "Excel .xlsx, up to 25 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
-        "Excel .xlsx，最大 25 MB，一张 KOL 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
+    "Excel .xlsx, up to 40 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:":
+        "Excel .xlsx，最大 40 MB，一张 KOL 样式的工作表。程序会在前 15 行内自动找到表头行，表头写法宽松。以下列必须全部存在：",
     "TYPE values start with 报备 (paid) or 软植 (soft); LEVEL is 头部/腰部/尾部/底部/KOC — rows with a missing or unclear LEVEL are tiered by FAN BASE automatically (≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP, reported as V11). PRICE is in CNY. The source file's own CPM/CPE columns are not needed and never reused.":
         "TYPE 以 报备 或 软植 开头；LEVEL 为 头部/腰部/尾部/底部/KOC——LEVEL 缺失或看不懂的行会自动按 FAN BASE 粉丝量分层（≤200K KOC · 200–400K BOT · 400–1000K MID · 1M+ TOP，以 V11 提示）。PRICE 为人民币。源文件自带的 CPM/CPE 列不需要，也绝不会被复用。",
     "Perimeter needs re-uploading.": "Perimeter 名单需要重新上传。",

@@ -317,7 +317,8 @@ window.addEventListener('pageshow', function () {
 });
 
 /* dropzones: dragging a file onto the zone assigns it to the input; on
-   change, show name + size and pre-check extension and the 25 MB limit. */
+   change, show name + size and pre-check extension and the size limit
+   (data-max-mb per zone; 25 MB when unset). */
 function wireDropzones() {
   document.querySelectorAll('.dropzone').forEach(function (zone) {
     if (zone.dataset.wired) return;
@@ -334,7 +335,7 @@ function wireDropzones() {
       var note = f.name + ' — ' + (mb < 0.1 ? '<0.1' : mb.toFixed(1)) + ' MB';
       var bad = '';
       if (!/\.xlsx$/i.test(f.name)) bad = zone.dataset.badType || '';
-      else if (mb > 25) bad = zone.dataset.badSize || '';
+      else if (mb > parseFloat(zone.dataset.maxMb || '25')) bad = zone.dataset.badSize || '';
       meta.textContent = bad ? note + ' · ' + bad : note;
       meta.classList.toggle('bad', !!bad);
     }

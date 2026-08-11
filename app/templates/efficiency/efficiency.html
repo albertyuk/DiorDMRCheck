@@ -10,8 +10,9 @@
   <form method="post" action="/efficiency" enctype="multipart/form-data"
         style="flex:1 1 330px" data-busy>
     <p><label>{{ t("KOL workbook (e.g.") }} <code>PLOG_DMR_CHECK.xlsx</code>{{ t(")") }}<br>
-      <span class="dropzone" data-bad-type="{{ t('not an .xlsx file') }}"
-            data-bad-size="{{ t('over the 25 MB limit') }}">
+      <span class="dropzone" data-max-mb="40"
+            data-bad-type="{{ t('not an .xlsx file') }}"
+            data-bad-size="{{ t('over the 40 MB limit') }}">
         <input type="file" name="report" accept=".xlsx" required></span></label></p>
     <p><label>{{ t("CPM / CPE basis") }}<br>
       <select name="basis">
@@ -36,7 +37,7 @@
     <summary>{{ t("What the workbook must contain") }}</summary>
     <div style="font-size:.8rem">
       <p style="margin-top:.7rem">
-        {{ t("Excel .xlsx, up to 25 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:") }}</p>
+        {{ t("Excel .xlsx, up to 40 MB, one KOL-style sheet. The header row is found automatically in the first 15 rows; header spelling is forgiving. ALL of these columns are required:") }}</p>
       <p><code>NO</code> <code>CAMPAIGN</code> <code>TYPE</code> <code>LEVEL</code>
          <code>NAME</code> <code>FAN BASE（K)</code> <code>POST DATE</code>
          <code>POST LINK</code> <code>IMPRESSION</code> <code>LIKE</code>

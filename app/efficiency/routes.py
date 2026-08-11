@@ -106,12 +106,12 @@ async def efficiency_run(request: Request, report: UploadFile,
         "language": language if language in EFF_LANGUAGES else "en",
     }
     try:
-        data = await read_limited(report, config.MAX_UPLOAD_BYTES)
+        data = await read_limited(report, config.EFF_MAX_UPLOAD_BYTES)
         await run_upload_task(
             request,
             validate_xlsx_archive,
             data,
-            max_uncompressed_bytes=config.MAX_XLSX_UNCOMPRESSED_BYTES,
+            max_uncompressed_bytes=config.EFF_MAX_XLSX_UNCOMPRESSED_BYTES,
             max_entries=config.MAX_XLSX_ENTRIES,
             max_cells=config.MAX_XLSX_CELLS,
         )
