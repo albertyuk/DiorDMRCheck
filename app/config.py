@@ -107,13 +107,15 @@ MAX_XLSX_UNCOMPRESSED_MB = _positive_int_env(
     "MAX_XLSX_UNCOMPRESSED_MB", "50"
 )
 # The efficiency workbook gets its own, larger budget (a full wave in one
-# file). Its expanded-XML budget scales with it — without that, a 40 MB
-# upload would pass this gate only to bounce off the 50 MB archive check.
-# The true memory guard (MAX_XLSX_CELLS, since normal-mode openpyxl
-# materializes every populated cell) applies unchanged.
+# file). Its expanded budget is generous on purpose: the sum counts EVERY
+# archive member — pasted images, styles, unrelated sheets — and a real
+# tracker under 40 MB compressed blew through an 80 MB version of this cap.
+# It only guards against ZIP bombs (checked from the central directory
+# before any XML is parsed); the true memory guard is MAX_XLSX_CELLS,
+# since normal-mode openpyxl materializes every populated cell.
 EFF_MAX_UPLOAD_MB = _positive_int_env("EFF_MAX_UPLOAD_MB", "40")
 EFF_MAX_XLSX_UNCOMPRESSED_MB = _positive_int_env(
-    "EFF_MAX_XLSX_UNCOMPRESSED_MB", "80"
+    "EFF_MAX_XLSX_UNCOMPRESSED_MB", "200"
 )
 MAX_XLSX_ENTRIES = _positive_int_env("MAX_XLSX_ENTRIES", "2000")
 # Normal-mode openpyxl materializes every populated cell. An expanded-byte

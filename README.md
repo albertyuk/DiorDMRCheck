@@ -220,7 +220,7 @@ External API integrations remain optional and degrade gracefully.
 | `DATA_DIR` | SQLite + uploads location. Defaults to `/data` when present (Fly volume), else `./data`. |
 | `MAX_UPLOAD_MB` | Maximum compressed size per reconciler workbook; defaults to 25 MB. |
 | `MAX_XLSX_UNCOMPRESSED_MB` | Maximum expanded XLSX contents (reconciler); defaults to 50 MB to reject ZIP bombs. |
-| `EFF_MAX_UPLOAD_MB` / `EFF_MAX_XLSX_UNCOMPRESSED_MB` | The efficiency workbook's own budgets; default 40 MB compressed / 80 MB expanded. `MAX_XLSX_CELLS` applies unchanged. |
+| `EFF_MAX_UPLOAD_MB` / `EFF_MAX_XLSX_UNCOMPRESSED_MB` | The efficiency workbook's own budgets; default 40 MB compressed / 200 MB expanded (the expansion sum counts every archive member, images and styles included). `MAX_XLSX_CELLS` applies unchanged. |
 | `MAX_XLSX_ENTRIES` | Maximum files inside an XLSX archive; defaults to 2,000. |
 | `MAX_XLSX_CELLS` | Maximum populated worksheet cells; defaults to 600,000 to bound `openpyxl` object growth. |
 | `UPLOAD_REQUEST_CONCURRENCY` | Maximum upload requests admitted before multipart spooling; defaults to 2 to bound aggregate memory and temporary disk. |
