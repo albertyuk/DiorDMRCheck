@@ -107,13 +107,15 @@ async def efficiency_run(request: Request, report: UploadFile,
     }
     try:
         data = await read_limited(report, config.EFF_MAX_UPLOAD_BYTES)
+        # No max_cells here: the analyzer streams only the target sheet, so a
+        # workbook fat with OTHER tabs/styling must not be rejected for them.
+        # EFF_MAX_SHEET_ROWS bounds the rows actually parsed instead.
         await run_upload_task(
             request,
             validate_xlsx_archive,
             data,
             max_uncompressed_bytes=config.EFF_MAX_XLSX_UNCOMPRESSED_BYTES,
             max_entries=config.MAX_XLSX_ENTRIES,
-            max_cells=config.MAX_XLSX_CELLS,
         )
     except UploadLimitError as e:
         return templates.TemplateResponse(
@@ -135,6 +137,23 @@ async def efficiency_run(request: Request, report: UploadFile,
     try:
         await run_upload_task(request, parse_eff_report, io.BytesIO(data))
     except ValueError as e:
+        # The mapping flow rewrites headers with normal-mode openpyxl, which
+        # materializes the whole workbook — hold it to the strict budgets the
+        # streaming analyze path no longer needs.
+        try:
+            await run_upload_task(
+                request, validate_xlsx_archive, data,
+                max_uncompressed_bytes=config.MAX_XLSX_UNCOMPRESSED_BYTES,
+                max_entries=config.MAX_XLSX_ENTRIES,
+                max_cells=config.MAX_XLSX_CELLS,
+            )
+        except UploadLimitError as le:
+            return templates.TemplateResponse(
+                request, "shared/error.html",
+                {"message": _td(request)(str(e)) + " (" + _tr(request)(
+                    "Header mapping is unavailable for workbooks this "
+                    "large: {e}", e=le) + ")"},
+                status_code=422)
         try:
             outcome = await run_upload_task(
                 request, attempt_remap, "eff", data

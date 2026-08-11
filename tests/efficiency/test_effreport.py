@@ -479,3 +479,19 @@ def test_dual_path_catches_mcn_divergence():
     secondary["mcn"]["orange"]["cpe_pooled"] += 1.0
     with pytest.raises(VerificationError):
         verify_dual_path(primary, secondary)
+
+
+def test_streaming_parse_survives_true_hyperlink_cells():
+    """read_only cells expose no .hyperlink — a real hyperlink degrades to
+    its display text instead of crashing (POST LINK only feeds V6 here)."""
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(build_eff_bytes()))
+    cell = wb["MASTER KOL LIST"].cell(row=2, column=10)   # POST LINK
+    cell.value = "查看链接"
+    cell.hyperlink = "http://x.co/hyperlinked"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from app.efficiency.analysis import parse_report
+    rows, findings, _meta = parse_report(buf)
+    assert rows[0].post_link == "查看链接"

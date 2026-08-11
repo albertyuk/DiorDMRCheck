@@ -392,6 +392,8 @@ ZH: dict[str, str] = {
     "not an .xlsx file": "不是 .xlsx 文件",
     "over the 25 MB limit": "超过 25 MB 上限",
     "over the 40 MB limit": "超过 40 MB 上限",
+    "Header mapping is unavailable for workbooks this large: {e}":
+        "工作簿过大，无法使用表头映射流程：{e}",
     "Uploading & parsing…": "正在上传并解析…",
     "Starting…": "正在启动…",
     "Analyzing…": "正在分析…",

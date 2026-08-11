@@ -23,6 +23,7 @@ from typing import Optional
 
 from openpyxl import load_workbook
 
+from .. import config
 from ..core.textnorm import header_key, nfkc
 from ..core.xlsx import (MAX_CONSECUTIVE_BLANK_ROWS, cell_str,
                          find_header_row, to_date, to_float, to_int)
@@ -114,9 +115,21 @@ FANBASE_RAW_CUTOFF = 10_000
 
 def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
     """Parse the KOL sheet. Returns (rows, findings, meta). V1 failures are
-    the only thing that raises — everything else is a Finding."""
+    the only thing that raises — everything else is a Finding.
+
+    Streams (read_only): only the chosen sheet's rows are ever materialized,
+    so a workbook bloated by other tabs, styling, or pasted images costs
+    nothing here. Memory is bounded by EFF_MAX_SHEET_ROWS, not file size.
+    """
     findings: list[Finding] = []
-    wb = load_workbook(path_or_file, data_only=True)
+    wb = load_workbook(path_or_file, data_only=True, read_only=True)
+    try:
+        return _parse_sheets(wb, findings)
+    finally:
+        wb.close()   # read-only mode holds the zip handle open
+
+
+def _parse_sheets(wb, findings: list[Finding]) -> tuple[list[Row], list[Finding], dict]:
     ws = None
     for candidate in wb.worksheets:
         if header_key(candidate.title) == "masterkollist":
@@ -154,19 +167,32 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
     raw_fanbase_rows: list[int] = []
     current_campaign = ""
     blank = 0
-    for excel_row_cells in ws.iter_rows(min_row=header_row + 1):
-        r = excel_row_cells[0].row
+    width = max(v for v in c.values() if v)
+    max_rows = config.EFF_MAX_SHEET_ROWS
+    # Positional access only: this worksheet may be a read-only stream, where
+    # ws.cell() re-reads the sheet XML from the top on EVERY call (O(n²)) and
+    # cells carry no .hyperlink. max_col pads ragged rows to a fixed width.
+    for excel_row, row_cells in enumerate(
+            ws.iter_rows(min_row=header_row + 1, max_col=width),
+            start=header_row + 1):
 
         def get(key):
             column = c.get(key)
-            return ws.cell(row=r, column=column).value if column else None
+            if not column or column > len(row_cells):
+                return None
+            return row_cells[column - 1].value
 
         name = cell_str(get("name"))
-        link_cell = ws.cell(row=r, column=c["postlink"]) if c.get("postlink") else None
         link = ""
-        if link_cell is not None:
-            if link_cell.hyperlink and link_cell.hyperlink.target:
-                link = str(link_cell.hyperlink.target).strip()
+        pl = c.get("postlink")
+        if pl and pl <= len(row_cells):
+            link_cell = row_cells[pl - 1]
+            # normal-mode cells expose the hyperlink target; read-only cells
+            # don't, so a true hyperlink degrades to its display text — POST
+            # LINK only feeds the V6 duplicate check here, never resolution.
+            hl = getattr(link_cell, "hyperlink", None)
+            if hl is not None and getattr(hl, "target", None):
+                link = str(hl.target).strip()
             else:
                 link = cell_str(link_cell.value)
         if not name and not link:
@@ -175,15 +201,19 @@ def parse_report(path_or_file) -> tuple[list[Row], list[Finding], dict]:
                 break
             continue
         blank = 0
+        if len(rows) >= max_rows:
+            raise ValueError(
+                f"V1: sheet {ws.title!r} has more than {max_rows:,} data "
+                "rows — export the current wave on its own sheet.")
         campaign = cell_str(get("campaign"))
         if campaign:
             current_campaign = campaign
         fanbase_k = to_float(get("fanbase(k)"))
         if fanbase_k is not None and fanbase_k >= FANBASE_RAW_CUTOFF:
             fanbase_k = fanbase_k / 1000     # raw follower count → K
-            raw_fanbase_rows.append(r)
+            raw_fanbase_rows.append(excel_row)
         rows.append(Row(
-            idx=len(rows), excel_row=r,
+            idx=len(rows), excel_row=excel_row,
             campaign=current_campaign, no=cell_str(get("no")), name=name,
             type_raw=cell_str(get("type")), level_raw=cell_str(get("level")),
             mcn=nfkc(cell_str(get("mcn"))).strip(),

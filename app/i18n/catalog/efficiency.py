@@ -34,6 +34,9 @@ ZH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^V1: required columns missing after header normalization: (.+)$",
                 re.S),
      r"V1：表头标准化后仍缺少必需列：\1"),
+    (re.compile(r"^V1: sheet (.+) has more than ([\d,]+) data rows — export "
+                r"the current wave on its own sheet\.$"),
+     r"V1：工作表 \1 的数据超过 \2 行——请把本波投放单独导出为一张表。"),
     # efficiency-report validation findings (effreport.py V1–V10) -----------
     (re.compile(r"^Sheet 'MASTER KOL LIST' not found — using first sheet "
                 r"(.+)\.$"),

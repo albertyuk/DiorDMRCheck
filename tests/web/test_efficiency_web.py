@@ -114,6 +114,37 @@ def test_efficiency_limit_is_independent_of_reconciler_limit(client, monkeypatch
     assert r.status_code == 200
 
 
+def test_bloat_in_other_sheets_does_not_reject_the_workbook(client, monkeypatch):
+    """Real trackers carry extra tabs, styling, and pasted images that count
+    toward the global cell/byte budgets; the streaming analyzer never reads
+    them, so the efficiency gate must not reject on their account."""
+    from openpyxl import load_workbook as _lw
+    import io as _io
+    monkeypatch.setattr(config, "MAX_XLSX_CELLS", 100)    # reconciler-strict
+    wb = _lw(_io.BytesIO(build_eff_bytes()))
+    junk = wb.create_sheet("YTD ARCHIVE")
+    for row in range(1, 41):                              # 400 cells > cap
+        for col in range(1, 11):
+            junk.cell(row=row, column=col, value=f"x{row}-{col}")
+    buf = _io.BytesIO()
+    wb.save(buf)
+    r = client.post(
+        "/efficiency",
+        files={"report": ("fat.xlsx", buf.getvalue(),
+                          "application/vnd.openxmlformats-officedocument"
+                          ".spreadsheetml.sheet")},
+        data={}, follow_redirects=True)
+    assert r.status_code == 200
+    assert "Basis: pooled" in r.text
+
+
+def test_sheet_row_cap_rejects_with_a_clear_message(client, monkeypatch):
+    monkeypatch.setattr(config, "EFF_MAX_SHEET_ROWS", 5)
+    r = _upload(client)                                   # fixture has 44 rows
+    assert r.status_code == 422
+    assert "data rows" in r.text
+
+
 def test_invalid_config_values_fall_back_to_defaults(client):
     r = _upload(client, basis="nonsense", tier_mode="nonsense", language="xx")
     assert r.status_code == 200

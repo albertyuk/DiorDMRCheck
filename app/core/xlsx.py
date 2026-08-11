@@ -106,15 +106,21 @@ def to_float(v: Any) -> Optional[float]:
 
 def find_header_row(ws, required: set[str]) -> Optional[tuple[int, dict[str, int]]]:
     """Return (row_index, {header_key: column_index}) for the first row whose
-    normalized cell values contain every key in *required*."""
-    for row in ws.iter_rows(min_row=1, max_row=HEADER_SCAN_ROWS):
+    normalized cell values contain every key in *required*.
+
+    Works on read-only worksheets too: the row index comes from enumeration,
+    never from `row[0].row` — a streamed blank row is an empty tuple (or
+    EMPTY_CELL padding without a .row), which would crash the attribute path.
+    """
+    for idx, row in enumerate(
+            ws.iter_rows(min_row=1, max_row=HEADER_SCAN_ROWS), start=1):
         keys: dict[str, int] = {}
         for cell in row:
             k = header_key(cell_str(cell.value))
             if k and k not in keys:
                 keys[k] = cell.column
         if required.issubset(keys.keys()):
-            return row[0].row, keys
+            return idx, keys
     return None
 
 
